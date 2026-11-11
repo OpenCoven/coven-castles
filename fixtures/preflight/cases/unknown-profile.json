@@ -8,13 +8,14 @@
     "CASTLES_SANDBOX_GENERATION": "3"
   },
   "inspection": {
-    "contract": "castles.fixture.sandbox-inspection.v0",
+    "contract": "castles.fixture.sandbox-inspection.v1",
     "outcome": "observed",
     "sdk": {
       "package": "@daytona/sdk",
       "version": "0.220.0"
     },
     "binding": {
+      "agentId": "fixture-agent-0001",
       "sandboxId": "fixture-sandbox-0001",
       "generation": 3,
       "lifecycle": "ready",

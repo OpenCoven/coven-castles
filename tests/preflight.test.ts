@@ -13,6 +13,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   FIXTURE_LABEL,
+  isLiveReady,
   loadFixtureCase,
   PREFLIGHT_JSON_MAX_BYTES,
   type PreflightResult,
@@ -185,7 +186,21 @@ test("a stopped sandbox is reported as stopped and is never woken", async () => 
   assert.equal(result.status, "stopped");
   assert.deepEqual(codes(result), ["sandbox_stopped"]);
   assert.deepEqual(wire.calls, ["inspectBoundSandbox"]);
+
+  const archived = await withArchivedState();
+  assert.equal(archived.status, "stopped");
+  assert.deepEqual(codes(archived), ["sandbox_stopped"]);
 });
+
+async function withArchivedState() {
+  const fixture = loadFixtureCase(casePath("stopped"));
+  const inspection = structuredClone(fixture.inspection) as {
+    sandbox: Record<string, unknown>;
+  };
+  inspection.sandbox.state = "archived";
+  const wire = tripwireClient(() => inspection);
+  return runPreflight(fixture.env, wire.client, { evidence: "fixture" });
+}
 
 // --- Missing sandbox / ambiguity: no replacement, no adoption --------------
 
@@ -442,6 +457,169 @@ test("plain domains and bounded IPv4 ranges are accepted as restricted egress", 
   }
 });
 
+// --- Gates that had no test (review N1) ------------------------------------
+
+async function withInspection(edit: (inspection: any) => void) {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const inspection = structuredClone(fixture.inspection);
+  edit(inspection);
+  const wire = tripwireClient(() => inspection);
+  return runPreflight(fixture.env, wire.client, { evidence: "fixture" });
+}
+
+test("a missing or different credential-boundary marker needs reconciliation", async () => {
+  for (const labels of [
+    undefined,
+    null,
+    {},
+    { credentialBoundaryVersion: "attempt-reset-v0" },
+    ["attempt-reset-v1"],
+  ]) {
+    const result = await withInspection((inspection) => {
+      inspection.sandbox.labels = labels;
+    });
+    assert.equal(result.status, "reconciliation-required");
+    assert.deepEqual(codes(result), ["credential_boundary_unverified"]);
+  }
+});
+
+test("a binding whose lifecycle is not ready needs reconciliation", async () => {
+  for (const lifecycle of ["provisioning", "resetting", "failed", ""]) {
+    const result = await withInspection((inspection) => {
+      inspection.binding.lifecycle = lifecycle;
+    });
+    assert.equal(result.status, "reconciliation-required", lifecycle);
+    assert.deepEqual(codes(result), ["binding_lifecycle_pending"]);
+  }
+});
+
+test("a different SDK package is incompatible even at the pinned version", async () => {
+  const result = await withInspection((inspection) => {
+    inspection.sdk.package = "@fixture/other-sdk";
+  });
+  assert.equal(result.status, "incompatible");
+  assert.deepEqual(codes(result), ["sdk_generation_mismatch"]);
+});
+
+test("an unsupported target or a non-Linux platform is incompatible", async () => {
+  const target = await withInspection((inspection) => {
+    inspection.sandbox.target = "fixture-region";
+  });
+  assert.equal(target.status, "incompatible");
+  assert.deepEqual(codes(target), ["target_unsupported"]);
+
+  const platform = await withInspection((inspection) => {
+    inspection.platform.os = "fixture-os";
+  });
+  assert.equal(platform.status, "incompatible");
+  assert.deepEqual(codes(platform), ["platform_unsupported"]);
+});
+
+test("each resource bound fails on its own, above and below", async () => {
+  const { caps, floor } = SUPPORTED_PROFILE.resources;
+  const edits: [string, number][] = [
+    ["cpu", caps.cpu + 1],
+    ["cpu", floor.cpu - 1],
+    ["memory", caps.memoryGiB + 1],
+    ["memory", floor.memoryGiB - 1],
+    ["disk", caps.diskGiB + 1],
+    ["disk", floor.diskGiB - 1],
+  ];
+  for (const [field, value] of edits) {
+    const result = await withInspection((inspection) => {
+      inspection.sandbox[field] = value;
+    });
+    assert.equal(result.status, "incompatible", `${field}=${value}`);
+    assert.deepEqual(codes(result), ["resources_out_of_policy"]);
+  }
+  for (const [field, value] of [
+    ["cpu", caps.cpu],
+    ["cpu", floor.cpu],
+    ["memory", caps.memoryGiB],
+    ["memory", floor.memoryGiB],
+  ] as const) {
+    const result = await withInspection((inspection) => {
+      inspection.sandbox[field] = value;
+    });
+    assert.equal(result.status, "ready", `${field}=${value}`);
+  }
+});
+
+test("JSON output carries every source pin", async () => {
+  const { result } = await runCase("ready");
+  const parsed = JSON.parse(renderJson(result));
+  assert.deepEqual(
+    parsed.sourcePolicy.pins,
+    SOURCE_PINS.map((entry) => entry.pin)
+  );
+  assert.equal(parsed.sourcePolicy.pins.length, 16);
+});
+
+// --- Owner echo, disclosure and stated decisions (review N4 to N6) ---------
+
+test("a response about a different agent record is refused and not disclosed", async () => {
+  const result = await withInspection((inspection) => {
+    inspection.binding.agentId = "fixture-agent-9999";
+  });
+  assert.equal(result.status, "unauthorized");
+  assert.deepEqual(codes(result), ["owner_mismatch"]);
+  assert.equal(result.observed, null);
+  assert.doesNotMatch(renderJson(result), /fixture-agent-9999/u);
+
+  const absent = await withInspection((inspection) => {
+    delete inspection.binding.agentId;
+  });
+  assert.equal(absent.status, "unavailable");
+  assert.deepEqual(codes(absent), ["inspection_contract_violation"]);
+  assert.equal(absent.observed, null);
+});
+
+test("a stale generation is reported with the observed metadata, by decision", async () => {
+  const result = await withInspection((inspection) => {
+    inspection.binding.generation = 9;
+  });
+  assert.equal(result.status, "reconciliation-required");
+  assert.deepEqual(codes(result), ["generation_mismatch"]);
+  assert.notEqual(result.observed, null);
+  assert.equal(result.observed?.binding.generation, 9);
+});
+
+test("absent or null TTL and attachment keys read as not set, by decision", async () => {
+  for (const value of [undefined, null]) {
+    const result = await withInspection((inspection) => {
+      for (const key of [
+        "autoDestroyAt",
+        "volumes",
+        "warmPoolId",
+        "linkedSandboxId",
+      ]) {
+        if (value === undefined) {
+          delete inspection.sandbox[key];
+        } else {
+          inspection.sandbox[key] = value;
+        }
+      }
+    });
+    assert.equal(result.status, "ready");
+    assert.deepEqual(result.reasons, []);
+  }
+});
+
+// --- Fixture readiness is never live readiness (review N3) -----------------
+
+test("only a live-provider ready result counts as readiness", async () => {
+  const { result } = await runCase("ready");
+  assert.equal(result.status, "ready");
+  assert.equal(result.evidence, "fixture");
+  assert.equal(isLiveReady(result), false);
+  assert.equal(isLiveReady({ ...result, evidence: "none" }), false);
+  assert.equal(isLiveReady({ ...result, evidence: "live-provider" }), true);
+  assert.equal(
+    isLiveReady({ ...result, evidence: "live-provider", status: "stopped" }),
+    false
+  );
+});
+
 test("a different SDK generation is incompatible, not best-effort", async () => {
   const fixture = loadFixtureCase(casePath("ready"));
   const inspection = structuredClone(fixture.inspection) as {
@@ -598,32 +776,113 @@ test("the missing upstream binding seam is an explicit blocker with a link", () 
 
 // --- Structural: no second adapter, no network, no writes ------------------
 
-test("source has no provider SDK, network, process, or write capability", () => {
-  const allowed = new Set([
-    "node:crypto",
-    "node:fs",
-    "node:process",
-    "node:util",
-  ]);
+/**
+ * An allowlist, not a blocklist (review N2): every import must be a static
+ * named import of a binding listed here. Anything else fails, including a
+ * new `node:fs` function, a namespace or default import of a module that can
+ * write, a dynamic import, `require`, or a network/process global.
+ */
+const ALLOWED_IMPORTS: Readonly<Record<string, readonly string[]>> = {
+  "node:crypto": ["createHash"],
+  "node:fs": ["readFileSync"],
+  "node:process": ["default"],
+  "node:util": ["parseArgs"],
+};
+const FORBIDDEN_GLOBALS =
+  /\b(?:globalThis|fetch|XMLHttpRequest|WebSocket|EventSource|require|eval|Function|Worker|Deno|Bun)\b|\bimport\s*\(|\bimport\.meta\b|process\.(?:binding|dlopen|kill|chdir|getBuiltinModule|mainModule)/u;
+
+function importsOf(source: string) {
+  const found: { names: string[]; specifier: string }[] = [];
+  const statement =
+    /^import\s+(?:type\s+)?([\s\S]*?)\s+from\s+"([^"]+)";?$/gmu;
+  for (const match of source.matchAll(statement)) {
+    const clause = (match[1] ?? "").trim();
+    const names = clause.startsWith("{")
+      ? clause
+          .replace(/^\{|\}$/gu, "")
+          .split(",")
+          .map((name) => name.trim().replace(/^type\s+/u, ""))
+          .filter((name) => name !== "")
+      : clause.startsWith("*")
+        ? ["*"]
+        : ["default"];
+    found.push({ names, specifier: match[2] ?? "" });
+  }
+  return found;
+}
+
+function withoutComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//gu, "")
+    .replace(/^\s*\/\/.*$/gmu, "");
+}
+
+function capabilityProblems(file: string, source: string): string[] {
+  const problems: string[] = [];
+  const code = withoutComments(source);
+  const imports = importsOf(code);
+  const importKeywords = [...code.matchAll(/^\s*import\b/gmu)].length;
+  if (imports.length !== importKeywords) {
+    problems.push(`${file}: an import statement is not a plain static import`);
+  }
+  for (const { names, specifier } of imports) {
+    if (specifier.startsWith("./")) {
+      continue;
+    }
+    const allowed = ALLOWED_IMPORTS[specifier];
+    if (!allowed) {
+      problems.push(`${file}: imports ${specifier}`);
+      continue;
+    }
+    for (const name of names) {
+      if (!allowed.includes(name)) {
+        problems.push(`${file}: imports ${name} from ${specifier}`);
+      }
+    }
+  }
+  const forbidden = FORBIDDEN_GLOBALS.exec(code);
+  if (forbidden) {
+    problems.push(`${file}: uses ${forbidden[0]}`);
+  }
+  return problems;
+}
+
+test("source imports only allowlisted bindings and no network or process global", () => {
   for (const file of ["cli.ts", "preflight.ts", "profile.ts"]) {
     const source = readFileSync(join(root, "src", file), "utf8");
-    const imports = [
-      ...source.matchAll(/from\s+"([^"]+)"|import\(\s*"([^"]+)"\s*\)/gu),
-    ].map((match) => match[1] ?? match[2]);
-    for (const specifier of imports) {
-      assert.ok(
-        specifier.startsWith("./") || allowed.has(specifier),
-        `${file} imports ${specifier}`
-      );
-    }
-    assert.doesNotMatch(
-      source,
-      /\bfetch\(|writeFile|appendFile|mkdir|rmSync|unlink|createWriteStream|\bexec\(|spawn/u,
-      file
-    );
+    assert.deepEqual(capabilityProblems(file, source), []);
   }
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   assert.deepEqual(manifest.dependencies ?? {}, {});
+});
+
+test("the capability allowlist rejects the evasions the old blocklist missed", () => {
+  const evasions = [
+    'import { openSync, writeSync } from "node:fs";',
+    'import { readFileSync, writeFileSync } from "node:fs";',
+    'import * as fs from "node:fs";',
+    'import fs from "node:fs";',
+    'import { request } from "node:https";',
+    'import { spawn } from "node:child_process";',
+    'import { createRequire } from "node:module";',
+    "const f = globalThis.fetch;",
+    'const net = await import("node:net");',
+    'const fs = require("node:fs");',
+    'process.binding("fs");',
+    'process.getBuiltinModule("node:fs");',
+    'import("node:" + "http");',
+    'import {\n  readFileSync,\n  rmSync,\n} from "node:fs";',
+  ];
+  for (const line of evasions) {
+    assert.notDeepEqual(capabilityProblems("probe.ts", line), [], line);
+  }
+  assert.deepEqual(
+    capabilityProblems(
+      "probe.ts",
+      'import { readFileSync } from "node:fs";\nimport { type Binding, parseBinding } from "./profile";'
+    ),
+    []
+  );
 });
 
 // --- CLI: read-only command, human and JSON, no credentials ----------------
@@ -658,7 +917,8 @@ test("CLI check is read-only, credential-blind, and emits human and JSON output"
       HARNESS_CANARIES,
       cwd
     );
-    assert.equal(json.status, 0, json.stderr);
+    // A fixture replay that reports ready exits 3, never 0 (review N3).
+    assert.equal(json.status, 3, json.stderr);
     const parsed = JSON.parse(json.stdout);
     assert.equal(parsed.status, "ready");
     assert.equal(parsed.evidence, "fixture");

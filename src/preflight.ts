@@ -23,8 +23,10 @@ export const FIXTURE_LABEL =
 /**
  * The inspection result Castles needs from the seam requested upstream. A
  * proposal carried by fixtures only; it becomes a pin when the seam lands.
+ * v1 adds `binding.agentId`: the seam echoes the agent record it read, so a
+ * response about a different record is detectable here as well as upstream.
  */
-export const INSPECTION_CONTRACT = "castles.fixture.sandbox-inspection.v0";
+export const INSPECTION_CONTRACT = "castles.fixture.sandbox-inspection.v1";
 export const PREFLIGHT_JSON_MAX_BYTES = 16_384;
 export const DEFAULT_INSPECTION_TIMEOUT_MS = 30_000;
 const MAX_REASONS = 16;
@@ -69,6 +71,7 @@ export type ReasonCode =
   | "binding_lifecycle_pending"
   | "binding_mismatch"
   | "credential_boundary_unverified"
+  | "egress_allow_list_unsafe"
   | "egress_unrestricted"
   | "generation_mismatch"
   | "gpu_present"
@@ -140,7 +143,14 @@ export type ObservedSandbox = Readonly<{
 
 export type PreflightResult = Readonly<{
   evidence: PreflightEvidence;
-  /** Provider metadata as reported through the seam. Null unless identity held. */
+  /**
+   * Provider metadata as reported through the seam. Null whenever the seam
+   * refused, or the echoed agent record, recorded sandbox ID or returned
+   * sandbox ID differs from the binding. A stale generation alone does not
+   * withhold it: by then the owning service has authenticated the caller for
+   * this exact record and sandbox, and the operator needs the detail to
+   * reconcile.
+   */
   observed: ObservedSandbox | null;
   providerCalls: Readonly<{ inspect: number }>;
   reasons: readonly Reason[];
@@ -197,11 +207,63 @@ function integer(value: unknown): number | null {
     : null;
 }
 
-function allowListEntries(value: unknown): number {
+function allowListItems(value: unknown): readonly string[] {
   if (typeof value !== "string") {
-    return 0;
+    return [];
   }
-  return value.split(",").filter((entry) => entry.trim() !== "").length;
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+}
+
+function allowListEntries(value: unknown): number {
+  return allowListItems(value).length;
+}
+
+/**
+ * The owning service's rule for one allowed domain: a plain multi-label name,
+ * optionally with a single leading `*.` label. No bare `*`, no `*.tld`, no
+ * scheme, port or path. Mirrors `daytonaDomainAllowList` in
+ * coven-agents `lib/runner/daytona/config.ts` at the pinned revision.
+ */
+const ALLOWED_DOMAIN =
+  /^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/iu;
+const IPV4_CIDR = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/u;
+/** Shortest IPv4 prefix still treated as a restriction. */
+const MIN_IPV4_PREFIX = 8;
+
+function isAllowedDomain(entry: string): boolean {
+  return entry.length <= 253 && ALLOWED_DOMAIN.test(entry);
+}
+
+/**
+ * A bounded IPv4 range: canonical octets and a prefix from /8 to /32. An
+ * any-address range (`0.0.0.0/0`), a range wider than /8, a bare address and
+ * every IPv6 form are refused: no IPv6 egress policy is pinned for this
+ * profile, so an IPv6 entry is unrecognised rather than assumed safe.
+ */
+function isBoundedIpv4Range(entry: string): boolean {
+  const match = IPV4_CIDR.exec(entry);
+  if (!match) {
+    return false;
+  }
+  const parts = match.slice(1);
+  if (parts.some((part) => part.length > 1 && part.startsWith("0"))) {
+    return false;
+  }
+  const [a, b, c, d, prefix] = parts.map(Number) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  return (
+    [a, b, c, d].every((octet) => octet <= 255) &&
+    prefix >= MIN_IPV4_PREFIX &&
+    prefix <= 32
+  );
 }
 
 const PRIORITY: readonly PreflightStatus[] = [
@@ -281,6 +343,7 @@ function result(
 
 type ObservedEnvelope = Readonly<{
   binding: Readonly<{
+    agentId: string;
     attemptFence: string;
     generation: number;
     lifecycle: string;
@@ -339,6 +402,7 @@ function parseInspection(response: unknown): Inspection {
     !isRecord(binding) ||
     !isRecord(sandbox) ||
     !isRecord(sdk) ||
+    typeof binding.agentId !== "string" ||
     typeof binding.sandboxId !== "string" ||
     typeof binding.lifecycle !== "string" ||
     typeof binding.attemptFence !== "string" ||
@@ -396,7 +460,28 @@ function evaluateCompatibility(
   if (typeof sandbox.networkBlockAll !== "boolean") {
     missing("networkBlockAll");
   }
+  // An allow list only restricts egress if every entry does. Entries are
+  // examined, not counted: one wildcard or any-address entry opens the list,
+  // and block-all or a second, safe list does not excuse it.
+  let allowListsUsable = true;
+  for (const [field, accepts] of [
+    ["domainAllowList", isAllowedDomain],
+    ["networkAllowList", isBoundedIpv4Range],
+  ] as const) {
+    const value = sandbox[field];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (typeof value !== "string") {
+      missing(field);
+      allowListsUsable = false;
+    } else if (!allowListItems(value).every(accepts)) {
+      fail("egress_allow_list_unsafe", field);
+      allowListsUsable = false;
+    }
+  }
   if (
+    allowListsUsable &&
     sandbox.networkBlockAll !== true &&
     allowListEntries(sandbox.domainAllowList) === 0 &&
     allowListEntries(sandbox.networkAllowList) === 0
@@ -428,6 +513,11 @@ function evaluateCompatibility(
   } else if (autoPause !== policy.lifecycle.autoPauseInterval) {
     fail("lifecycle_auto_pause", "autoPauseInterval");
   }
+  // Stated decision: `autoDestroyAt`, `volumes`, `warmPoolId` and
+  // `linkedSandboxId` are optional in the provider model, and the owning
+  // service's drift inventory reads an absent key as "not set" (pinned
+  // resource-inventory.ts). An absent or null key is therefore not missing
+  // metadata; any present value fails.
   if (sandbox.autoDestroyAt !== undefined && sandbox.autoDestroyAt !== null) {
     fail("lifecycle_ttl", "autoDestroyAt");
   }
@@ -664,6 +754,12 @@ export async function runPreflight(
   // different recorded or returned sandbox is never adopted, whatever its
   // name or labels say, and nothing about it is disclosed.
   let identityHeld = true;
+  if (envelope.binding.agentId !== binding.agentId) {
+    // Defence in depth: the owning service decides ownership, but a response
+    // about another agent's record must never be read as this binding's.
+    findings.add("unauthorized", "owner_mismatch", "binding.agentId");
+    identityHeld = false;
+  }
   if (envelope.binding.sandboxId !== binding.sandboxId) {
     findings.add("unauthorized", "binding_mismatch", "binding.sandboxId");
     identityHeld = false;
@@ -714,6 +810,15 @@ export async function runPreflight(
   evaluateCompatibility(envelope, findings);
   evaluateState(envelope, findings);
   return result(findings, binding, options.evidence, 1, observe(envelope));
+}
+
+/**
+ * The only result that may be treated as readiness. A fixture replay that
+ * reports `ready` is not: consumers must gate on this, never on `status`
+ * alone.
+ */
+export function isLiveReady(value: PreflightResult): boolean {
+  return value.status === "ready" && value.evidence === "live-provider";
 }
 
 // --- Rendering --------------------------------------------------------------

@@ -27,7 +27,7 @@ its children #2–#5.
 corepack pnpm install --frozen-lockfile
 corepack pnpm test        # offline; no credentials, no network
 corepack pnpm typecheck
-corepack pnpm check --fixture fixtures/preflight/cases/ready.json
+corepack pnpm check --fixture fixtures/preflight/cases/ready.json   # exits 3: fixture, never readiness
 ```
 
 Add a failing boundary test before a fix. Report exact commands and results.

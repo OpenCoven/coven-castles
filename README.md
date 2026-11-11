@@ -17,11 +17,12 @@ Requires Node 22+ and Corepack (pnpm 10.32.1 is pinned in `package.json`).
 ```sh
 corepack pnpm install --frozen-lockfile
 corepack pnpm test
-corepack pnpm check --fixture fixtures/preflight/cases/ready.json
-corepack pnpm check --json --fixture fixtures/preflight/cases/public-exposure.json
+corepack pnpm check --fixture fixtures/preflight/cases/ready.json            # exits 3
+corepack pnpm check --json --fixture fixtures/preflight/cases/public-exposure.json   # exits 1
 ```
 
-The tests need no credentials and no network.
+The tests need no credentials and no IP networking. A fixture replay never
+exits 0, so pnpm reports both commands above as failed; that is intended.
 
 ## The check command
 
@@ -38,11 +39,22 @@ castles check [--json] [--fixture <case.json>]
 | `unauthorized` | The owning service refused, or its record binds a different sandbox. |
 | `reconciliation-required` | Stale generation, ambiguous lookup, a returned ID that differs, or an unresolved prior attempt. |
 
-Exit code `0` for `ready`, `1` for every other status, `2` for a usage error.
+| Exit code | Meaning |
+| --- | --- |
+| `0` | `ready`, from a live provider read. Unreachable until the upstream seam exists. |
+| `1` | Any status other than `ready`. |
+| `2` | Usage error, or an unreadable fixture file. |
+| `3` | A fixture replay reported `ready`. Synthetic input, never readiness. |
+
+Anything that consumes a result must require `status: "ready"` **and**
+`evidence: "live-provider"` (`isLiveReady()` in `src/preflight.ts`), never
+`status` alone.
 
 Without `--fixture` the binding is read from `CASTLES_PROFILE`,
 `CASTLES_SANDBOX_ID`, `CASTLES_OWNER_AGENT_ID` and
-`CASTLES_SANDBOX_GENERATION` (see [`.env.example`](.env.example)). Because the
+`CASTLES_SANDBOX_GENERATION` (see [`.env.example`](.env.example)). Exported
+variables win over an optional `.env.local`, which is read from the directory
+the command is run in; only those four keys are read from it. Because the
 upstream seam does not exist yet, a fully configured live check currently
 reports `unavailable` / `upstream_seam_missing` rather than guessing an
 endpoint. With `--fixture`, everything comes from one synthetic case file and
@@ -61,6 +73,14 @@ of private IDs, and with `sourcePolicy` (pinned from source) kept separate from
 - Missing metadata or an unsafe policy (ephemeral or TTL deletion, auto-delete,
   public preview, unrestricted egress, out-of-policy resources) fails the
   check. Nothing is repaired.
+- An egress allow list is read entry by entry. Each domain must be a plain
+  multi-label name (a single leading `*.` label is allowed, as the owning
+  service allows it); each network entry must be an IPv4 range from `/8` to
+  `/32`. A bare `*`, an any-address range such as `0.0.0.0/0`, a wider range,
+  a bare address and every IPv6 entry fail the check.
+- `autoDestroyAt`, `volumes`, `warmPoolId` and `linkedSandboxId` are optional
+  in the provider model: an absent key means "not set", any present value
+  fails.
 - Castles holds no provider, database or harness credential.
 - Even a read-only inspection may count as provider activity and so affect
   idle auto-stop timers. Run a check when you need one; do not schedule

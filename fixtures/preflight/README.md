@@ -12,10 +12,14 @@ Each `cases/*.json` file carries:
 - `inspection` — what the client seam returns for that case
 - `expect` — status, reason codes and the number of inspection calls
 
-The `inspection` shape is `castles.fixture.sandbox-inspection.v0`: the result
+The `inspection` shape is `castles.fixture.sandbox-inspection.v1`: the result
 Castles needs from the read-only seam requested in
 [OpenCoven/coven-agents#296](https://github.com/OpenCoven/coven-agents/issues/296).
 It is a proposal until that seam lands and is pinned; it is not an upstream
-contract.
+contract. v1 adds `binding.agentId`, the agent record the seam read, so a
+response about a different record is refused here too.
+
+Replaying a case with `castles check --fixture` exits `3` when the case
+reports `ready` and `1` otherwise. It never exits `0`.
 
 This directory is owned by issue #2. `fixtures/report-task/` belongs to #5.

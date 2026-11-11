@@ -8,7 +8,7 @@
     "CASTLES_SANDBOX_GENERATION": "3"
   },
   "inspection": {
-    "contract": "castles.fixture.sandbox-inspection.v0",
+    "contract": "castles.fixture.sandbox-inspection.v1",
     "outcome": "ambiguous"
   },
   "expect": {
