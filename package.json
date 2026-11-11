@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Read-only preflight for one explicitly bound, existing Daytona sandbox.",
   "scripts": {
-    "check": "tsx --env-file-if-exists=.env.local src/cli.ts check",
+    "check": "tsx src/cli.ts check",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

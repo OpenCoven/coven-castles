@@ -447,7 +447,10 @@ test("reasons are capped", async () => {
     string,
     unknown
   >;
-  inspection.sandbox = { id: "fixture-sandbox-0001" };
+  inspection.sandbox = {
+    id: "fixture-sandbox-0001",
+    labels: { credentialBoundaryVersion: "attempt-reset-v1" },
+  };
   inspection.platform = {};
   const wire = tripwireClient(() => inspection);
   const result = await runPreflight(fixture.env, wire.client, {
