@@ -1,0 +1,1291 @@
+{
+  "schema": "castles.fixture.negative-cases.v0",
+  "synthetic": true,
+  "notice": "Catalogue of cases the offline entrypoint (tests/mvp.test.ts) and the opt-in smoke harness must cover. It describes required behaviour; it is not a contract for any interface and defines no response shape. No case here has been executed by #5. A case becomes a test only against a reviewed contract from the issue named in dependsOn; until then it is an explicit unverified gate.",
+  "status": "unverified (all cases)",
+  "legend": {
+    "releaseGates": "G1 to G6 are the six hard release gates in issue #1, in order.",
+    "tests": "#N-Ak is the k-th acceptance checkbox of issue #N; #5-Rk is the k-th acceptance-receipt checkbox of issue #5. Full text is in docs/acceptance.md.",
+    "evidenceClassesPossible": "F = offline fixture; RD = real daemon, no provider; L = authorized live provider. This is where the case could be shown, not where it has been."
+  },
+  "cases": [
+    {
+      "id": "CFG-01",
+      "area": "configuration",
+      "case": "No sandbox ID configured",
+      "expect": "Refused before any provider path; zero provider mutations and zero credential transfers",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#2-A2",
+        "#2-A3"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "CFG-02",
+      "area": "configuration",
+      "case": "Unknown or unsupported profile name",
+      "expect": "Refused; zero provider mutations and zero credential transfers",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#2-A2"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "CFG-03",
+      "area": "configuration",
+      "case": "Smoke command run with no explicit opt-in",
+      "expect": "Exits without a single provider call and says why",
+      "releaseGates": [],
+      "tests": [
+        "#5-R2"
+      ],
+      "dependsOn": [
+        "#5 smoke harness (not written; Mode B)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "CFG-04",
+      "area": "configuration",
+      "case": "Opt-in set but maximum spend or runtime budget missing, zero, negative or non-numeric",
+      "expect": "Refused; zero provider calls",
+      "releaseGates": [],
+      "tests": [
+        "#5-R2",
+        "#5-R6"
+      ],
+      "dependsOn": [
+        "#5 smoke harness (not written; Mode B)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "CFG-05",
+      "area": "configuration",
+      "case": "Opt-in set but the sandbox ID given to the smoke command differs from the configured binding",
+      "expect": "Refused; zero provider calls; no lookup of the other ID",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#5-R2",
+        "#2-A3"
+      ],
+      "dependsOn": [
+        "#5 smoke harness (not written; Mode B)",
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "CFG-06",
+      "area": "configuration",
+      "case": "Fixture or mock mode requested together with live opt-in, or selected by environment in a non-test entrypoint",
+      "expect": "Refused; fixture mode is labelled in output and cannot be reached as a fallback when the live path fails",
+      "releaseGates": [],
+      "tests": [
+        "#3-A7",
+        "#5-R6",
+        "#5-R8"
+      ],
+      "dependsOn": [
+        "#5 smoke harness (not written; Mode B)",
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "CFG-07",
+      "area": "configuration",
+      "case": "A provider, admin or database secret is present in the normal client environment",
+      "expect": "Client does not read, forward or echo it; output uses aliases only",
+      "releaseGates": [],
+      "tests": [
+        "#2-A4",
+        "#2-A5",
+        "#3-A6"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "CFG-08",
+      "area": "configuration",
+      "case": "Live opt-in set but current owner authorization is absent or stale",
+      "expect": "Refused before any provider call",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#5-R2",
+        "#3-A2"
+      ],
+      "dependsOn": [
+        "#5 smoke harness (not written; Mode B)",
+        "#3 run/attempt/admission interface (does not exist)",
+        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "L"
+      ]
+    },
+    {
+      "id": "BND-01",
+      "area": "binding",
+      "case": "Sandbox belongs to a different owner than the binding",
+      "expect": "Fails closed as unauthorized; zero provider mutations and zero credential transfers",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#2-A2"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "L"
+      ]
+    },
+    {
+      "id": "BND-02",
+      "area": "binding",
+      "case": "Sandbox generation differs from the bound generation",
+      "expect": "Fails closed; zero provider mutations and zero credential transfers",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#2-A2"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "L"
+      ]
+    },
+    {
+      "id": "BND-03",
+      "area": "binding",
+      "case": "Provider returns a sandbox whose ID is not the one requested",
+      "expect": "Fails closed; the returned sandbox is never adopted or used",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#2-A2",
+        "#2-A3"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "BND-04",
+      "area": "binding",
+      "case": "Configured sandbox does not exist",
+      "expect": "Reported unavailable; zero create, start, update or delete calls",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#2-A3"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "L"
+      ]
+    },
+    {
+      "id": "BND-05",
+      "area": "binding",
+      "case": "Another sandbox matches by name or label, or the lookup is ambiguous",
+      "expect": "No replacement, adoption or second lookup",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#2-A3"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "BND-06",
+      "area": "binding",
+      "case": "Sandbox is public, ephemeral, has a destructive TTL, auto-delete or unrestricted egress, or the metadata is missing",
+      "expect": "Fails closed as incompatible; provider configuration is not repaired",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#2-A2",
+        "#2-A4"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "L"
+      ]
+    },
+    {
+      "id": "BND-07",
+      "area": "binding",
+      "case": "Sandbox is stopped",
+      "expect": "Reported stopped; the check does not wake it and a run is refused",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#2-A4",
+        "#3-A2"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "L"
+      ]
+    },
+    {
+      "id": "BND-08",
+      "area": "binding",
+      "case": "Sandbox has an unresolved prior attempt or an unrelated active workload",
+      "expect": "Reported reconciliation-required; nothing is interrupted and no run is admitted",
+      "releaseGates": [
+        "G1",
+        "G5"
+      ],
+      "tests": [
+        "#2-A2",
+        "#4-A5"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#4 observe/export/cancel interface (does not exist)",
+        "upstream OpenCoven/coven-agents#262 (containment and reuse, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "L"
+      ]
+    },
+    {
+      "id": "ADM-01",
+      "area": "admission",
+      "case": "Request names a familiar revision other than the bound one",
+      "expect": "Refused before launch; zero provider mutations and zero credential transfers",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#3-A2"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "upstream canonical producer: familiar root/revision in admission (missing per #3 investigation)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "ADM-02",
+      "area": "admission",
+      "case": "Owner is revoked before submit, and between submit and dispatch",
+      "expect": "Refused or terminated as revoked; zero provider mutations and zero credential transfers",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#3-A2"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "ADM-03",
+      "area": "admission",
+      "case": "Grant has expired before submit, and between claim and credential transfer",
+      "expect": "Refused with a reason distinct from revocation; no credential transfer",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#3-A2"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "upstream canonical producer: familiar root/revision in admission (missing per #3 investigation)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "ADM-04",
+      "area": "admission",
+      "case": "Server or harness does not advertise a required capability",
+      "expect": "Refused before submit",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#3-A2"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "ADM-05",
+      "area": "admission",
+      "case": "Server resolves a sandbox other than the bound one at dispatch",
+      "expect": "Refused; no create, start or relabel call",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#3-A2"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "ADM-06",
+      "area": "admission",
+      "case": "No authority: missing credential, wrong audience, missing binding or missing producer evidence. A caller-supplied familiar field, sandbox ID, account login or subscription state is offered instead",
+      "expect": "Each refused, naming what is absent; nothing supplied by the caller substitutes",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#3-A2"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "upstream canonical producer: familiar root/revision in admission (missing per #3 investigation)",
+        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "ADM-07",
+      "area": "admission",
+      "case": "Two different operations submitted concurrently",
+      "expect": "Exactly one admitted; the other denied, not queued; one credential transfer in total",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#3-A3"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "ADM-08",
+      "area": "admission",
+      "case": "Same operation and same payload submitted again, in parallel and after a disconnect",
+      "expect": "The existing run is returned; one run, one attempt, one credential transfer",
+      "releaseGates": [
+        "G2"
+      ],
+      "tests": [
+        "#3-A3",
+        "#4-A1"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "ADM-09",
+      "area": "admission",
+      "case": "Same operation with changed task text",
+      "expect": "Conflict; the original run is untouched",
+      "releaseGates": [
+        "G2"
+      ],
+      "tests": [
+        "#3-A3"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "ADM-10",
+      "area": "admission",
+      "case": "Same operation and task text, but one input file byte changed (input.SHA256SUMS no longer verifies)",
+      "expect": "Conflict, not a silent reuse of the earlier run",
+      "releaseGates": [
+        "G2"
+      ],
+      "tests": [
+        "#3-A3"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "open question for #3: how input bytes enter the payload digest"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "ADM-11",
+      "area": "admission",
+      "case": "Report produced by a mock, a recorded fixture or an unbound harness run",
+      "expect": "Labelled as such and never counted toward the real-admission checkbox",
+      "releaseGates": [],
+      "tests": [
+        "#3-A1",
+        "#3-A7",
+        "#5-R3",
+        "#5-R8"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "#5 smoke harness (not written; Mode B)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "BST-01",
+      "area": "bootstrap",
+      "case": "Read-only check is run on a sandbox with no runtime installed",
+      "expect": "Check reports the state and installs nothing; bootstrap happens only on an explicit action",
+      "releaseGates": [],
+      "tests": [
+        "#3-A4",
+        "#2-A4"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "BST-02",
+      "area": "bootstrap",
+      "case": "Bootstrap repeated on the same validated version",
+      "expect": "No reinstall, no state reset, no second supervisor; file hashes unchanged",
+      "releaseGates": [],
+      "tests": [
+        "#3-A4"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "upstream admitted install operation (missing per #3 investigation)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "BST-03",
+      "area": "bootstrap",
+      "case": "Bootstrap interrupted part-way",
+      "expect": "Reads as not ready; a later run is refused until bootstrap completes",
+      "releaseGates": [],
+      "tests": [
+        "#3-A4"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "BST-04",
+      "area": "bootstrap",
+      "case": "Target directory already holds files Castles did not write, or a manifest hash does not match",
+      "expect": "Refused without overwriting anything",
+      "releaseGates": [],
+      "tests": [
+        "#3-A4",
+        "#5-R7"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "OUT-01",
+      "area": "bounded outputs",
+      "case": "Input exceeds a manifest bound: too many files, a file too large, total too large, path too long or too deep",
+      "expect": "Refused before staging; nothing is sent",
+      "releaseGates": [],
+      "tests": [
+        "#3-A5"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "OUT-02",
+      "area": "bounded outputs",
+      "case": "Input contains a symlink, an absolute path, a parent-directory segment, a NUL, or a name outside the allowed pattern",
+      "expect": "Refused before staging",
+      "releaseGates": [],
+      "tests": [
+        "#3-A5"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "OUT-03",
+      "area": "bounded outputs",
+      "case": "Input file name or content contains shell metacharacters",
+      "expect": "Staged as data; never interpolated into a command",
+      "releaseGates": [],
+      "tests": [
+        "#3-A5"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "OUT-04",
+      "area": "bounded outputs",
+      "case": "Report exceeds hardMaxBytes",
+      "expect": "Refused, or truncated with an explicit marker; never accepted silently",
+      "releaseGates": [],
+      "tests": [
+        "#3-A5",
+        "#4-A6"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "OUT-05",
+      "area": "bounded outputs",
+      "case": "Run reaches its time budget",
+      "expect": "New actions stop and the run enters the existing stop and reconciliation path; not reported as success",
+      "releaseGates": [
+        "G4"
+      ],
+      "tests": [
+        "#3-A5"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "OUT-06",
+      "area": "bounded outputs",
+      "case": "Input instructs the agent to create a marker file and append a marker line (notes/automation-notice.txt)",
+      "expect": "Neither happens; enforced by runtime policy and checked from run evidence, not from the prompt",
+      "releaseGates": [],
+      "tests": [
+        "#3-A5"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "OUT-07",
+      "area": "bounded outputs",
+      "case": "Artifact or evidence path is malformed or traversing: ../, absolute, ~, NUL, backslash, drive letter, URL-encoded or Unicode-normalised",
+      "expect": "Export rejects it; evidence paths are treated as data, never as write targets",
+      "releaseGates": [],
+      "tests": [
+        "#4-A6"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "OUT-08",
+      "area": "bounded outputs",
+      "case": "Export destination exists, is a symlink, or has a symlinked parent leaving the owner-controlled directory",
+      "expect": "Refused; nothing overwritten; no partial file left",
+      "releaseGates": [],
+      "tests": [
+        "#4-A6"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "OUT-09",
+      "area": "bounded outputs",
+      "case": "Exported report bytes do not match the recorded digest",
+      "expect": "Export fails and leaves no partial file",
+      "releaseGates": [
+        "G3"
+      ],
+      "tests": [
+        "#4-A6"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "REC-01",
+      "area": "reconnect",
+      "case": "Acknowledgement lost after submit; client restarts and resubmits",
+      "expect": "The same operation and run are recovered; no second execution",
+      "releaseGates": [
+        "G2",
+        "G3"
+      ],
+      "tests": [
+        "#4-A1"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "REC-02",
+      "area": "reconnect",
+      "case": "A second authorized client session reads the run",
+      "expect": "Same familiar revision, status, receipt and report bytes as the first session",
+      "releaseGates": [
+        "G6"
+      ],
+      "tests": [
+        "#4-A2",
+        "#5-R3"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "upstream canonical producer: familiar root/revision in admission (missing per #3 investigation)",
+        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "REC-03",
+      "area": "reconnect",
+      "case": "A different owner, or a stale or revoked credential, tries to read or follow the run",
+      "expect": "Refused, indistinguishable from a missing run; no events delivered",
+      "releaseGates": [
+        "G6"
+      ],
+      "tests": [
+        "#4-A2"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "REC-04",
+      "area": "reconnect",
+      "case": "Event cursor is older than the retained window, or malformed",
+      "expect": "Explicit resnapshot for a gap; rejection for malformed; never a fresh launch and never a silent restart from zero",
+      "releaseGates": [
+        "G2"
+      ],
+      "tests": [
+        "#4-A1"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "REC-05",
+      "area": "reconnect",
+      "case": "Sandbox is stopped or unavailable when the result is read",
+      "expect": "Committed outcome is still returned with zero provider calls; a previously running task is reported outcome-unknown, never as having survived",
+      "releaseGates": [
+        "G3"
+      ],
+      "tests": [
+        "#4-A3"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "REC-06",
+      "area": "reconnect",
+      "case": "Local client cache is deleted, or forged to name another run or an approved state",
+      "expect": "Server record wins; the cache grants no read, cancel or approval",
+      "releaseGates": [
+        "G2"
+      ],
+      "tests": [
+        "#4-A1",
+        "#4-A7"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "REC-07",
+      "area": "reconnect",
+      "case": "Selected sandbox is stopped and started between two reads",
+      "expect": "A neutral workspace marker is byte-identical afterwards. Needs separate stop/start authorization",
+      "releaseGates": [
+        "G3"
+      ],
+      "tests": [
+        "#4-A3",
+        "#5-R7"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "explicit stop/start authorization for an exclusively assigned sandbox"
+      ],
+      "evidenceClassesPossible": [
+        "L"
+      ]
+    },
+    {
+      "id": "CAN-01",
+      "area": "cancellation",
+      "case": "Cancel a running attempt",
+      "expect": "Stopping, stopped, outcome-unknown and cleanup-required are reported distinctly; an accepted stop request is not shown as contained",
+      "releaseGates": [
+        "G4"
+      ],
+      "tests": [
+        "#4-A4"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "CAN-02",
+      "area": "cancellation",
+      "case": "Cancel races with natural completion; cancel sent twice",
+      "expect": "Exactly one terminal state; the second cancel is idempotent; the fence is still held",
+      "releaseGates": [
+        "G4"
+      ],
+      "tests": [
+        "#4-A4"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "CAN-03",
+      "area": "cancellation",
+      "case": "A stale worker result arrives for an older attempt or lease",
+      "expect": "Rejected; the current record is unchanged",
+      "releaseGates": [
+        "G4"
+      ],
+      "tests": [
+        "#4-A4"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "CAN-04",
+      "area": "cancellation",
+      "case": "Authorization expires between observe and cancel, or a different owner sends the cancel",
+      "expect": "Cancel refused; the run is untouched",
+      "releaseGates": [
+        "G4",
+        "G6"
+      ],
+      "tests": [
+        "#4-A4",
+        "#4-A2"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "CAN-05",
+      "area": "cancellation",
+      "case": "Stop or start returns an ambiguous result or times out after provider acceptance",
+      "expect": "Reported outcome-unknown; reconciled by the exact recorded identity; nothing is relaunched and no new operation is created",
+      "releaseGates": [
+        "G4"
+      ],
+      "tests": [
+        "#4-A4"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "CAN-06",
+      "area": "cancellation",
+      "case": "Client closes its connection or exits during a run",
+      "expect": "Not treated as cancellation; the run and its fence are unaffected",
+      "releaseGates": [
+        "G3",
+        "G4"
+      ],
+      "tests": [
+        "#4-A1",
+        "#4-A4"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "RED-01",
+      "area": "redaction",
+      "case": "Report, artifacts or logs contain key material, a bearer credential, a token-shaped string or an environment-style secret (RP-11 to RP-14)",
+      "expect": "Detected and failed; the offending value is not echoed in the failure message",
+      "releaseGates": [],
+      "tests": [
+        "#3-A6",
+        "#5-R5"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "RED-02",
+      "area": "redaction",
+      "case": "Diagnostic or JSON output carries a real sandbox ID, owner ID or raw provider error",
+      "expect": "Output shows redacted aliases and fixed reason codes only",
+      "releaseGates": [],
+      "tests": [
+        "#2-A5",
+        "#5-R5"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "RED-03",
+      "area": "redaction",
+      "case": "Provider metadata is hostile: oversized, deeply nested, or carrying control characters",
+      "expect": "Output stays bounded and clean",
+      "releaseGates": [],
+      "tests": [
+        "#2-A5"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "RED-04",
+      "area": "redaction",
+      "case": "Export is asked to include credentials, cookies, provider secrets or private keys, or the source record contains them",
+      "expect": "Never exported; the export is labelled task evidence, not a familiar backup",
+      "releaseGates": [],
+      "tests": [
+        "#4-A6"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "RED-05",
+      "area": "redaction",
+      "case": "Qualification evidence packet is assembled for a public issue",
+      "expect": "Contains revisions, hashes, commands and results; no real sandbox identifier, transcript, private source or private artifact",
+      "releaseGates": [],
+      "tests": [
+        "#5-R5"
+      ],
+      "dependsOn": [
+        "#5 smoke harness (not written; Mode B)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "RED-06",
+      "area": "redaction",
+      "case": "Guest configuration is inspected after credential staging",
+      "expect": "No provider, admin, signing or database credential present; any harness credential is attempt-scoped",
+      "releaseGates": [],
+      "tests": [
+        "#3-A6"
+      ],
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "REU-01",
+      "area": "reuse refusal",
+      "case": "Second task submitted while the first attempt's cleanup fence is held",
+      "expect": "Refused; no credential staged; workspace marker intact",
+      "releaseGates": [
+        "G5"
+      ],
+      "tests": [
+        "#4-A5",
+        "#5-R4"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "upstream OpenCoven/coven-agents#262 (containment and reuse, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "REU-02",
+      "area": "reuse refusal",
+      "case": "A detached descendant of the first attempt survives, or a cleanup step fails",
+      "expect": "Stays cleanup-required; task two is blocked; workspace data preserved",
+      "releaseGates": [
+        "G4",
+        "G5"
+      ],
+      "tests": [
+        "#4-A5"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "upstream OpenCoven/coven-agents#262 (containment and reuse, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "REU-03",
+      "area": "reuse refusal",
+      "case": "Provider session and credential file are both gone, with no containment evidence",
+      "expect": "Still refused; absence alone is not containment",
+      "releaseGates": [
+        "G5"
+      ],
+      "tests": [
+        "#4-A5"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "upstream OpenCoven/coven-agents#262 (containment and reuse, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "REU-04",
+      "area": "reuse refusal",
+      "case": "A flag, environment variable, retry count or test helper is used to get past the refusal",
+      "expect": "No such path exists; refusal is not convertible into admission",
+      "releaseGates": [
+        "G5"
+      ],
+      "tests": [
+        "#4-A5",
+        "#5-R6"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "#5 smoke harness (not written; Mode B)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "REU-05",
+      "area": "reuse refusal",
+      "case": "Client surface is searched for delete, recreate, reset, resize, stop or start",
+      "expect": "No destructive verb is reachable; an old checkpoint cannot restore revoked grants or consumed approvals",
+      "releaseGates": [
+        "G5"
+      ],
+      "tests": [
+        "#4-A7",
+        "#5-R7"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "REU-06",
+      "area": "reuse refusal",
+      "case": "Qualification run ends with cleanup_required retained",
+      "expect": "Reported as blocked in the matrix; never waived, skipped silently or relabelled as passed",
+      "releaseGates": [
+        "G5"
+      ],
+      "tests": [
+        "#5-R4",
+        "#5-R9"
+      ],
+      "dependsOn": [
+        "#5 smoke harness (not written; Mode B)",
+        "upstream OpenCoven/coven-agents#262 (containment and reuse, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "REU-07",
+      "area": "reuse refusal",
+      "case": "Second task succeeds on the same sandbox after real containment evidence",
+      "expect": "Positive case. Not achievable today: no workspace-preserving containment exists upstream",
+      "releaseGates": [
+        "G5"
+      ],
+      "tests": [
+        "#4-A5",
+        "#5-R4"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "upstream OpenCoven/coven-agents#262 (containment and reuse, open)",
+        "explicit provider authorization"
+      ],
+      "evidenceClassesPossible": [
+        "L"
+      ]
+    }
+  ]
+}
