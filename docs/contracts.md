@@ -20,11 +20,11 @@ the same three steps.
 
 ## Produced by #2
 
-All at `94f835a0dca24d1f1e740d0b8a1fb6a9a6f2c3fd` on draft PR
+All at `7ead0d88fae8ff049a2ed0dedbb0a8221eaeb9fa` on draft PR
 [#6](https://github.com/OpenCoven/coven-castles/pull/6).
 
 **Standing: proposed.** A review of the earlier head `799488f` asked for
-changes; `94f835a` answers it and has not been re-reviewed. Nothing here is
+changes; `7ead0d8` answers it and has not been re-reviewed. Nothing here is
 reviewed or accepted, and the #3 and #5 gates are closed.
 
 Evidence for everything below is **fixture** only. No live provider call has
