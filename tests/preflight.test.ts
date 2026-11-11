@@ -116,6 +116,7 @@ const FAIL_CLOSED_CASES = [
   "binding-mismatch",
   "metadata-missing",
   "unrestricted-egress",
+  "allow-all-egress",
   "unresolved-attempt",
 ] as const;
 
@@ -340,6 +341,104 @@ test("each unsafe policy field fails on its own", async () => {
     });
     assert.equal(result.status, "incompatible", code);
     assert.deepEqual(codes(result), [code]);
+  }
+});
+
+// --- Egress: an allow list must actually restrict (review finding B1) -------
+
+async function withSandbox(edit: (sandbox: Record<string, unknown>) => void) {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const inspection = structuredClone(fixture.inspection) as {
+    sandbox: Record<string, unknown>;
+  };
+  edit(inspection.sandbox);
+  const wire = tripwireClient(() => inspection);
+  return runPreflight(fixture.env, wire.client, { evidence: "fixture" });
+}
+
+test("allow-list entries that do not restrict egress fail closed", async () => {
+  const unsafe: [string, unknown][] = [
+    ["domainAllowList", "*"],
+    ["domainAllowList", "*.*"],
+    ["domainAllowList", "*.invalid"],
+    ["domainAllowList", "fixture.invalid,*"],
+    ["domainAllowList", "https://fixture.invalid"],
+    ["domainAllowList", "fixture.invalid:443"],
+    ["domainAllowList", "fixture.invalid/path"],
+    ["domainAllowList", "fixture .invalid"],
+    ["domainAllowList", "fix*ture.invalid"],
+    ["networkAllowList", "0.0.0.0/0"],
+    ["networkAllowList", "::/0"],
+    ["networkAllowList", "0.0.0.0/1,128.0.0.0/1"],
+    ["networkAllowList", "10.0.0.0/7"],
+    ["networkAllowList", "192.0.2.0/24,0.0.0.0/0"],
+    ["networkAllowList", "10.0.0.0"],
+    ["networkAllowList", "999.0.0.0/24"],
+    ["networkAllowList", "10.0.0.0/33"],
+    ["networkAllowList", "10.0.0.0/08"],
+    ["networkAllowList", "fd00::/8"],
+    ["networkAllowList", "any"],
+  ];
+  for (const [field, value] of unsafe) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.domainAllowList = null;
+      sandbox[field] = value;
+    });
+    assert.equal(result.status, "incompatible", `${field}=${String(value)}`);
+    assert.deepEqual(
+      codes(result),
+      ["egress_allow_list_unsafe"],
+      `${field}=${String(value)}`
+    );
+    assert.deepEqual(result.reasons[0], {
+      code: "egress_allow_list_unsafe",
+      field,
+    });
+  }
+});
+
+test("an unsafe allow list is not excused by block-all or by a second safe list", async () => {
+  const blockAll = await withSandbox((sandbox) => {
+    sandbox.networkBlockAll = true;
+    sandbox.domainAllowList = "*";
+  });
+  assert.equal(blockAll.status, "incompatible");
+  assert.deepEqual(codes(blockAll), ["egress_allow_list_unsafe"]);
+
+  const mixed = await withSandbox((sandbox) => {
+    sandbox.networkAllowList = "0.0.0.0/0";
+  });
+  assert.equal(mixed.status, "incompatible");
+  assert.deepEqual(codes(mixed), ["egress_allow_list_unsafe"]);
+});
+
+test("an allow list that is present but not a string is missing metadata", async () => {
+  for (const field of ["domainAllowList", "networkAllowList"]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox[field] = ["*"];
+    });
+    assert.equal(result.status, "incompatible", field);
+    assert.ok(codes(result).includes("metadata_missing"), field);
+    assert.notEqual(result.status, "ready");
+  }
+});
+
+test("plain domains and bounded IPv4 ranges are accepted as restricted egress", async () => {
+  const safe: [string, string][] = [
+    ["domainAllowList", "fixture.invalid"],
+    ["domainAllowList", "*.fixture.invalid"],
+    ["domainAllowList", "a.fixture.invalid, b.fixture.invalid"],
+    ["networkAllowList", "10.0.0.0/8"],
+    ["networkAllowList", "192.0.2.0/24"],
+    ["networkAllowList", "192.0.2.1/32, 198.51.100.0/24"],
+  ];
+  for (const [field, value] of safe) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.domainAllowList = null;
+      sandbox[field] = value;
+    });
+    assert.equal(result.status, "ready", `${field}=${value}`);
+    assert.deepEqual(result.reasons, []);
   }
 });
 
