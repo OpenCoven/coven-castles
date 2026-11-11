@@ -74,10 +74,12 @@ of private IDs, and with `sourcePolicy` (pinned from source) kept separate from
   public preview, unrestricted egress, out-of-policy resources) fails the
   check. Nothing is repaired.
 - An egress allow list is read entry by entry. Each domain must be a plain
-  multi-label name (a single leading `*.` label is allowed, as the owning
-  service allows it); each network entry must be an IPv4 range from `/8` to
-  `/32`. A bare `*`, an any-address range such as `0.0.0.0/0`, a wider range,
-  a bare address and every IPv6 entry fail the check.
+  multi-label name with no wildcard anywhere; each network entry must be an
+  IPv4 range from `/8` to `/32`. A `*` in any position (including
+  `*.example.test`), an any-address range such as `0.0.0.0/0` or `::/0`, a
+  wider range, a bare address and every IPv6 entry fail the check. This is
+  stricter than the owning service, which accepts a leading `*.` label: a
+  sandbox configured that way is reported `incompatible`.
 - `autoDestroyAt`, `volumes`, `warmPoolId` and `linkedSandboxId` are optional
   in the provider model: an absent key means "not set", any present value
   fails.
