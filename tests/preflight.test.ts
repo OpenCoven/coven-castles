@@ -376,6 +376,8 @@ test("allow-list entries that do not restrict egress fail closed", async () => {
     ["domainAllowList", "*"],
     ["domainAllowList", "*.*"],
     ["domainAllowList", "*.invalid"],
+    ["domainAllowList", "*.fixture.invalid"],
+    ["domainAllowList", "fixture.invalid,*.sub.fixture.invalid"],
     ["domainAllowList", "fixture.invalid,*"],
     ["domainAllowList", "https://fixture.invalid"],
     ["domainAllowList", "fixture.invalid:443"],
@@ -441,7 +443,7 @@ test("an allow list that is present but not a string is missing metadata", async
 test("plain domains and bounded IPv4 ranges are accepted as restricted egress", async () => {
   const safe: [string, string][] = [
     ["domainAllowList", "fixture.invalid"],
-    ["domainAllowList", "*.fixture.invalid"],
+    ["domainAllowList", "api.sub.fixture.invalid"],
     ["domainAllowList", "a.fixture.invalid, b.fixture.invalid"],
     ["networkAllowList", "10.0.0.0/8"],
     ["networkAllowList", "192.0.2.0/24"],
