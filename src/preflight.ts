@@ -222,13 +222,16 @@ function allowListEntries(value: unknown): number {
 }
 
 /**
- * The owning service's rule for one allowed domain: a plain multi-label name,
- * optionally with a single leading `*.` label. No bare `*`, no `*.tld`, no
- * scheme, port or path. Mirrors `daytonaDomainAllowList` in
- * coven-agents `lib/runner/daytona/config.ts` at the pinned revision.
+ * One allowed domain: a plain multi-label name and nothing else. No wildcard
+ * in any position (`*`, `*.tld`, `*.example.test`), no scheme, port or path.
+ *
+ * This is deliberately stricter than the owning service, whose
+ * `daytonaDomainAllowList` (coven-agents `lib/runner/daytona/config.ts` at
+ * the pinned revision) also accepts a single leading `*.` label. A sandbox
+ * configured with such an entry is reported incompatible here.
  */
 const ALLOWED_DOMAIN =
-  /^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/iu;
+  /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/iu;
 const IPV4_CIDR = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/u;
 /** Shortest IPv4 prefix still treated as a restriction. */
 const MIN_IPV4_PREFIX = 8;
