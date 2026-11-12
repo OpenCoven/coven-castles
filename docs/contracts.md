@@ -45,7 +45,7 @@ starts again as **proposed**.
 Snapshot of PR [#6](https://github.com/OpenCoven/coven-castles/pull/6),
 merged into `main` on 2026-11-12 as
 `978a2465df8d3af5b8e693fa9d228a9055aa1db8`. The Standing, Acceptance limits
-and Gates rows were refreshed 2026-11-12T21:40Z. Everything below describes
+and Gates rows were refreshed 2026-11-12T21:30Z. Everything below describes
 the source at this revision.
 
 | | |
