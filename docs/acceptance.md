@@ -237,15 +237,15 @@ test input, not acceptance evidence.
 The expected-report properties were exercised with a throwaway script that is
 not committed. It follows the `parsing` rules (revision 3) in
 `expected/report-properties.json`. Result at this revision: 18 text
-properties; the 3 passing files, the 6 failing files and the 184 generated
-recipes each gave exactly their declared result (193 of 193), none taking
+properties; the 3 passing files, the 6 failing files and the 201 generated
+recipes each gave exactly their declared result (210 of 210), none taking
 more than 5 s. That check
 becomes part of `tests/mvp.test.ts` when the wiring gate opens; until then
 treat it as a contributor's note, not a receipt.
 
-The properties are heuristics, and the fixture says where they are wrong: 54
+The properties are heuristics, and the fixture says where they are wrong: 64
 of the recipes carry `knownLimit` and pin a result that is not the right one,
-37 reports that should be rejected and pass, 17 correct reports that fail. The
+40 reports that should be rejected and pass, 24 correct reports that fail. The
 classes are listed under Limits in `fixtures/report-task/README.md`. No text
 property can decide whether a diagnosis is right or whether text is visible to
 a reader, and the secret patterns are a secondary net behind the seeded-value
