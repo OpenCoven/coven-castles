@@ -318,6 +318,24 @@ function echoedInteger(value: unknown): number | null {
     : null;
 }
 
+/** The most a count in `observed` may say. */
+const ECHOED_COUNT_MAX = 999;
+
+/**
+ * A count as it may be printed: an integer from 0 to `ECHOED_COUNT_MAX`,
+ * or null when the length is not an integer at all. A real array always has
+ * a length that is an integer from 0 up; an array behind a proxy, in a
+ * response held in memory, can report a negative or fractional one, which
+ * would be a third way for an all-digit ID to come back. Output only: the
+ * policy on volumes reads the length itself.
+ */
+function echoedCount(length: unknown): number | null {
+  const reading = integer(length);
+  return reading === null
+    ? null
+    : Math.max(0, Math.min(reading, ECHOED_COUNT_MAX));
+}
+
 function allowListItems(value: unknown): readonly string[] {
   if (typeof value !== "string") {
     return [];
@@ -747,7 +765,7 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
         sandbox.linkedSandboxId !== undefined &&
         sandbox.linkedSandboxId !== null,
       volumes: Array.isArray(sandbox.volumes)
-        ? Math.min(sandbox.volumes.length, 999)
+        ? echoedCount(sandbox.volumes.length)
         : sandbox.volumes === undefined
           ? 0
           : null,
@@ -762,7 +780,7 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
       egressAllowListEntries: Math.min(
         allowListEntries(sandbox.domainAllowList) +
           allowListEntries(sandbox.networkAllowList),
-        999
+        ECHOED_COUNT_MAX
       ),
       networkBlockAll:
         typeof sandbox.networkBlockAll === "boolean"
@@ -1055,7 +1073,9 @@ export function isLiveReady(value: PreflightResult): boolean {
 /**
  * Bounded by construction: every string is a literal, an alias, a member of
  * a fixed set, or a strict three-part version; every observed number is a
- * count capped at 999 or an integer inside `ECHOED_INTEGER`.
+ * count from 0 to 999 or an integer inside `ECHOED_INTEGER`. The egress
+ * count is the length of arrays this module builds itself; the volume count
+ * goes through `echoedCount`.
  */
 export function renderJson(value: PreflightResult): string {
   return `${JSON.stringify(value, null, 2)}\n`;

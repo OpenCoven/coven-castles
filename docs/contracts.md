@@ -133,7 +133,10 @@ Observed integers (`resources.cpu`, `memoryGiB`, `diskGiB` and `gpu`, the four
 decided on the value itself and are the same whether or not it is echoed: a
 recorded generation of 100,000 or more that matches the binding is `ready`
 with `binding.generation: null`. An identifier that is itself an integer
-inside that range cannot be told from a reading.
+inside that range cannot be told from a reading. The two counts,
+`attachments.volumes` and `exposure.egressAllowListEntries`, are integers from
+0 to 999; `attachments.volumes` is `null` when the value is not an array, or
+its length is not an integer.
 
 Two rules behind existing reason codes, both Castles decisions:
 
