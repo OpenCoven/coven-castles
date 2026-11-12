@@ -3067,6 +3067,10 @@ const SCAN_MUST_CATCH: readonly (readonly [string, ...Plant[]])[] = [
     "readFileSync of a named file",
     append("preflight.ts", 'const local = readFileSync(".env", "utf8");'),
   ],
+  [
+    "readFileSync of the same argument with a flag",
+    append("preflight.ts", 'readFileSync(path, { encoding: "utf8", flag: "a" });'),
+  ],
 ];
 
 /**
