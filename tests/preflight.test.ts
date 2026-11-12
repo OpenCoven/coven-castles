@@ -2656,6 +2656,22 @@ test("R6: one inspection is counted exactly when the seam method was invoked", a
   assert.equal(early, 0);
   assert.equal(invalid.providerCalls.inspect, 0);
   assert.equal(invalid.evidence, "fixture");
+
+  // The client's property is still read, once, with an invalid binding: the
+  // evidence class depends on it (review rv11 N1). At 13ab3bc an invalid
+  // binding returned without touching the client.
+  let lazyReads = 0;
+  const lazy = Object.defineProperty({}, "inspectBoundSandbox", {
+    get() {
+      lazyReads += 1;
+      return counted.inspectBoundSandbox;
+    },
+  }) as SandboxInspectionClient;
+  const unbound = await runPreflight({}, lazy);
+  assert.equal(lazyReads, 1);
+  assert.equal(early, 0);
+  assert.equal(unbound.providerCalls.inspect, 0);
+  assert.equal(unbound.evidence, "fixture");
 });
 
 test("R6: options that are null or not an object are no options", async (t) => {
@@ -2961,9 +2977,9 @@ test("R6: an over-long timeout does not abandon a provider that answers, and Nod
  * not know what `key`, `path` or the key list hold when the code runs. The
  * environment rule shows that the one loop is spelled as expected and that
  * the list it names is declared as four keys; it does not show that only
- * those four variables are read. SCAN_KNOWN_GAPS lists evasions that pass,
- * among them a key list widened without being named and a read of any file
- * through the allowed call. The permission-model run at the end of this file
+ * those four variables are read. SCAN_KNOWN_GAPS lists examples of evasions
+ * that pass, among them a key list widened without being named and a read
+ * of any file through the allowed call. The permission-model run at the end of this file
  * is the run-time check, with its own stated limits; it does not restrict
  * environment reads at all.
  */
@@ -3392,20 +3408,34 @@ const SCAN_MUST_CATCH: readonly (readonly [string, ...Plant[]])[] = [
  * Evasions the scan is KNOWN not to catch. They are written down so the scan
  * is not mistaken for a proof: it reads text, so a property name built at run
  * time, or code hidden from the comment stripper and then aliased, gets
- * through. Each entry is the text and the file it is appended to.
+ * through. Each entry is the text, the file it goes into, and where: at the
+ * end, or first when it has to run before the binding loop to matter.
  *
- * The permission-model run below stops the first two at run time. It does
- * not stop the last two: it does not restrict the environment, and it allows
- * reads of the paths each case names, so a read inside those paths succeeds
- * and a denied one wrapped in try/catch goes unreported. Nothing in this
- * suite shows that only the four binding variables are read; that holds by
+ * The list is examples, not a complete account. Each entry is one use of a
+ * technique, and a technique has more uses than the one written down: the
+ * hidden alias of entry two reads the environment in entry six.
+ *
+ * What the permission-model run below stops is what the first two TEXTS do,
+ * not the techniques behind them. The first text builds a function from a
+ * string, and code generation from strings is denied; the second writes a
+ * report file, and file writes are denied. Nothing in this suite stops the
+ * other four, when scanned or when run: the permission-model run does not
+ * restrict the environment at all, and it allows reads of the paths each
+ * case names, so a read inside those paths succeeds and a denied one wrapped
+ * in try/catch goes unreported.
+ *
+ * Entries three and five each make the one allowed loop read a fifth
+ * variable without naming the key list where the scan looks. Five replaces
+ * the iterator every array shares and needs no import, so refusing
+ * namespace imports would close three and not five. Nothing in this suite
+ * shows that only the four binding variables are read; that holds by
  * reading src/.
  *
  * Not a gap any more: a call such as `readFileSync(x, { flag: "a" })`, which
  * creates or appends to a file through an allowed import. The scan now
  * refuses every call but READ_CALL (see SCAN_MUST_CATCH).
  */
-const SCAN_KNOWN_GAPS: readonly (readonly [string, string, string])[] = [
+const SCAN_KNOWN_GAPS: readonly (readonly [string, string, string, "first"?])[] = [
   [
     "property name built at run time",
     'const k = ["constr", "uctor"].join("");\nconst reach = ([] as any)[k][k]("return this");',
@@ -3425,6 +3455,27 @@ const SCAN_KNOWN_GAPS: readonly (readonly [string, string, string])[] = [
     "a read of any file through the one allowed call form, swallowed",
     'try {\n  const path = "/etc/hosts";\n  readFileSync(path, "utf8");\n} catch {}',
     "preflight.ts",
+  ],
+  // Review rv11 N6.
+  [
+    "the iterator every array shares replaced, so the one allowed loop reads a fifth variable with the key list never named",
+    [
+      "const arrays = Object.getPrototypeOf([]);",
+      "const plain = arrays[Symbol.iterator];",
+      "arrays[Symbol.iterator] = function* (this: string[]) {",
+      "  yield* plain.call(this);",
+      '  if (this[0] === "CASTLES_PROFILE") {',
+      '    yield "DAYTONA_API_KEY";',
+      "  }",
+      "};",
+    ].join("\n"),
+    "cli.ts",
+    "first",
+  ],
+  [
+    "the hidden alias of entry two, reading a variable outside the binding keys",
+    'const a = "/*"; const p = process\nconst b = "*/";\nconst other = (p as any).env.DAYTONA_API_KEY;',
+    "cli.ts",
   ],
 ];
 
@@ -3454,11 +3505,12 @@ test("the binding key list is exactly the four CASTLES_ keys", () => {
 });
 
 test("the capability scan is a tripwire, not a proof: these known evasions pass it", () => {
-  for (const [label, text, file] of SCAN_KNOWN_GAPS) {
+  for (const [label, text, file, where] of SCAN_KNOWN_GAPS) {
     const files = readSourceTree();
-    append(file, text)(files);
+    (where === "first" ? prepend : append)(file, text)(files);
     assert.deepEqual(scanSources(files), [], label);
   }
+  assert.equal(SCAN_KNOWN_GAPS.length, 6);
 });
 
 // --- CLI: read-only command, human and JSON, no credentials ----------------
