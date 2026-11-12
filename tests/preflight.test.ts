@@ -2703,39 +2703,130 @@ test("R6: a null or non-object environment is an unconfigured binding, not an ex
   }
 });
 
-const UNUSABLE_TIMEOUTS: [string, unknown][] = [
+/**
+ * Numbers no timer can hold. Node replaces a delay above 2^31-1 with 1 ms
+ * and warns, so a caller asking for a long wait got none: the one timeout
+ * defect review rv6c R6 reported.
+ */
+const OVER_LONG_TIMEOUTS: [string, number][] = [
   ["2^31", 2 ** 31],
   ["2^31 - 1 + 0.5", 2 ** 31 - 0.5],
   ["Infinity", Number.POSITIVE_INFINITY],
-  ["-Infinity", Number.NEGATIVE_INFINITY],
-  ["NaN", Number.NaN],
   ["MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER],
   ["1e21", 1e21],
+];
+
+/**
+ * Every other stated value, a number or not. At the accepted revision
+ * 13ab3bc each of these was handed to the timer as given, and what a
+ * non-positive or non-numeric timeout should mean is an open question for
+ * the maintainer (review rv11 N2). Until it is answered they keep that
+ * behaviour: Node waits 1 ms for a number below 1 and for NaN, converts a
+ * string, a boolean or an array, and throws on a bigint, which the check
+ * flattens to `provider_unavailable`.
+ */
+const TIMEOUTS_LEFT_TO_THE_TIMER: [string, unknown][] = [
   ["0", 0],
   ["0.5", 0.5],
   ["-1", -1],
-  ["null", null],
+  ["-Infinity", Number.NEGATIVE_INFINITY],
+  ["NaN", Number.NaN],
   ['"20"', "20"],
   ["true", true],
   ["an object", {}],
   ["an array", [20]],
   ["a bigint", 20n],
+  // Not numbers, so not changed either, though Node converts both to more
+  // than 2^31-1 and waits 1 ms: part of the same open question.
+  ['"4294967296"', "4294967296"],
+  ["a boxed 2^31", Object(2 ** 31)],
 ];
 
-test("R6: a timeout that is not a number from 1 to 2^31-1 falls back to the 30-second default", async (t) => {
+test("R6: a timeout above 2^31-1, Infinity included, falls back to the 30-second default", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  for (const [label, timeoutMs] of UNUSABLE_TIMEOUTS) {
-    await assertDeadline(t, { timeoutMs } as never, 30_000, `timeoutMs ${label}`);
+  for (const [label, timeoutMs] of OVER_LONG_TIMEOUTS) {
+    await assertDeadline(t, { timeoutMs }, 30_000, `timeoutMs ${label}`);
   }
-  // Inside the range the stated deadline is used as stated.
+  // No stated value is the default too, as it always was.
+  for (const timeoutMs of [undefined, null]) {
+    await assertDeadline(t, { timeoutMs } as never, 30_000, `timeoutMs ${timeoutMs}`);
+  }
+  // Up to the longest delay a timer accepts, the stated deadline is used.
   for (const timeoutMs of [1, 20, 30_001, 2 ** 31 - 1]) {
     await assertDeadline(t, { timeoutMs }, timeoutMs, `timeoutMs ${timeoutMs}`);
   }
 });
 
-test("R6: an unusable timeout does not abandon a provider that answers, and Node is never handed it", async () => {
-  // Real timers. Node replaces a delay above 2^31-1, or one that is not a
-  // number, with 1 ms and emits a warning; a check must not inherit that.
+test("N2: every other stated timeout reaches the timer as given, as at 13ab3bc", async (t) => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const handed: unknown[] = [];
+  const realSetTimeout = globalThis.setTimeout;
+  // Records the delay and arms a real 1 ms timer in its place, so that this
+  // test does not make Node print its own warnings about the value.
+  t.mock.method(
+    globalThis,
+    "setTimeout",
+    (callback: () => void, delay?: unknown) => {
+      handed.push(delay);
+      return realSetTimeout(callback, 1);
+    }
+  );
+  for (const [label, timeoutMs] of TIMEOUTS_LEFT_TO_THE_TIMER) {
+    handed.length = 0;
+    const result = await runPreflight(
+      fixture.env,
+      createFixtureInspectionClient(fixture),
+      { timeoutMs } as never
+    );
+    assert.equal(result.status, "ready", `timeoutMs ${label}`);
+    assert.equal(handed.length, 1, `timeoutMs ${label}`);
+    assert.ok(
+      Object.is(handed[0], timeoutMs),
+      `timeoutMs ${label}: the timer was handed ${String(handed[0])}`
+    );
+  }
+  // The same seam shows the other side: a number above 2^31-1 never
+  // reaches the timer.
+  for (const [label, timeoutMs] of OVER_LONG_TIMEOUTS) {
+    handed.length = 0;
+    await runPreflight(fixture.env, createFixtureInspectionClient(fixture), {
+      timeoutMs,
+    });
+    assert.deepEqual(handed, [DEFAULT_INSPECTION_TIMEOUT_MS], `timeoutMs ${label}`);
+  }
+});
+
+test("N2: a timeout below 1 or not a number still abandons a silent provider at once, as at 13ab3bc", async () => {
+  // Real timers, and only values Node handles without printing a warning.
+  const silent: SandboxInspectionClient = {
+    inspectBoundSandbox: () => new Promise(() => undefined),
+  };
+  for (const [label, timeoutMs] of [
+    ["0", 0],
+    ["0.5", 0.5],
+    ['"20"', "20"],
+    ["true", true],
+    ["a bigint", 20n],
+  ] as const) {
+    let guard: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      runPreflight(VALID_ENV, silent, { timeoutMs } as never),
+      new Promise<"pending">((resolve) => {
+        guard = setTimeout(() => resolve("pending"), 2_000);
+      }),
+    ]);
+    clearTimeout(guard);
+    assert.notEqual(outcome, "pending", `timeoutMs ${label}: still waiting after 2 s`);
+    const result = outcome as PreflightResult;
+    assert.equal(result.status, "unavailable", `timeoutMs ${label}`);
+    assert.deepEqual(result.reasons, [{ code: "provider_unavailable" }], `timeoutMs ${label}`);
+    assert.equal(result.providerCalls.inspect, 1, `timeoutMs ${label}`);
+  }
+});
+
+test("R6: an over-long timeout does not abandon a provider that answers, and Node is never handed it", async () => {
+  // Real timers. Node replaces a delay above 2^31-1 with 1 ms and emits a
+  // warning; a check must not inherit that.
   const fixture = loadFixtureCase(casePath("ready"));
   const slow: SandboxInspectionClient = {
     inspectBoundSandbox: () =>
@@ -2753,8 +2844,8 @@ test("R6: an unusable timeout does not abandon a provider that answers, and Node
   };
   process.on("warning", onWarning);
   try {
-    for (const [label, timeoutMs] of UNUSABLE_TIMEOUTS) {
-      const result = await runPreflight(fixture.env, slow, { timeoutMs } as never);
+    for (const [label, timeoutMs] of OVER_LONG_TIMEOUTS) {
+      const result = await runPreflight(fixture.env, slow, { timeoutMs });
       assert.equal(result.status, "ready", `timeoutMs ${label}`);
       assert.deepEqual(result.reasons, [], `timeoutMs ${label}`);
     }
