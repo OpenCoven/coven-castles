@@ -25,6 +25,7 @@ import {
 } from "../src/preflight";
 import {
   MUTATION_OWNERS,
+  OUTSIDE_LISTED_MUTATIONS,
   SOURCE_PINS,
   SUPPORTED_PROFILE,
   UPSTREAM_SEAM,
@@ -1004,19 +1005,47 @@ test("source pins are exact repo@sha:path references", () => {
 });
 
 test("every provider mutation names its existing upstream owner, and none is Castles", () => {
-  const recorded = MUTATION_OWNERS.map((entry) => entry.mutation).sort();
-  assert.deepEqual(recorded, [
-    "adopt-policy",
-    "archive",
-    "create",
-    "delete",
-    "reset",
-    "resize",
-    "start",
-    "stop",
-  ]);
+  // Literal on purpose: the table is compared with what was read at the pin.
+  const at = (path: string) =>
+    `OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180:${path}`;
+  assert.deepEqual(
+    MUTATION_OWNERS.map((entry) => [entry.mutation, entry.owner]),
+    [
+      ["create", at("lib/runner/daytona/sandbox.ts")],
+      ["start", at("lib/runner/daytona/sandbox.ts")],
+      ["stop", at("lib/runner/daytona/sandbox.ts")],
+      ["archive", at("lib/runner/daytona/sandbox.ts")],
+      ["resize", at("lib/runner/daytona/resource-repair.ts")],
+      ["delete", at("lib/runner/daytona/sandbox.ts")],
+      ["reset", at("lib/runner/daytona/sandbox.ts")],
+      ["adopt-policy", at("lib/runner/daytona/sandbox.ts")],
+      ["diagnostic-create", at("lib/runner/diagnostics.ts")],
+      ["diagnostic-delete", at("lib/runner/diagnostics.ts")],
+    ]
+  );
+  const pinned = new Set(SOURCE_PINS.map((entry) => entry.pin as string));
   for (const entry of MUTATION_OWNERS) {
-    assert.match(entry.owner, /^OpenCoven\/coven-agents@[0-9a-f]{40}:/u);
+    assert.equal(entry.castles, "never");
+    assert.ok(entry.via.length > 0);
+    assert.ok(pinned.has(entry.owner), `${entry.mutation} owner is a source pin`);
+  }
+});
+
+test("operations outside the listed mutations are named, not implied", () => {
+  assert.deepEqual(
+    OUTSIDE_LISTED_MUTATIONS.map((entry) => [entry.operation, entry.at]),
+    [
+      [
+        "command execution inside a sandbox",
+        "OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180:lib/runner/daytona/process.ts",
+      ],
+      [
+        "snapshot creation",
+        "OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180:lib/runner/daytona/image.ts",
+      ],
+    ]
+  );
+  for (const entry of OUTSIDE_LISTED_MUTATIONS) {
     assert.equal(entry.castles, "never");
   }
 });
