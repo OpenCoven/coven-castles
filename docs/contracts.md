@@ -35,20 +35,17 @@ starts again as **proposed**.
 
 Snapshot of draft PR
 [#6](https://github.com/OpenCoven/coven-castles/pull/6) taken
-2026-11-12T04:10Z. **Its head is about to move.**
+2026-11-12T05:25Z. Everything below describes the source at this revision.
 
 | | |
 | --- | --- |
-| Revision | `7ead0d88fae8ff049a2ed0dedbb0a8221eaeb9fa` |
-| Standing | **proposed**: reviewed, with a blocking finding open. Not accepted. The #3 and #5 gates are closed under #1's rule and under the proposed one. |
-| Reviews | [At `799488f`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5856050364): changes needed; `7ead0d8` answers it. [At `7ead0d8`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5868851188), reviewer `rv6b-0288e674`: changes needed, one blocking finding (a network allow list written as many ranges is reported `ready`) and eleven non-blocking. |
-| Next | Worker `cc2c-b25dab53` is fixing PR #6. This section is refreshed against the new head when it is published. |
+| Revision | `13ab3bc2c823fe12b482a6701ab4df2c28e6733c` |
+| Standing | **proposed**: this revision has not been reviewed. Not accepted. The #3 and #5 gates are closed under #1's rule and under the proposed one. |
+| Reviews | Earlier heads only, both changes needed: [at `799488f`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5856050364) and [at `7ead0d8`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5868851188). This revision answers the second. A review of it by `rv6c-3db7f9d0` was in progress when the snapshot was taken; check the PR for its result. |
 | Evidence | **fixture** only. No live provider call has been made through this code. |
 
-The subsections below describe the source at `7ead0d8`. Those marked "At
-`7ead0d8`, about to change" restate behaviour that the open findings touch:
-the result shape, the `evidence` field, which provider fields are echoed, the
-egress rule and the exit codes. Do not build on them.
+If PR #6's head is no longer this revision, this section is stale until it is
+refreshed.
 
 ### Binding
 
@@ -95,8 +92,6 @@ contract. v1 requires the response to echo the agent record it read
 Where: `src/preflight.ts` (`PreflightResult`, `runPreflight`, `renderJson`).
 Consumers: #3, #5.
 
-> At `7ead0d8`, about to change.
-
 Schema `castles.preflight.v1`:
 
 | Field | Content |
@@ -104,10 +99,10 @@ Schema `castles.preflight.v1`:
 | `schema` | `"castles.preflight.v1"` |
 | `status` | `ready`, `stopped`, `unavailable`, `incompatible`, `unauthorized` or `reconciliation-required` |
 | `reasons` | Up to 16 of `{ code, field? }`. `code` is a fixed literal; `field` is a literal from this module, never provider text |
-| `evidence` | `fixture`, `live-provider` or `none` |
+| `evidence` | `fixture`, `live-provider` or `none`. Derived from the client, never supplied by the caller: no client gives `none`, any client gives `fixture`, including when the binding is invalid. The library cannot return `live-provider` at this revision |
 | `target` | `sandboxAlias`, `ownerAlias` (redacted, stable aliases), `expectedGeneration`, `profile` |
-| `sourcePolicy` | Policy read from pinned source, including the `repo@sha:path` pins. Never derived from the sandbox |
-| `observed` | What the seam reported, reduced to bounded safe tokens and numbers, or `null` |
+| `sourcePolicy` | Policy from `SUPPORTED_PROFILE`, with the `repo@sha:path` pins. Never derived from the sandbox. Most values are read from pinned source; `network.networkAllowList` (`{ basis: "castles-decision", maxEntries: 10, minIpv4Prefix: 8 }`) is a Castles decision with no upstream pin |
+| `observed` | What the seam reported, or `null`. Provider text is never copied: see below |
 | `providerCalls` | `{ inspect }`: 0 or 1 |
 | `upstream` | The upstream seam's issue link and status |
 
@@ -119,6 +114,23 @@ Status precedence when several findings apply: `unauthorized` >
 supplied, when the seam refused, or when the echoed agent record, recorded
 sandbox ID or returned sandbox ID differs from the binding. A stale generation
 alone does not withhold it.
+
+Inside `observed`, `state`, `target`, `image.snapshot`, `platform.os`,
+`platform.architecture`, `binding.lifecycle` and `binding.attemptFence` each
+carry a value from a fixed set or `"unrecognised"`; `sdk.version` carries a
+`major.minor.patch` version or `"unrecognised"`. All but the two `binding`
+fields are `null` when the value is absent or not a string; those two report
+`"unrecognised"` instead. Other fields are numbers, booleans or fixed
+literals.
+
+Two rules behind existing reason codes, both Castles decisions:
+
+- An architecture other than `x86_64`, `amd64`, `aarch64` or `arm64` is
+  `incompatible` with `metadata_missing`. No architecture is pinned upstream.
+- A network allow list with more than 10 entries is `incompatible` with
+  `egress_allow_list_unsafe`, as is any entry wider than `/8`. The figure 10
+  comes from public Daytona documentation and is unverified against the
+  provider. Domains must be ASCII, and an IP literal is not a domain.
 
 JSON output is at most 16,384 bytes.
 
@@ -146,11 +158,14 @@ Reason codes at this revision:
 
 Where: `src/preflight.ts` (`isLiveReady`). Consumers: #3, #5.
 
-> At `7ead0d8`, about to change.
-
 ```ts
 isLiveReady(result) === (result.status === "ready" && result.evidence === "live-provider")
+runPreflight(environment, client | null, options?: { timeoutMs?: number })
 ```
+
+`runPreflight` takes no `evidence` option. Because no live client exists,
+`isLiveReady` is false for every result the library produces at this
+revision.
 
 **Consumers must gate on this, never on `status` alone.** A fixture replay can
 report `status: "ready"`; it is not readiness.
@@ -158,8 +173,6 @@ report `status: "ready"`; it is not readiness.
 ### CLI and exit codes
 
 Where: `src/cli.ts`. Consumers: operators, #5.
-
-> At `7ead0d8`, about to change.
 
 ```text
 castles check [--json] [--fixture <case.json>]
@@ -183,7 +196,8 @@ corepack pnpm typecheck
 ```
 
 `test` runs `tsx --test tests/*.test.ts`, so a new `tests/<name>.test.ts` is
-picked up without a manifest change. Requests to change the script, add a
+picked up without a manifest change. One test needs Node's permission model
+and is skipped where the Node in use lacks it; the README lists the versions. Requests to change the script, add a
 script or widen `tsconfig.json` go to the #2 steward.
 
 ### Source pins and mutation owners
@@ -191,10 +205,17 @@ script or widen `tsconfig.json` go to the #2 steward.
 Where: `src/profile.ts` (`SOURCE_PINS`, `MUTATION_OWNERS`). Consumers: #3, #4,
 #5.
 
-Sixteen `repo@sha:path` references into
-`OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180`, and a table
-naming the existing upstream owner of every provider mutation. Castles performs
-none of them.
+Where: `src/profile.ts` also exports `OUTSIDE_LISTED_MUTATIONS`.
+
+Eighteen `repo@sha:path` references into
+`OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180`.
+`MUTATION_OWNERS` has ten rows naming the existing upstream owner of each
+sandbox mutation found at the pin: eight for the persistent agent sandbox and
+two for the owner's separate, short-lived diagnostic sandbox.
+`OUTSIDE_LISTED_MUTATIONS` names two operations that are not lifecycle
+mutations (command execution inside a sandbox, snapshot creation). Castles
+performs none of these. The table is a reading of the pinned files, not a
+proof that no other call site exists upstream.
 
 ## Produced by #3
 
@@ -213,10 +234,11 @@ fixtures, and upstream containment and reuse evidence for #5.
 **Proposed** in draft PR
 [#7](https://github.com/OpenCoven/coven-castles/pull/7) and not on this
 branch: the report-task fixture, expected-report properties and the
-negative-case catalogue. As of 2026-11-12T04:10Z its head is
-`b4019094e1deacfbcfa42ac61d50354198064ba7`, which answers a review of
-`52cd317` that asked for changes and has not itself been reviewed. These are
-fixture file formats, not interface contracts.
+negative-case catalogue. As of 2026-11-12T05:25Z every review posted on it
+asked for changes, the latest at `b401909` with three blocking findings, and
+its author is pushing fixes, so no head is named here: read the PR. Nothing in
+it is reviewed clean or accepted. These are fixture file formats, not
+interface contracts.
 
 ## Updating this page
 

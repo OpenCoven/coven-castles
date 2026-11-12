@@ -77,8 +77,9 @@ Three consequences that shape the code:
    whether that caller owns it. Account login, familiar name and subscription
    state are not execution authority either.
 2. **The provider response is untrusted input** even though it arrives through
-   a trusted service. Preflight reduces it to bounded tokens and numbers and
-   fails closed on anything it does not recognise.
+   a trusted service. Preflight never copies provider text into a result:
+   it reports values from fixed sets, numbers or `unrecognised`, and fails
+   closed on anything it does not recognise.
 3. **A failed check has nothing to fall back to.** The client seam has one
    method. There is no create, start, list or lookup-by-name to reach for when
    the exact sandbox is missing.
@@ -93,8 +94,9 @@ Three consequences that shape the code:
 | Authoritative runtime transitions | Coven |
 | Admission, credential custody, durable run records, Daytona lifecycle | Coven Agents |
 
-Every provider mutation has an existing owner in Coven Agents, recorded with a
-source pin in `MUTATION_OWNERS` in `src/profile.ts`:
+Each sandbox mutation found at the pin has an existing owner in Coven Agents,
+recorded with a source pin in `MUTATION_OWNERS` in `src/profile.ts`. The table
+is a reading of the pinned files, not a proof that no other call site exists:
 
 | Mutation | Existing owner | Castles |
 | --- | --- | --- |
@@ -104,6 +106,10 @@ source pin in `MUTATION_OWNERS` in `src/profile.ts`:
 | resize | `lib/runner/daytona/resource-repair.ts` | never |
 | delete, reset | `lib/runner/daytona/sandbox.ts`, `resource-recovery.ts` | never |
 | adopt policy | `lib/runner/daytona/sandbox.ts` | never |
+| create and delete of the owner's own short-lived diagnostic sandbox | `lib/runner/diagnostics.ts` | never |
+
+Command execution inside a sandbox and snapshot creation are not lifecycle
+mutations; `OUTSIDE_LISTED_MUTATIONS` names them, and Castles performs neither.
 
 Persistent sandbox files are working state. Identity, selected context, durable
 task and attempt records and the committed outcome live in their canonical
@@ -122,20 +128,18 @@ each attempt to 900 seconds or the tighter existing bound. Those are #1's
 limits for the run path in #3. They are not fields of the profile, and nothing
 at this revision enforces them.
 
-> At `7ead0d8`, about to change: the egress rule and which provider fields are
-> echoed are open review findings on PR #6. See
-> [`contracts.md`](contracts.md#produced-by-2).
-
 Preflight checks, read-only: owner binding and generation, the recorded and
 returned sandbox IDs, lifecycle state, the credential-boundary marker,
-attempt fence, privacy, egress allow lists entry by entry, auto-stop,
-auto-archive, auto-delete, auto-pause and TTL, image snapshot, target,
+attempt fence, privacy, egress allow lists entry by entry and by length,
+auto-stop, auto-archive, auto-delete, auto-pause and TTL, image snapshot, target,
 resources, GPU, volumes, warm-pool and linked-sandbox membership, platform and
 SDK generation. Missing metadata or an unsafe policy fails; nothing is
 repaired. A stopped sandbox is reported as stopped and is not woken.
 
 Policy values and the upstream file each one came from are in
-`SUPPORTED_PROFILE` and `SOURCE_PINS` in `src/profile.ts`.
+`SUPPORTED_PROFILE` and `SOURCE_PINS` in `src/profile.ts`. The network
+allow-list bounds (at most 10 entries, none wider than `/8`) are Castles
+decisions with no upstream pin.
 
 ## Pinned upstream sources
 
