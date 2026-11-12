@@ -999,6 +999,116 @@ test("reasons are capped", async () => {
   assert.ok(result.reasons.length <= 16);
 });
 
+// --- Observed integers are echoed only inside a small range (review R1) -----
+
+const INTEGER_FIELDS: readonly (readonly [
+  string,
+  (inspection: any, value: unknown) => void,
+  (result: PreflightResult) => unknown,
+])[] = [
+  ["sandbox.cpu", (i, v) => (i.sandbox.cpu = v), (r) => r.observed?.resources.cpu],
+  ["sandbox.memory", (i, v) => (i.sandbox.memory = v), (r) => r.observed?.resources.memoryGiB],
+  ["sandbox.disk", (i, v) => (i.sandbox.disk = v), (r) => r.observed?.resources.diskGiB],
+  ["sandbox.gpu", (i, v) => (i.sandbox.gpu = v), (r) => r.observed?.resources.gpu],
+  ["sandbox.autoStopInterval", (i, v) => (i.sandbox.autoStopInterval = v), (r) => r.observed?.lifecycle.autoStopInterval],
+  ["sandbox.autoArchiveInterval", (i, v) => (i.sandbox.autoArchiveInterval = v), (r) => r.observed?.lifecycle.autoArchiveInterval],
+  ["sandbox.autoDeleteInterval", (i, v) => (i.sandbox.autoDeleteInterval = v), (r) => r.observed?.lifecycle.autoDeleteInterval],
+  ["sandbox.autoPauseInterval", (i, v) => (i.sandbox.autoPauseInterval = v), (r) => r.observed?.lifecycle.autoPauseInterval],
+  ["binding.generation", (i, v) => (i.binding.generation = v), (r) => r.observed?.binding.generation],
+];
+
+test("R1: an all-digit configured ID returned in a numeric field never reaches output", async () => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  // Invented all-digit identifiers. The last is the smallest the rule covers.
+  for (const digits of ["900719925474", "4815162342", "900719925", "100000"]) {
+    for (const key of ["CASTLES_SANDBOX_ID", "CASTLES_OWNER_AGENT_ID"] as const) {
+      const env = { ...fixture.env, [key]: digits };
+      for (const [field, set, read] of INTEGER_FIELDS) {
+        const where = `${key}=${digits} returned in ${field}`;
+        const inspection = structuredClone(fixture.inspection) as any;
+        inspection.binding.agentId = env.CASTLES_OWNER_AGENT_ID;
+        inspection.binding.sandboxId = env.CASTLES_SANDBOX_ID;
+        inspection.sandbox.id = env.CASTLES_SANDBOX_ID;
+        set(inspection, Number(digits));
+        const wire = tripwireClient(() => inspection);
+        const result = await runPreflight(env, wire.client);
+        // Identity holds, so the observed block is disclosed; the number is not.
+        assert.notEqual(result.observed, null, where);
+        assert.notEqual(result.status, "ready", where);
+        assert.equal(read(result), null, where);
+        for (const output of [renderJson(result), renderHuman(result)]) {
+          assert.ok(!output.includes(digits), where);
+        }
+      }
+    }
+  }
+});
+
+test("R1: an observed integer is echoed from -1 to 99999 and is null outside, with status and reasons unchanged", async () => {
+  // Literals on purpose: a widened range must turn this red.
+  const inside = [-1, 0, 1, 99_999];
+  const outside = [
+    -2,
+    -100_000,
+    100_000,
+    2 ** 31,
+    999_999_999,
+    Number.MAX_SAFE_INTEGER,
+    Number.MIN_SAFE_INTEGER,
+  ];
+  for (const [field, set, read] of INTEGER_FIELDS) {
+    for (const value of inside) {
+      const result = await withInspection((inspection) => set(inspection, value));
+      assert.equal(read(result), value, `${field}=${value}`);
+    }
+    // 99999 is out of policy for every field, so a value beyond the range
+    // must be reported exactly as it is: same status, same reasons.
+    const reference = await withInspection((inspection) => set(inspection, 99_999));
+    assert.notEqual(reference.status, "ready", field);
+    assert.equal(reference.reasons.length, 1, field);
+    for (const value of outside) {
+      const where = `${field}=${value}`;
+      const result = await withInspection((inspection) => set(inspection, value));
+      assert.equal(read(result), null, where);
+      assert.equal(result.status, reference.status, where);
+      assert.deepEqual(result.reasons, reference.reasons, where);
+      assert.notEqual(result.observed, null, where);
+      const human = renderHuman(result);
+      const json = renderJson(result);
+      // -2 is too short to search for: "2" is in every output.
+      if (Math.abs(value) >= 100_000) {
+        for (const output of [human, json]) {
+          assert.ok(!output.includes(String(Math.abs(value))), where);
+        }
+      }
+      assert.doesNotMatch(human, /\bnull\b|undefined|NaN/u, where);
+    }
+  }
+  const stale = await withInspection((inspection) => {
+    inspection.binding.generation = 100_000;
+  });
+  assert.equal(stale.status, "reconciliation-required");
+  assert.deepEqual(stale.reasons, [
+    { code: "generation_mismatch", field: "binding.generation" },
+  ]);
+  assert.equal(JSON.parse(renderJson(stale)).observed.binding.generation, null);
+  assert.match(renderHuman(stale), /^  binding generation \?, lifecycle ready, /mu);
+});
+
+test("R1 limit: an ID that is itself an integer inside the echo range can coincide with a reading", async () => {
+  // Stated, not hidden: the rule bounds what a numeric field can carry to
+  // -1..99999. It cannot tell a reading of 4 from a configured ID of "4".
+  const fixture = loadFixtureCase(casePath("ready"));
+  const env = { ...fixture.env, CASTLES_SANDBOX_ID: "4" };
+  const inspection = structuredClone(fixture.inspection) as any;
+  inspection.binding.sandboxId = "4";
+  inspection.sandbox.id = "4";
+  inspection.sandbox.cpu = 4;
+  const result = await runPreflight(env, tripwireClient(() => inspection).client);
+  assert.equal(result.status, "ready");
+  assert.equal(result.observed?.resources.cpu, 4);
+});
+
 // --- Test gaps found by mutation (review N5, N6, N7) ------------------------
 // Behaviour was already correct for every case below; these pin it.
 
