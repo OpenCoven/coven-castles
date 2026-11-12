@@ -39,21 +39,33 @@ sandbox). A higher class is never inferred from a lower one.
 | Component | Revision | Standing |
 | --- | --- | --- |
 | Castles `main` | `96e19cea81624572b65149116b339ee39dbec61d` | README and secret scanning only |
-| #2 preflight | draft PR #6, head `7ead0d88fae8ff049a2ed0dedbb0a8221eaeb9fa` | Proposed. Not accepted by the maintainer. Referenced, not consumed. |
+| #2 preflight | draft PR #6, head `7ead0d88fae8ff049a2ed0dedbb0a8221eaeb9fa` `[R6]` | Proposed. Not accepted by the maintainer. Referenced, not consumed. Second review at this head: changes needed. |
 | #3 runtime | none | Investigation comment only; no interface |
 | #4 recovery | none | Investigation comment only; no interface |
 | Canonical source | `OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180` | As pinned by #1; private |
 
-PR #6 can move after this is written. Check its current head and reviews
-before relying on this table.
+**`[R6]`: stale when PR #6 moves.** PR #6 is being revised after its second
+review and its head is about to move past `7ead0d8`. Every line tagged `[R6]`
+in this document cites that head or rests on a run at it. There are eleven:
+the #2 row above, the reproduction below (its sentence and its `test` row), G1,
+and #2-A1 to #2-A7. When the new head is published, one pass over those lines
+has to do three things: replace the hash, **re-run** the reproduction at the
+new head (a new hash alone is not evidence), and re-read #2-A2 to #2-A6
+against the changed tests, because the revision is expected to change how
+evidence fields are derived, which provider fields are echoed and the egress
+rule (as reported to this lane; not read by it). Until that pass, the six
+**fixture-only** rows (#2-A1 to #2-A6) are true of `7ead0d8` only and say
+nothing about the current head of PR #6. The catalogue cites no hash, but 19
+of its `dependsOn` strings read "proposed, not accepted: draft PR #6"; they
+change when #2's contract is accepted, not when the head moves.
 
 The only check this lane ran on another lane's code: a fresh clone of the #2
-branch at `7ead0d8`, environment reduced to `HOME` and `PATH`:
+branch at `7ead0d8` `[R6]`, environment reduced to `HOME` and `PATH`:
 
 | Command | Result | Class |
 | --- | --- | --- |
 | `corepack pnpm install --frozen-lockfile --offline` | pass (warm local store) | n/a |
-| `corepack pnpm test` | pass, 58 of 58, IP networking denied | fixture |
+| `corepack pnpm test` | pass, 58 of 58, IP networking denied `[R6]` | fixture |
 | `corepack pnpm typecheck` | pass, IP networking denied | static |
 
 IP networking was denied for `test` and `typecheck` with a macOS
@@ -68,14 +80,16 @@ acceptance checkbox of issue #N. `#5-Rk` is the k-th acceptance-receipt
 checkbox of #5.
 
 Where a row names cases, it names every catalogue case mapped to that item.
-Where it names none, the mapping is in the `tests` and `releaseGates` fields of
-`fixtures/report-task/negative-cases.json`.
+Where it names none, the mapping is in the `tests`, `releaseGates` and `scope`
+fields of `fixtures/report-task/negative-cases.json`. Eleven cases carry
+`scope`, which names a scope rule that has no checkbox; for four of them
+(CFG-09, OUT-01 to OUT-03) it is the only mapping.
 
 ### #1 release gates
 
 | ID | Promise | Status | Evidence or blocker |
 | --- | --- | --- | --- |
-| G1 | Exact owner/sandbox and familiar revision binding before task or credential effects | blocked | Sandbox half: #2 fixtures at `7ead0d8`, not accepted; binding a run to the supplied sandbox is OpenCoven/coven-agents#298 (open). Familiar-revision half: admission does not carry a familiar root/revision upstream (per the #3 investigation; no upstream issue found). Owner: canonical producer maintainers. |
+| G1 | Exact owner/sandbox and familiar revision binding before task or credential effects | blocked | Sandbox half: #2 fixtures at `7ead0d8` `[R6]`, not accepted; binding a run to the supplied sandbox is OpenCoven/coven-agents#298 (open). Familiar-revision half: admission does not carry a familiar root/revision upstream (per the #3 investigation; no upstream issue found). Owner: canonical producer maintainers. |
 | G2 | Duplicate submit/reconnect resolves one run; changed-payload reuse conflicts | unverified | No #3 interface. Cases ADM-08 to ADM-10, OUT-12, REC-01, REC-04, REC-06. |
 | G3 | Results and receipts retrievable after disconnect or sandbox stop | unverified | No #4 interface. Cases REC-01, REC-05, REC-07, CAN-06. |
 | G4 | Cancellation not complete without qualified containment; uncertainty visible and fenced | blocked | No qualified containment upstream; OpenCoven/coven-agents#262 (open). Owner: canonical producer maintainers. |
@@ -86,13 +100,13 @@ Where it names none, the mapping is in the `tests` and `releaseGates` fields of
 
 | ID | Promise | Status | Evidence or blocker |
 | --- | --- | --- | --- |
-| #2-A1 | Fresh checkout runs offline fixture tests without credentials or network | fixture-only | Reproduced at `7ead0d8` with IP networking denied (table above). |
-| #2-A2 | Missing ID, wrong owner, wrong generation, unknown profile, unsafe lifecycle, public exposure, unavailable provider, mismatched returned ID each fail closed | fixture-only | #2 tests at `7ead0d8`. Not shown live. |
-| #2-A3 | Missing sandbox causes zero create/start/update/delete; ambiguous lookup triggers no replacement or adoption | fixture-only | #2 tests at `7ead0d8`. Not shown live. |
-| #2-A4 | Read-only checks leave files, processes and provider configuration unchanged; no harness credentials acquired | fixture-only | #2 tests at `7ead0d8`. Provider-side state can only be shown live. |
-| #2-A5 | JSON output bounded, redacted, separates source policy from observed metadata | fixture-only | #2 tests at `7ead0d8`. |
-| #2-A6 | Contract pins and the owner of every mutation recorded; unknown upstream capability is an explicit blocker | fixture-only | The item asks for the record, and #2 tests at `7ead0d8` cover it: pins, mutation owners, and the missing seam reported as a blocker (OpenCoven/coven-agents#296, open). The capability being absent is what blocks live rows, not this one. |
-| #2-A7 | #3 and #5 receive a reviewed contract/test-command handoff at an exact SHA; fixture paths do not overlap and shared-file ownership is recorded | blocked | Handoff posted at `7ead0d8`; not accepted. Fixture paths do not overlap (`fixtures/preflight/`, `fixtures/report-task/`). Owner: epic maintainer. |
+| #2-A1 | Fresh checkout runs offline fixture tests without credentials or network | fixture-only | Reproduced at `7ead0d8` `[R6]` with IP networking denied (table above). |
+| #2-A2 | Missing ID, wrong owner, wrong generation, unknown profile, unsafe lifecycle, public exposure, unavailable provider, mismatched returned ID each fail closed | fixture-only | #2 tests at `7ead0d8` `[R6]`. Not shown live. |
+| #2-A3 | Missing sandbox causes zero create/start/update/delete; ambiguous lookup triggers no replacement or adoption | fixture-only | #2 tests at `7ead0d8` `[R6]`. Not shown live. |
+| #2-A4 | Read-only checks leave files, processes and provider configuration unchanged; no harness credentials acquired | fixture-only | #2 tests at `7ead0d8` `[R6]`. Provider-side state can only be shown live. |
+| #2-A5 | JSON output bounded, redacted, separates source policy from observed metadata | fixture-only | #2 tests at `7ead0d8` `[R6]`. |
+| #2-A6 | Contract pins and the owner of every mutation recorded; unknown upstream capability is an explicit blocker | fixture-only | The item asks for the record, and #2 tests at `7ead0d8` `[R6]` cover it: pins, mutation owners, and the missing seam reported as a blocker (OpenCoven/coven-agents#296, open). The capability being absent is what blocks live rows, not this one. |
+| #2-A7 | #3 and #5 receive a reviewed contract/test-command handoff at an exact SHA; fixture paths do not overlap and shared-file ownership is recorded | blocked | Handoff posted at `7ead0d8` `[R6]`; not accepted. Fixture paths do not overlap (`fixtures/preflight/`, `fixtures/report-task/`). Owner: epic maintainer. |
 
 ### #3 Bootstrap and run one authorized task
 
@@ -135,6 +149,7 @@ Where it names none, the mapping is in the `tests` and `releaseGates` fields of
 | #5-R9 | Handoff maps each promise to a revision and evidence class, names owners and next action; unimplemented or skipped live checks remain unverified, never silently green | unverified | This matrix is the draft of that mapping; it has no verified rows to map. Case REU-06. |
 
 **Count:** 38 promises. verified 0, fixture-only 6, unverified 20, blocked 12.
+All six fixture-only rows are `[R6]` rows.
 
 ## Negative-case catalogue
 
@@ -190,23 +205,38 @@ Only that the fixture input and task text are the committed bytes, with
 nothing added:
 
 ```sh
-(cd fixtures/report-task/input && find . ! -type d | sed 's|^\./||' | LC_ALL=C sort | xargs shasum -a 256) | diff - fixtures/report-task/input.SHA256SUMS
+[ ! -L fixtures/report-task/input ] && (cd fixtures/report-task/input \
+  && [ "$(find . ! -type d | sed 's|^\./||' | LC_ALL=C sort)" = "$(sed 's/^[0-9a-f]\{64\}  //' ../input.SHA256SUMS)" ] \
+  && [ -z "$(find . -type l)" ] \
+  && shasum -a 256 -c ../input.SHA256SUMS)
 (cd fixtures/report-task && shasum -a 256 -c task.SHA256SUMS)
 ```
 
-Result at this revision: the first command prints nothing and exits `0` (five
-files, none added); the task text verifies. This is an integrity check on test
-input, not acceptance evidence.
+Result at this revision: the first command prints five `OK` lines and exits
+`0`; the task text verifies. In a scratch copy the first command exits `1` for
+an added file (including names with a space, a newline or a leading dash), an
+added symlink (dangling, to a directory or to a file), a removed file, a
+changed file, a file replaced by a symlink or a directory, and a symlinked
+input root. It does not detect an added empty directory or a changed file
+mode; `fixtures/report-task/README.md` says why. This is an integrity check on
+test input, not acceptance evidence.
 
 The expected-report properties were exercised with a throwaway script that is
-not committed. It follows the `parsing` rules in
+not committed. It follows the `parsing` rules (revision 2) in
 `expected/report-properties.json`. Result at this revision: 18 text
-properties; the 3 passing files, the 6 failing files and the 57 generated
-recipes each gave exactly their declared result (66 of 66). That check becomes
-part of `tests/mvp.test.ts` when the wiring gate opens; until then treat it as
-a contributor's note, not a receipt. The properties are heuristics: they
-cannot decide whether a diagnosis is right, and the secret patterns are a
-secondary net behind the seeded-value check RE-06, which is unverified.
+properties; the 3 passing files, the 6 failing files and the 132 generated
+recipes each gave exactly their declared result (141 of 141). That check
+becomes part of `tests/mvp.test.ts` when the wiring gate opens; until then
+treat it as a contributor's note, not a receipt.
+
+The properties are heuristics, and the fixture says where they are wrong: 27
+of the recipes carry `knownLimit` and pin a result that is not the right one,
+19 reports that should be rejected and pass, 8 correct reports that fail. The
+classes are listed under Limits in `fixtures/report-task/README.md`. No text
+property can decide whether a diagnosis is right or whether text is visible to
+a reader, and the secret patterns are a secondary net behind the seeded-value
+check RE-06, which is unverified. A report is read by a person before it is
+counted.
 
 ## Measurement plan
 
