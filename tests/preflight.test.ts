@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  createFixtureInspectionClient,
   FIXTURE_LABEL,
   isLiveReady,
   loadFixtureCase,
@@ -683,6 +684,58 @@ test("only a live-provider ready result counts as readiness", async () => {
     isLiveReady({ ...result, evidence: "live-provider", status: "stopped" }),
     false
   );
+});
+
+test("the evidence class comes from the client, never from the caller (review N3)", async () => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const forged = [
+    { evidence: "live-provider" },
+    { evidence: "none" },
+    { evidence: "live-provider", timeoutMs: 1000 },
+  ] as unknown[] as Parameters<typeof runPreflight>[2][];
+  for (const options of [undefined, ...forged]) {
+    for (const client of [
+      createFixtureInspectionClient(fixture),
+      tripwireClient(() => fixture.inspection).client,
+      { ...createFixtureInspectionClient(fixture) },
+      Object.create(createFixtureInspectionClient(fixture)),
+    ] as SandboxInspectionClient[]) {
+      const result = await runPreflight(fixture.env, client, options);
+      assert.equal(result.status, "ready");
+      assert.equal(result.evidence, "fixture");
+      assert.equal(isLiveReady(result), false);
+      assert.equal(result.providerCalls.inspect, 1);
+    }
+    const none = await runPreflight(fixture.env, null, options);
+    assert.equal(none.evidence, "none");
+    assert.equal(none.status, "unavailable");
+    assert.equal(none.providerCalls.inspect, 0);
+    assert.equal(isLiveReady(none), false);
+  }
+  // The class describes the client, so it holds even when a binding problem
+  // stops the check before the client is consulted.
+  const unbound = await runPreflight(
+    {},
+    createFixtureInspectionClient(fixture),
+    forged[0]
+  );
+  assert.equal(unbound.evidence, "fixture");
+  assert.equal(unbound.providerCalls.inspect, 0);
+  assert.equal((await runPreflight({}, null, forged[0])).evidence, "none");
+});
+
+test("a client cannot label itself live", async () => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const selfLabelled = {
+    evidence: "live-provider",
+    inspectBoundSandbox: () => Promise.resolve(fixture.inspection),
+    kind: "live-provider",
+    live: true,
+  } as SandboxInspectionClient;
+  const result = await runPreflight(fixture.env, selfLabelled);
+  assert.equal(result.status, "ready");
+  assert.equal(result.evidence, "fixture");
+  assert.equal(isLiveReady(result), false);
 });
 
 test("a different SDK generation is incompatible, not best-effort", async () => {
