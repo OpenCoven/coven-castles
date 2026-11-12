@@ -26,6 +26,7 @@ import {
 import {
   MUTATION_OWNERS,
   OUTSIDE_LISTED_MUTATIONS,
+  parseBinding,
   SOURCE_PINS,
   SUPPORTED_PROFILE,
   UPSTREAM_SEAM,
@@ -993,6 +994,663 @@ test("reasons are capped", async () => {
   assert.ok(result.reasons.length <= 16);
 });
 
+// --- Test gaps found by mutation (review N5, N6, N7) ------------------------
+// Behaviour was already correct for every case below; these pin it.
+
+const VALID_ENV = Object.freeze({
+  CASTLES_OWNER_AGENT_ID: "fixture-agent-0001",
+  CASTLES_PROFILE: "castles.daytona-private-linux.v1",
+  CASTLES_SANDBOX_GENERATION: "3",
+  CASTLES_SANDBOX_ID: "fixture-sandbox-0001",
+});
+
+const BAD_IDENTIFIERS = [
+  "*",
+  "fixture-*",
+  "name:fixture-sandbox",
+  "fixture sandbox",
+  " fixture-sandbox",
+  "fixture-sandbox ",
+  "fixture-sandbox\n",
+  "\nfixture-sandbox",
+  "!fixture-sandbox",
+  "fixture-sandbox!",
+  "-fixture-sandbox",
+  "_fixture-sandbox",
+  "fixture.sandbox",
+  "fixture/sandbox",
+  "fixturé-sandbox",
+  "ｆixture-sandbox",
+  "f".repeat(129),
+];
+const GOOD_IDENTIFIERS = ["f", "F_x-9", "0abc", "f".repeat(128)];
+const BAD_GENERATIONS = [
+  "03",
+  "00",
+  "-1",
+  "+1",
+  "3.0",
+  "1e3",
+  "0x1",
+  " 3",
+  "3 ",
+  "3\n",
+  "x3",
+  "3x",
+  "３",
+  "٣",
+  "1234567890",
+];
+const GOOD_GENERATIONS: [string, number][] = [
+  ["0", 0],
+  ["3", 3],
+  ["10", 10],
+  ["999999999", 999_999_999],
+];
+
+test("binding: a complete, exact binding parses to exactly those values", () => {
+  assert.deepEqual(parseBinding(VALID_ENV), {
+    binding: {
+      agentId: "fixture-agent-0001",
+      expectedGeneration: 3,
+      profile: "castles.daytona-private-linux.v1",
+      sandboxId: "fixture-sandbox-0001",
+    },
+    ok: true,
+  });
+  for (const id of GOOD_IDENTIFIERS) {
+    for (const key of ["CASTLES_SANDBOX_ID", "CASTLES_OWNER_AGENT_ID"]) {
+      assert.equal(parseBinding({ ...VALID_ENV, [key]: id }).ok, true, id);
+    }
+  }
+  for (const [text, value] of GOOD_GENERATIONS) {
+    const parsed = parseBinding({
+      ...VALID_ENV,
+      CASTLES_SANDBOX_GENERATION: text,
+    });
+    assert.equal(parsed.ok && parsed.binding.expectedGeneration, value, text);
+  }
+});
+
+test("binding: every malformed identifier or generation is refused with its own code", async () => {
+  const table: [keyof typeof VALID_ENV, readonly string[], string][] = [
+    ["CASTLES_SANDBOX_ID", BAD_IDENTIFIERS, "sandbox_id_invalid"],
+    ["CASTLES_OWNER_AGENT_ID", BAD_IDENTIFIERS, "owner_binding_invalid"],
+    ["CASTLES_SANDBOX_GENERATION", BAD_GENERATIONS, "generation_invalid"],
+  ];
+  for (const [key, values, problem] of table) {
+    for (const value of values) {
+      const where = `${key}=${JSON.stringify(value)}`;
+      const parsed = parseBinding({ ...VALID_ENV, [key]: value });
+      assert.equal(parsed.ok, false, where);
+      assert.equal(!parsed.ok && parsed.problem, problem, where);
+      const wire = tripwireClient(() => ({}));
+      const result = await runPreflight(
+        { ...VALID_ENV, [key]: value },
+        wire.client
+      );
+      assert.equal(result.status, "unavailable", where);
+      assert.deepEqual(result.reasons, [{ code: problem }], where);
+      assert.deepEqual(wire.calls, [], where);
+      assert.equal(result.observed, null, where);
+    }
+  }
+});
+
+test("binding: each missing value has its own code, checked in a fixed order", async () => {
+  const table: [keyof typeof VALID_ENV, string, string][] = [
+    ["CASTLES_SANDBOX_ID", "sandbox_id_missing", "unavailable"],
+    ["CASTLES_PROFILE", "profile_missing", "incompatible"],
+    ["CASTLES_OWNER_AGENT_ID", "owner_binding_missing", "unavailable"],
+    ["CASTLES_SANDBOX_GENERATION", "generation_missing", "unavailable"],
+  ];
+  for (const [key, problem, status] of table) {
+    for (const absent of [undefined, ""]) {
+      const env = { ...VALID_ENV, [key]: absent };
+      const parsed = parseBinding(env);
+      assert.equal(!parsed.ok && parsed.problem, problem, key);
+      const wire = tripwireClient(() => ({}));
+      const result = await runPreflight(env, wire.client);
+      assert.equal(result.status, status, key);
+      assert.deepEqual(result.reasons, [{ code: problem }], key);
+      assert.deepEqual(wire.calls, [], key);
+    }
+  }
+  const unknown = await runPreflight(
+    { ...VALID_ENV, CASTLES_PROFILE: "castles.daytona-private-linux.v2" },
+    null
+  );
+  assert.equal(unknown.status, "incompatible");
+  assert.deepEqual(unknown.reasons, [{ code: "unknown_profile" }]);
+
+  // Order: sandbox ID, profile, owner, generation. The first problem wins.
+  const order = table.map(([key]) => key);
+  for (let first = 0; first < order.length; first += 1) {
+    const env: Record<string, string | undefined> = { ...VALID_ENV };
+    for (const key of order.slice(first)) {
+      env[key] = undefined;
+    }
+    const parsed = parseBinding(env);
+    assert.equal(!parsed.ok && parsed.problem, table[first]?.[1]);
+  }
+  // Only values that parsed are aliased; a refused value is not.
+  const partial = await runPreflight(
+    { ...VALID_ENV, CASTLES_OWNER_AGENT_ID: "bad owner" },
+    null
+  );
+  assert.match(String(partial.target.sandboxAlias), /^sbx_[0-9a-f]{12}$/u);
+  assert.equal(partial.target.ownerAlias, null);
+  assert.equal(partial.target.expectedGeneration, null);
+});
+
+const REQUIRED_METADATA: [string, (inspection: any, value: unknown) => void, unknown[]][] = [
+  ["state", (i, v) => (i.sandbox.state = v), [7, true, {}]],
+  ["public", (i, v) => (i.sandbox.public = v), ["false", 0, "no"]],
+  ["networkBlockAll", (i, v) => (i.sandbox.networkBlockAll = v), ["false", 0]],
+  ["autoStopInterval", (i, v) => (i.sandbox.autoStopInterval = v), ["15", 15.5, Number.NaN]],
+  ["autoArchiveInterval", (i, v) => (i.sandbox.autoArchiveInterval = v), ["10080", 60.5]],
+  ["autoDeleteInterval", (i, v) => (i.sandbox.autoDeleteInterval = v), ["-1", -1.5]],
+  ["autoPauseInterval", (i, v) => (i.sandbox.autoPauseInterval = v), ["0", 0.5, false]],
+  ["snapshot", (i, v) => (i.sandbox.snapshot = v), [2, ["coven-agents-copilot-2"]]],
+  ["target", (i, v) => (i.sandbox.target = v), [1, ["us"]]],
+  ["cpu", (i, v) => (i.sandbox.cpu = v), ["2", 2.5]],
+  ["memory", (i, v) => (i.sandbox.memory = v), ["4", 4.5]],
+  ["disk", (i, v) => (i.sandbox.disk = v), ["10", 10.5]],
+  ["gpu", (i, v) => (i.sandbox.gpu = v), ["0", 0.5, false]],
+  ["platform.os", (i, v) => (i.platform.os = v), [1, ["linux"]]],
+  ["platform.architecture", (i, v) => (i.platform.architecture = v), [64]],
+];
+
+test("each required metadata field, when absent, null or mistyped, fails closed on its own", async () => {
+  for (const [field, set, mistyped] of REQUIRED_METADATA) {
+    for (const value of [undefined, null, ...mistyped]) {
+      const result = await withInspection((inspection) => set(inspection, value));
+      const where = `${field}=${String(value)}`;
+      assert.equal(result.status, "incompatible", where);
+      assert.deepEqual(
+        result.reasons,
+        [{ code: "metadata_missing", field }],
+        where
+      );
+    }
+  }
+  const noPlatform = await withInspection((inspection) => {
+    delete inspection.platform;
+  });
+  assert.equal(noPlatform.status, "incompatible");
+  assert.deepEqual(noPlatform.reasons, [
+    { code: "metadata_missing", field: "platform.os" },
+    { code: "metadata_missing", field: "platform.architecture" },
+  ]);
+});
+
+test("inspection parsing: a wrong label, an unknown outcome or a mistyped binding is a contract violation", async () => {
+  const edits: [string, (inspection: any) => void][] = [
+    ["contract absent", (i) => delete i.contract],
+    ["contract other", (i) => (i.contract = "castles.fixture.sandbox-inspection.v0")],
+    ["contract upper", (i) => (i.contract = "CASTLES.FIXTURE.SANDBOX-INSPECTION.V1")],
+    ["contract prefixed", (i) => (i.contract = "castles.fixture.sandbox-inspection.v1 ")],
+    ["contract array", (i) => (i.contract = ["castles.fixture.sandbox-inspection.v1"])],
+    ["outcome absent", (i) => delete i.outcome],
+    ["outcome null", (i) => (i.outcome = null)],
+    ["outcome unknown", (i) => (i.outcome = "ok")],
+    ["outcome cased", (i) => (i.outcome = "Observed")],
+    ["outcome ready", (i) => (i.outcome = "ready")],
+    ["outcome number", (i) => (i.outcome = 1)],
+    ["generation float", (i) => (i.binding.generation = 3.5)],
+    ["generation string", (i) => (i.binding.generation = "3")],
+    ["generation null", (i) => (i.binding.generation = null)],
+    ["generation absent", (i) => delete i.binding.generation],
+    ["generation NaN", (i) => (i.binding.generation = Number.NaN)],
+    ["generation unsafe", (i) => (i.binding.generation = 2 ** 53)],
+    ["binding absent", (i) => delete i.binding],
+    ["binding array", (i) => (i.binding = [])],
+    ["binding.sandboxId number", (i) => (i.binding.sandboxId = 1)],
+    ["binding.sandboxId absent", (i) => delete i.binding.sandboxId],
+    ["binding.agentId number", (i) => (i.binding.agentId = 1)],
+    ["binding.lifecycle absent", (i) => delete i.binding.lifecycle],
+    ["binding.lifecycle boolean", (i) => (i.binding.lifecycle = true)],
+    ["binding.attemptFence absent", (i) => delete i.binding.attemptFence],
+    ["binding.attemptFence null", (i) => (i.binding.attemptFence = null)],
+    ["sandbox absent", (i) => delete i.sandbox],
+    ["sandbox.id absent", (i) => delete i.sandbox.id],
+    ["sandbox.id number", (i) => (i.sandbox.id = 1)],
+    ["sdk absent", (i) => delete i.sdk],
+    ["sdk string", (i) => (i.sdk = "0.220.0")],
+  ];
+  for (const [label, edit] of edits) {
+    const result = await withInspection(edit);
+    assert.equal(result.status, "unavailable", label);
+    assert.deepEqual(
+      result.reasons,
+      [{ code: "inspection_contract_violation" }],
+      label
+    );
+    assert.equal(result.observed, null, label);
+    assert.equal(result.providerCalls.inspect, 1, label);
+  }
+});
+
+test("inspection parsing: each refusal outcome maps to one status and code, and needs the label", async () => {
+  const contract = "castles.fixture.sandbox-inspection.v1";
+  const table: [Record<string, unknown>, string, string][] = [
+    [{ outcome: "not_found" }, "unavailable", "sandbox_not_found"],
+    [{ outcome: "ambiguous" }, "reconciliation-required", "ambiguous_lookup"],
+    [{ outcome: "unavailable" }, "unavailable", "provider_unavailable"],
+    [{ outcome: "unauthorized", reason: "owner_mismatch" }, "unauthorized", "owner_mismatch"],
+    [{ outcome: "unauthorized", reason: "unauthenticated" }, "unauthorized", "unauthenticated"],
+    [{ outcome: "unauthorized" }, "unauthorized", "unauthenticated"],
+    [{ outcome: "unauthorized", reason: CANARY }, "unauthorized", "unauthenticated"],
+  ];
+  for (const [body, status, code] of table) {
+    const labelled = await runPreflight(
+      VALID_ENV,
+      tripwireClient(() => ({ contract, ...body })).client
+    );
+    assert.equal(labelled.status, status, code);
+    assert.deepEqual(labelled.reasons, [{ code }]);
+    assert.equal(labelled.observed, null);
+    assert.doesNotMatch(renderJson(labelled), new RegExp(CANARY, "u"));
+
+    const unlabelled = await runPreflight(
+      VALID_ENV,
+      tripwireClient(() => body).client
+    );
+    assert.equal(unlabelled.status, "unavailable", code);
+    assert.deepEqual(unlabelled.reasons, [
+      { code: "inspection_contract_violation" },
+    ]);
+  }
+});
+
+test("a recorded generation that differs in either direction is stale", async () => {
+  for (const generation of [0, 1, 2, 4, 9, -1, 999_999_999]) {
+    const result = await withInspection((inspection) => {
+      inspection.binding.generation = generation;
+    });
+    assert.equal(result.status, "reconciliation-required", String(generation));
+    assert.deepEqual(result.reasons, [
+      { code: "generation_mismatch", field: "binding.generation" },
+    ]);
+  }
+  const same = await withInspection((inspection) => {
+    inspection.binding.generation = 3;
+  });
+  assert.equal(same.status, "ready");
+});
+
+test("an attempt fence other than clear needs reconciliation", async () => {
+  for (const fence of ["cleanup_required", "held", "", "Clear", "clear "]) {
+    const result = await withInspection((inspection) => {
+      inspection.binding.attemptFence = fence;
+    });
+    assert.equal(result.status, "reconciliation-required", fence);
+    assert.deepEqual(result.reasons, [
+      { code: "attempt_fence_held", field: "binding.attemptFence" },
+    ]);
+  }
+});
+
+test("policy: the supported profile is exactly these literal values", () => {
+  // Written out, not derived: widening any bound in src/profile.ts must
+  // turn this red.
+  assert.deepEqual(SUPPORTED_PROFILE, {
+    credentialBoundaryVersion: "attempt-reset-v1",
+    id: "castles.daytona-private-linux.v1",
+    image: {
+      base: "node:22-bookworm-slim",
+      qualifiedSnapshot: "coven-agents-copilot-2",
+    },
+    lifecycle: {
+      autoArchiveMinutes: { max: 43_200, min: 60 },
+      autoDeleteInterval: -1,
+      autoPauseInterval: 0,
+      autoStopMinutes: { max: 60, min: 5 },
+      ttl: "disabled",
+    },
+    network: {
+      egress: "restricted",
+      networkAllowList: {
+        basis: "castles-decision",
+        maxEntries: 10,
+        minIpv4Prefix: 8,
+      },
+      public: false,
+    },
+    platform: { architecture: "reported-not-pinned", os: "linux" },
+    provider: "daytona",
+    resources: {
+      caps: { cpu: 4, diskGiB: 10, memoryGiB: 8 },
+      floor: { cpu: 1, diskGiB: 10, memoryGiB: 1 },
+      target: { cpu: 2, diskGiB: 10, memoryGiB: 4 },
+    },
+    sdk: { package: "@daytona/sdk", version: "0.220.0" },
+    targets: ["us", "eu"],
+  });
+});
+
+test("policy: each numeric bound is enforced at literal edges", async () => {
+  type Edge = [string, number, "ready" | "incompatible", string?];
+  const edges: Edge[] = [
+    ["autoStopInterval", 4, "incompatible", "lifecycle_auto_stop"],
+    ["autoStopInterval", 5, "ready"],
+    ["autoStopInterval", 60, "ready"],
+    ["autoStopInterval", 61, "incompatible", "lifecycle_auto_stop"],
+    ["autoStopInterval", 600, "incompatible", "lifecycle_auto_stop"],
+    ["autoStopInterval", 0, "incompatible", "lifecycle_auto_stop"],
+    ["autoArchiveInterval", 59, "incompatible", "lifecycle_auto_archive"],
+    ["autoArchiveInterval", 60, "ready"],
+    ["autoArchiveInterval", 43_200, "ready"],
+    ["autoArchiveInterval", 43_201, "incompatible", "lifecycle_auto_archive"],
+    ["autoArchiveInterval", 432_000, "incompatible", "lifecycle_auto_archive"],
+    ["autoArchiveInterval", 0, "incompatible", "lifecycle_auto_archive"],
+    ["autoDeleteInterval", -1, "ready"],
+    ["autoDeleteInterval", 0, "incompatible", "lifecycle_auto_delete"],
+    ["autoDeleteInterval", 1, "incompatible", "lifecycle_auto_delete"],
+    ["autoDeleteInterval", -2, "incompatible", "lifecycle_auto_delete"],
+    ["autoPauseInterval", 0, "ready"],
+    ["autoPauseInterval", 1, "incompatible", "lifecycle_auto_pause"],
+    ["autoPauseInterval", -1, "incompatible", "lifecycle_auto_pause"],
+    ["cpu", 0, "incompatible", "resources_out_of_policy"],
+    ["cpu", 1, "ready"],
+    ["cpu", 4, "ready"],
+    ["cpu", 5, "incompatible", "resources_out_of_policy"],
+    ["memory", 0, "incompatible", "resources_out_of_policy"],
+    ["memory", 1, "ready"],
+    ["memory", 8, "ready"],
+    ["memory", 9, "incompatible", "resources_out_of_policy"],
+    ["disk", 9, "incompatible", "resources_out_of_policy"],
+    ["disk", 10, "ready"],
+    ["disk", 11, "incompatible", "resources_out_of_policy"],
+    ["gpu", 0, "ready"],
+    ["gpu", 1, "incompatible", "gpu_present"],
+    ["gpu", -1, "incompatible", "gpu_present"],
+  ];
+  for (const [field, value, status, code] of edges) {
+    const result = await withSandbox((sandbox) => {
+      sandbox[field] = value;
+    });
+    assert.equal(result.status, status, `${field}=${value}`);
+    assert.deepEqual(codes(result), code ? [code] : [], `${field}=${value}`);
+  }
+  const target = await withSandbox(() => undefined);
+  assert.equal(target.observed?.resources.matchesTarget, true);
+  for (const [field, value] of [["cpu", 4], ["memory", 8], ["cpu", 1]] as const) {
+    const off = await withSandbox((sandbox) => {
+      sandbox[field] = value;
+    });
+    assert.equal(off.status, "ready");
+    assert.equal(off.observed?.resources.matchesTarget, false, field);
+  }
+});
+
+test("pins: the upstream revision and the pinned paths are these literals", () => {
+  const prefix =
+    "OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180:";
+  assert.deepEqual(
+    SOURCE_PINS.map((entry) => entry.pin),
+    [
+      "package.json",
+      "pnpm-lock.yaml",
+      "packages/agent-contracts/package.json",
+      "lib/runner/daytona/resource-policy.ts",
+      "lib/runner/daytona/config.ts",
+      "lib/runner/daytona/sandbox.ts",
+      "lib/runner/daytona/resource-inventory.ts",
+      "lib/runner/daytona/snapshot-name.ts",
+      "lib/runner/daytona/image.ts",
+      "lib/runner/resource-lifecycle.ts",
+      "lib/runner/types.ts",
+      "lib/runner/daytona/resource-repair.ts",
+      "lib/runner/daytona/resource-recovery.ts",
+      "lib/runner/diagnostics.ts",
+      "lib/runner/daytona/process.ts",
+      "docs/architecture/adr-002-daytona-execution-boundary.md",
+      "docs/product/cloud-pilot-integration.md",
+      ".env.example",
+    ].map((path) => prefix + path)
+  );
+  assert.equal(
+    UPSTREAM_SEAM.issue,
+    "https://github.com/OpenCoven/coven-agents/issues/296"
+  );
+});
+
+test("status precedence: unauthorized, reconciliation-required, incompatible, unavailable, stopped, ready", async () => {
+  type Finding = [status: string, code: string, edit: (inspection: any) => void];
+  const unauthorized: Finding = [
+    "unauthorized",
+    "binding_mismatch",
+    (i) => (i.binding.sandboxId = "fixture-sandbox-9999"),
+  ];
+  const returned: Finding = [
+    "reconciliation-required",
+    "returned_id_mismatch",
+    (i) => (i.sandbox.id = "fixture-sandbox-9999"),
+  ];
+  const stale: Finding = [
+    "reconciliation-required",
+    "generation_mismatch",
+    (i) => (i.binding.generation = 2),
+  ];
+  const exposed: Finding = [
+    "incompatible",
+    "public_exposure",
+    (i) => (i.sandbox.public = true),
+  ];
+  const unsettled: Finding = [
+    "unavailable",
+    "lifecycle_not_settled",
+    (i) => (i.sandbox.state = "starting"),
+  ];
+  const destroyed: Finding = [
+    "unavailable",
+    "sandbox_destroyed",
+    (i) => (i.sandbox.state = "destroying"),
+  ];
+  const stopped: Finding = [
+    "stopped",
+    "sandbox_stopped",
+    (i) => (i.sandbox.state = "stopped"),
+  ];
+  // Each row lists findings from highest to lowest priority. Reasons must be
+  // reported in that order whatever order the edits were applied in.
+  const rows: Finding[][] = [
+    [unauthorized, returned],
+    [stale, exposed],
+    [stale, unsettled],
+    [stale, destroyed],
+    [stale, stopped],
+    [exposed, unsettled],
+    [exposed, destroyed],
+    [exposed, stopped],
+    [stale, exposed, unsettled],
+    [stale, exposed, stopped],
+    [unsettled],
+    [destroyed],
+    [stopped],
+    [],
+  ];
+  for (const row of rows) {
+    for (const ordered of [row, [...row].reverse()]) {
+      const result = await withInspection((inspection) => {
+        for (const [, , edit] of ordered) {
+          edit(inspection);
+        }
+      });
+      const label = row.map(([, code]) => code).join(" > ") || "none";
+      assert.equal(result.status, row[0]?.[0] ?? "ready", label);
+      assert.deepEqual(codes(result), row.map(([, code]) => code), label);
+    }
+  }
+  // unavailable and stopped both come from the one state field, so no input
+  // carries both; their relative order is not observable through the API.
+});
+
+test("egress pattern edges", async () => {
+  const label63 = "a".repeat(63);
+  const name253 = `${[label63, label63, label63].join(".")}.${"b".repeat(58)}.io`;
+  const name254 = `${[label63, label63, label63].join(".")}.${"b".repeat(59)}.io`;
+  assert.equal(name253.length, 253);
+  assert.equal(name254.length, 254);
+  const table: [string, string, "ready" | "incompatible"][] = [
+    ["networkAllowList", "10.0.0.0/8", "ready"],
+    ["networkAllowList", "255.255.255.255/32", "ready"],
+    ["networkAllowList", "0.0.0.0/8", "ready"],
+    ["networkAllowList", "256.0.0.0/8", "incompatible"],
+    ["networkAllowList", "10.256.0.0/16", "incompatible"],
+    ["networkAllowList", "10.0.0.256/32", "incompatible"],
+    ["networkAllowList", "x10.0.0.0/8", "incompatible"],
+    ["networkAllowList", "10.0.0.0/8x", "incompatible"],
+    ["networkAllowList", "1.10.0.0.0/8", "incompatible"],
+    ["networkAllowList", "10.0.0.0/8/8", "incompatible"],
+    ["networkAllowList", "10.0.0.0/8 10.1.0.0/16", "incompatible"],
+    ["networkAllowList", "10.0.0/8", "incompatible"],
+    ["networkAllowList", "010.0.0.0/8", "incompatible"],
+    ["networkAllowList", "10.0.0.0/7", "incompatible"],
+    ["networkAllowList", "10.0.0.0/0", "incompatible"],
+    ["networkAllowList", "10.0.0.0/", "incompatible"],
+    ["networkAllowList", "１０.0.0.0/8", "incompatible"],
+    ["domainAllowList", "localhost", "incompatible"],
+    ["domainAllowList", "invalid", "incompatible"],
+    ["domainAllowList", ".invalid", "incompatible"],
+    ["domainAllowList", "fixture.invalid.", "incompatible"],
+    ["domainAllowList", "fixture..invalid", "incompatible"],
+    ["domainAllowList", "-fixture.invalid", "incompatible"],
+    ["domainAllowList", "fixture-.invalid", "incompatible"],
+    ["domainAllowList", "x.fixture.invalid!", "incompatible"],
+    ["domainAllowList", "!x.fixture.invalid", "incompatible"],
+    ["domainAllowList", `${label63}.invalid`, "ready"],
+    ["domainAllowList", `${label63}a.invalid`, "incompatible"],
+    ["domainAllowList", `fixture.${label63}`, "ready"],
+    ["domainAllowList", `fixture.${label63}a`, "incompatible"],
+    ["domainAllowList", name253, "ready"],
+    ["domainAllowList", name254, "incompatible"],
+  ];
+  for (const [field, value, status] of table) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.domainAllowList = null;
+      sandbox[field] = value;
+    });
+    assert.equal(result.status, status, `${field}=${value}`);
+    assert.deepEqual(
+      result.reasons,
+      status === "ready" ? [] : [{ code: "egress_allow_list_unsafe", field }],
+      `${field}=${value}`
+    );
+  }
+});
+
+test("egress: no usable restriction at all is unrestricted; block-all alone is restricted", async () => {
+  for (const [domains, networks] of [
+    [null, null],
+    [undefined, undefined],
+    ["", ""],
+    [" , ,", null],
+    [null, ","],
+  ]) {
+    const open = await withSandbox((sandbox) => {
+      sandbox.networkBlockAll = false;
+      sandbox.domainAllowList = domains;
+      sandbox.networkAllowList = networks;
+    });
+    assert.equal(open.status, "incompatible");
+    assert.deepEqual(open.reasons, [
+      { code: "egress_unrestricted", field: "egress" },
+    ]);
+    assert.equal(open.observed?.exposure.egressAllowListEntries, 0);
+
+    const blocked = await withSandbox((sandbox) => {
+      sandbox.networkBlockAll = true;
+      sandbox.domainAllowList = domains;
+      sandbox.networkAllowList = networks;
+    });
+    assert.equal(blocked.status, "ready");
+    assert.equal(blocked.observed?.exposure.networkBlockAll, true);
+  }
+  const both = await withSandbox((sandbox) => {
+    sandbox.domainAllowList = "a.fixture.invalid,b.fixture.invalid";
+    sandbox.networkAllowList = "192.0.2.0/24";
+  });
+  assert.equal(both.status, "ready");
+  assert.equal(both.observed?.exposure.egressAllowListEntries, 3);
+});
+
+async function worstCase() {
+  return withInspection((inspection) => {
+    inspection.binding.generation = 2;
+    inspection.binding.lifecycle = CANARY;
+    inspection.binding.attemptFence = CANARY;
+    inspection.sdk = { package: CANARY, version: CANARY };
+    inspection.platform = { architecture: CANARY, os: CANARY };
+    inspection.sandbox = {
+      autoArchiveInterval: 1,
+      autoDeleteInterval: 1,
+      autoDestroyAt: CANARY,
+      autoPauseInterval: 1,
+      autoStopInterval: 1,
+      cpu: 99,
+      disk: 99,
+      domainAllowList: `*,${CANARY}`,
+      gpu: 9,
+      id: "fixture-sandbox-0001",
+      labels: { note: CANARY },
+      linkedSandboxId: CANARY,
+      memory: 99,
+      networkAllowList: "0.0.0.0/0",
+      networkBlockAll: CANARY,
+      public: true,
+      snapshot: CANARY,
+      state: CANARY,
+      target: CANARY,
+      volumes: Array.from({ length: 5000 }, () => ({ volumeId: CANARY })),
+      warmPoolId: CANARY,
+    };
+  });
+}
+
+test("reasons are capped at exactly 16, highest priority first, and the JSON stays bounded", async () => {
+  const result = await worstCase();
+  // 4 reconciliation findings and more than 12 compatibility findings exist.
+  assert.equal(result.reasons.length, 16);
+  assert.deepEqual(codes(result).slice(0, 5), [
+    "generation_mismatch",
+    "binding_lifecycle_pending",
+    "attempt_fence_held",
+    "credential_boundary_unverified",
+    "sdk_generation_mismatch",
+  ]);
+  assert.equal(result.status, "reconciliation-required");
+  assert.equal(result.observed?.attachments.volumes, 999);
+  assert.equal(PREFLIGHT_JSON_MAX_BYTES, 16_384);
+  for (const output of [renderJson(result), renderHuman(result)]) {
+    assert.doesNotMatch(output, /canary/iu);
+    assert.doesNotMatch(output, /fixture-(?:sandbox|agent)-\d+/u);
+    assert.ok(Buffer.byteLength(output) <= 8192, String(output.length));
+  }
+  assert.equal(renderHuman(result).split("\n").length <= 32, true);
+});
+
+test("every string in observed output is drawn from a fixed vocabulary", async () => {
+  const vocabulary =
+    /^(?:unrecognised|absent|present|[a-z_]{2,24}|x86_64|coven-agents-copilot-2|\d{1,4}\.\d{1,4}\.\d{1,4})$/u;
+  const strings: string[] = [];
+  const walk = (value: unknown) => {
+    if (typeof value === "string") {
+      strings.push(value);
+    } else if (value && typeof value === "object") {
+      Object.values(value).forEach(walk);
+    }
+  };
+  for (const result of [await worstCase(), (await runCase("ready")).result]) {
+    walk(result.observed);
+  }
+  assert.ok(strings.length >= 16);
+  for (const value of strings) {
+    assert.match(value, vocabulary);
+  }
+});
+
 // --- Contract pins and mutation owners -------------------------------------
 
 test("source pins are exact repo@sha:path references", () => {
@@ -1279,6 +1937,130 @@ test("CLI rejects unknown commands and flags with a usage error", () => {
     assert.equal(cli(["start"], {}, cwd).status, 2);
     assert.equal(cli(["check", "--create"], {}, cwd).status, 2);
     assert.equal(cli([], {}, cwd).status, 2);
+  } finally {
+    rmSync(cwd, { force: true, recursive: true });
+  }
+});
+
+test("CLI exits 2, with nothing on stdout, for an unreadable or unlabelled fixture", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "castles-cli-"));
+  try {
+    const ready = JSON.parse(readFileSync(casePath("ready"), "utf8"));
+    const files: Record<string, string> = {
+      "array.json": "[]",
+      "empty.json": "",
+      "no-env.json": JSON.stringify({ ...ready, env: undefined }),
+      "no-expect.json": JSON.stringify({ ...ready, expect: undefined }),
+      "not-json.json": "{ not json",
+      "null.json": "null",
+      "relabelled.json": JSON.stringify({ ...ready, fixture: "captured" }),
+      "unlabelled.json": JSON.stringify({ ...ready, fixture: undefined }),
+    };
+    for (const [name, body] of Object.entries(files)) {
+      writeFileSync(join(cwd, name), body);
+    }
+    for (const path of [
+      ...Object.keys(files).map((name) => join(cwd, name)),
+      join(cwd, "does-not-exist.json"),
+      cwd,
+    ]) {
+      for (const flags of [["--json"], []]) {
+        const run = cli(["check", ...flags, "--fixture", path], {}, cwd);
+        assert.equal(run.status, 2, path);
+        assert.equal(run.stdout, "", path);
+        assert.equal(
+          run.stderr,
+          "castles: not a readable synthetic fixture case\n",
+          path
+        );
+      }
+    }
+  } finally {
+    rmSync(cwd, { force: true, recursive: true });
+  }
+});
+
+test("CLI exit code follows status and evidence for every fixture case", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "castles-cli-"));
+  try {
+    for (const name of ["ready", "stopped", "wrong-owner", "missing-id"]) {
+      const run = cli(["check", "--json", "--fixture", casePath(name)], {}, cwd);
+      const parsed = JSON.parse(run.stdout);
+      assert.equal(parsed.evidence, "fixture", name);
+      assert.equal(run.status, parsed.status === "ready" ? 3 : 1, name);
+      assert.equal(name === "ready", parsed.status === "ready", name);
+    }
+  } finally {
+    rmSync(cwd, { force: true, recursive: true });
+  }
+});
+
+test("CLI loads the binding from .env.local, and exported variables win", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "castles-cli-"));
+  try {
+    const fromFile = {
+      CASTLES_OWNER_AGENT_ID: "fixture-agent-0002",
+      CASTLES_PROFILE: SUPPORTED_PROFILE.id,
+      CASTLES_SANDBOX_GENERATION: "7",
+      CASTLES_SANDBOX_ID: "fixture-sandbox-0002",
+    };
+    writeFileSync(
+      join(cwd, ".env.local"),
+      [
+        ...Object.entries(fromFile).map(([key, value]) => `${key}=${value}`),
+        `DAYTONA_API_KEY=${CANARY}-file`,
+        "",
+      ].join("\n")
+    );
+    const aliases = async (env: Record<string, string>) =>
+      (await runPreflight(env, null)).target;
+
+    const fileOnly = cli(["check", "--json"], HARNESS_CANARIES, cwd);
+    assert.equal(fileOnly.status, 1);
+    const parsedFile = JSON.parse(fileOnly.stdout);
+    assert.deepEqual(parsedFile.target, await aliases(fromFile));
+    assert.equal(parsedFile.target.expectedGeneration, 7);
+    assert.deepEqual(parsedFile.reasons, [{ code: "upstream_seam_missing" }]);
+    assert.equal(parsedFile.evidence, "none");
+
+    const exported = {
+      CASTLES_SANDBOX_GENERATION: "9",
+      CASTLES_SANDBOX_ID: "fixture-sandbox-0003",
+    };
+    const mixed = cli(
+      ["check", "--json"],
+      { ...HARNESS_CANARIES, ...exported },
+      cwd
+    );
+    const parsedMixed = JSON.parse(mixed.stdout);
+    assert.deepEqual(
+      parsedMixed.target,
+      await aliases({ ...fromFile, ...exported })
+    );
+    assert.equal(parsedMixed.target.expectedGeneration, 9);
+    assert.notEqual(
+      parsedMixed.target.sandboxAlias,
+      parsedFile.target.sandboxAlias
+    );
+    assert.equal(parsedMixed.target.ownerAlias, parsedFile.target.ownerAlias);
+
+    // With --fixture the file is not consulted: the case file is the binding.
+    const replay = cli(
+      ["check", "--json", "--fixture", casePath("ready")],
+      HARNESS_CANARIES,
+      cwd
+    );
+    assert.equal(replay.status, 3);
+    assert.deepEqual(
+      JSON.parse(replay.stdout).target,
+      await aliases(loadFixtureCase(casePath("ready")).env)
+    );
+
+    for (const run of [fileOnly, mixed, replay]) {
+      assert.doesNotMatch(run.stdout + run.stderr, /canary/iu);
+      assert.doesNotMatch(run.stdout + run.stderr, /fixture-sandbox-\d+/u);
+    }
+    assert.deepEqual(readdirSync(cwd), [".env.local"]);
   } finally {
     rmSync(cwd, { force: true, recursive: true });
   }
