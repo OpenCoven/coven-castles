@@ -212,8 +212,9 @@ silent:
 
 ## What can be checked today
 
-Only that the fixture input and task text are the committed bytes, with
-nothing added:
+Only that the fixture input and task text are the bytes listed in the two
+hash files, with nothing added. On a clean checkout those are the committed
+bytes; the command trusts the hash files in the working tree:
 
 ```sh
 [ ! -L fixtures/report-task/input ] && (cd fixtures/report-task/input \
@@ -229,20 +230,22 @@ an added file (including names with a space, a newline or a leading dash), an
 added symlink (dangling, to a directory or to a file), a removed file, a
 changed file, a file replaced by a symlink or a directory, and a symlinked
 input root. It does not detect an added empty directory or a changed file
-mode; `fixtures/report-task/README.md` says why. This is an integrity check on
+mode, and it can hang if a listed file is replaced by a FIFO;
+`fixtures/report-task/README.md` says why. This is an integrity check on
 test input, not acceptance evidence.
 
 The expected-report properties were exercised with a throwaway script that is
-not committed. It follows the `parsing` rules (revision 2) in
+not committed. It follows the `parsing` rules (revision 3) in
 `expected/report-properties.json`. Result at this revision: 18 text
-properties; the 3 passing files, the 6 failing files and the 136 generated
-recipes each gave exactly their declared result (145 of 145). That check
+properties; the 3 passing files, the 6 failing files and the 184 generated
+recipes each gave exactly their declared result (193 of 193), none taking
+more than 5 s. That check
 becomes part of `tests/mvp.test.ts` when the wiring gate opens; until then
 treat it as a contributor's note, not a receipt.
 
-The properties are heuristics, and the fixture says where they are wrong: 27
+The properties are heuristics, and the fixture says where they are wrong: 54
 of the recipes carry `knownLimit` and pin a result that is not the right one,
-19 reports that should be rejected and pass, 8 correct reports that fail. The
+37 reports that should be rejected and pass, 17 correct reports that fail. The
 classes are listed under Limits in `fixtures/report-task/README.md`. No text
 property can decide whether a diagnosis is right or whether text is visible to
 a reader, and the secret patterns are a secondary net behind the seeded-value
