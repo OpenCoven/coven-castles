@@ -1093,6 +1093,23 @@ test("R1: an observed integer is echoed from -1 to 99999 and is null outside, wi
   ]);
   assert.equal(JSON.parse(renderJson(stale)).observed.binding.generation, null);
   assert.match(renderHuman(stale), /^  binding generation \?, lifecycle ready, /mu);
+
+  // matchesTarget follows the readings themselves, each of the three, and
+  // is false for a reading that is not echoed.
+  for (const [field, value] of [
+    ["cpu", 3],
+    ["memory", 5],
+    ["disk", 11],
+    ["disk", 9],
+    ["cpu", 100_000],
+    ["memory", 100_000],
+    ["disk", 100_000],
+  ] as const) {
+    const off = await withInspection((inspection) => {
+      inspection.sandbox[field] = value;
+    });
+    assert.equal(off.observed?.resources.matchesTarget, false, `${field}=${value}`);
+  }
 });
 
 test("R1 limit: an ID that is itself an integer inside the echo range can coincide with a reading", async () => {
