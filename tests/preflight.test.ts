@@ -2627,15 +2627,30 @@ test("R6: an unusable timeout does not abandon a provider that answers, and Node
  *   in ALLOWED_IMPORTS; nothing else may be imported or re-exported;
  * - the name of a Node built-in module appears in a string only as the
  *   specifier of such an import;
- * - `process` is used only in the forms listed in PROCESS_USE, which allows
- *   reading the four binding keys and nothing else from the environment;
+ * - `process` is used only in the forms listed in PROCESS_USE;
+ * - the text `process.env[key]` appears only inside a loop that is, to the
+ *   character, BINDING_LOOP: `for (const key of BINDING_ENVIRONMENT_KEYS)`
+ *   with the one statement `environment[key] = process.env[key];`;
+ * - the name BINDING_ENVIRONMENT_KEYS appears, comments included, only in
+ *   its declaration in profile.ts, which must be KEY_LIST_DECLARATION (the
+ *   four binding keys, written out), as a plain member of an import from
+ *   `./profile.ts`, and as the iterable of such a `for` header;
+ * - the name readFileSync appears, comments included, only in READ_IMPORT
+ *   and as the call READ_CALL, `readFileSync(path, "utf8")`: no flag and no
+ *   options object can be passed to it;
  * - none of the words in FORBIDDEN_ANYWHERE appears at all, comments and
  *   strings included, and no `\u` or `\x` escape does either.
  *
  * What it cannot do: it reads text, not a syntax tree, so it does not hold
- * the property "this code cannot reach a capability". SCAN_KNOWN_GAPS lists
- * evasions that pass it. The permission-model run at the end of this file is
- * the run-time check, with its own stated limits.
+ * the property "this code cannot reach a capability". In particular it does
+ * not know what `key`, `path` or the key list hold when the code runs. The
+ * environment rule shows that the one loop is spelled as expected and that
+ * the list it names is declared as four keys; it does not show that only
+ * those four variables are read. SCAN_KNOWN_GAPS lists evasions that pass,
+ * among them a key list widened without being named and a read of any file
+ * through the allowed call. The permission-model run at the end of this file
+ * is the run-time check, with its own stated limits; it does not restrict
+ * environment reads at all.
  */
 const ALLOWED_IMPORTS: Readonly<Record<string, readonly string[]>> = {
   "node:crypto": ["createHash"],
@@ -2657,6 +2672,25 @@ const PROCESS_USE =
 const MODULE_STATEMENT =
   /\b(import|export)\b(?!\s*["'])\s*([^;"'`]*?)\s*\bfrom\s*(["'])([^"'\n]*)\3|\bimport\s*(["'])([^"'\n]*)\5/gu;
 const RELATIVE_SPECIFIER = /^\.\/[a-z][a-z0-9-]*\.ts$/u;
+/** The only text in which the environment may be read. */
+const BINDING_LOOP =
+  /for \(const key of BINDING_ENVIRONMENT_KEYS\) \{\s*environment\[key\] = process\.env\[key\];\s*\}/gu;
+const ENVIRONMENT_READ = /process\.env\[key\]/gu;
+const KEY_LIST = "BINDING_ENVIRONMENT_KEYS";
+const KEY_LIST_WORD = /(?<![\w$])BINDING_ENVIRONMENT_KEYS(?![\w$])/gu;
+const KEY_LIST_FILE = "profile.ts";
+const KEY_LIST_DECLARATION = [
+  "export const BINDING_ENVIRONMENT_KEYS = [",
+  '  "CASTLES_PROFILE",',
+  '  "CASTLES_SANDBOX_ID",',
+  '  "CASTLES_OWNER_AGENT_ID",',
+  '  "CASTLES_SANDBOX_GENERATION",',
+  "] as const;",
+].join("\n");
+const KEY_LIST_ITERATION = "for (const key of ";
+const READ_WORD = /(?<![\w$])readFileSync(?![\w$])/gu;
+const READ_IMPORT = 'import { readFileSync } from "node:fs";';
+const READ_CALL = 'readFileSync(path, "utf8")';
 
 /** Naive on purpose: checks that must not be fooled by it read raw text. */
 function withoutComments(source: string): string {
@@ -2756,6 +2790,55 @@ function scanSources(files: ReadonlyMap<string, string>): string[] {
       const rest = source.slice(match.index);
       if (/^process\s*[.[?,;:)}=(]/u.test(rest) && !PROCESS_USE.test(rest)) {
         problems.push(`${file}: process member outside the allowed forms`);
+      }
+    }
+
+    // Raw text from here on: these names may not appear in a comment either.
+    const within = (
+      spans: readonly RegExpMatchArray[],
+      at: number
+    ): boolean =>
+      spans.some(
+        (span) =>
+          at > (span.index ?? 0) && at < (span.index ?? 0) + span[0].length
+      );
+
+    const bindingLoops = [...source.matchAll(BINDING_LOOP)];
+    for (const match of source.matchAll(ENVIRONMENT_READ)) {
+      if (!within(bindingLoops, match.index)) {
+        problems.push(`${file}: environment read outside the binding-key loop`);
+      }
+    }
+
+    const profileImports = [...source.matchAll(MODULE_STATEMENT)].filter(
+      (match) => match[1] === "import" && match[4] === `./${KEY_LIST_FILE}`
+    );
+    for (const match of source.matchAll(KEY_LIST_WORD)) {
+      const at = match.index;
+      const before = source.slice(Math.max(0, at - 200), at);
+      const after = source.slice(at + KEY_LIST.length);
+      const declared =
+        file === KEY_LIST_FILE &&
+        before.endsWith("export const ") &&
+        source.startsWith(KEY_LIST_DECLARATION, at - "export const ".length);
+      const iterated =
+        before.endsWith(KEY_LIST_ITERATION) && after.startsWith(") {");
+      const imported =
+        /[{,]\s*$/u.test(before) &&
+        /^\s*[,}]/u.test(after) &&
+        within(profileImports, at);
+      if (!declared && !iterated && !imported) {
+        problems.push(`${file}: the binding key list used outside its allowed forms`);
+      }
+    }
+
+    for (const match of source.matchAll(READ_WORD)) {
+      const at = match.index;
+      const imported =
+        source.slice(Math.max(0, at - "import { ".length), at) === "import { " &&
+        source.startsWith(READ_IMPORT, at - "import { ".length);
+      if (!imported && !source.startsWith(READ_CALL, at)) {
+        problems.push(`${file}: readFileSync outside its import and its one call form`);
       }
     }
   }
@@ -2990,16 +3073,39 @@ const SCAN_MUST_CATCH: readonly (readonly [string, ...Plant[]])[] = [
  * Evasions the scan is KNOWN not to catch. They are written down so the scan
  * is not mistaken for a proof: it reads text, so a property name built at run
  * time, or code hidden from the comment stripper and then aliased, gets
- * through. The permission-model run below is what stops these at run time.
+ * through. Each entry is the text and the file it is appended to.
+ *
+ * The permission-model run below stops the first two at run time. It does
+ * not stop the last two: it does not restrict the environment, and it allows
+ * reads of the paths each case names, so a read inside those paths succeeds
+ * and a denied one wrapped in try/catch goes unreported. Nothing in this
+ * suite shows that only the four binding variables are read; that holds by
+ * reading src/.
+ *
+ * Not a gap any more: a call such as `readFileSync(x, { flag: "a" })`, which
+ * creates or appends to a file through an allowed import. The scan now
+ * refuses every call but READ_CALL (see SCAN_MUST_CATCH).
  */
-const SCAN_KNOWN_GAPS: readonly (readonly [string, string])[] = [
+const SCAN_KNOWN_GAPS: readonly (readonly [string, string, string])[] = [
   [
     "property name built at run time",
     'const k = ["constr", "uctor"].join("");\nconst reach = ([] as any)[k][k]("return this");',
+    "cli.ts",
   ],
   [
     "alias hidden between string-borne comment markers",
     'const a = "/*"; const p = process\nconst b = "*/";\n(p as any).report.writeReport("/tmp/castles-report.json");',
+    "cli.ts",
+  ],
+  [
+    "the binding key list widened through a namespace import and a computed name, so the one allowed loop reads a fifth variable",
+    'import * as profile from "./profile.ts";\n(profile as any)["BINDING_" + "ENVIRONMENT_KEYS"].push("DAYTONA_API_KEY");',
+    "preflight.ts",
+  ],
+  [
+    "a read of any file through the one allowed call form, swallowed",
+    'try {\n  const path = "/etc/hosts";\n  readFileSync(path, "utf8");\n} catch {}',
+    "preflight.ts",
   ],
 ];
 
@@ -3029,9 +3135,9 @@ test("the binding key list is exactly the four CASTLES_ keys", () => {
 });
 
 test("the capability scan is a tripwire, not a proof: these known evasions pass it", () => {
-  for (const [label, text] of SCAN_KNOWN_GAPS) {
+  for (const [label, text, file] of SCAN_KNOWN_GAPS) {
     const files = readSourceTree();
-    append("cli.ts", text)(files);
+    append(file, text)(files);
     assert.deepEqual(scanSources(files), [], label);
   }
 });
