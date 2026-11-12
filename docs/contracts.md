@@ -35,13 +35,14 @@ starts again as **proposed**.
 
 Snapshot of draft PR
 [#6](https://github.com/OpenCoven/coven-castles/pull/6) taken
-2026-11-12T05:25Z. Everything below describes the source at this revision.
+2026-11-12T05:40Z. Everything below describes the source at this revision.
 
 | | |
 | --- | --- |
 | Revision | `13ab3bc2c823fe12b482a6701ab4df2c28e6733c` |
-| Standing | **proposed**: this revision has not been reviewed. Not accepted. The #3 and #5 gates are closed under #1's rule and under the proposed one. |
-| Reviews | Earlier heads only, both changes needed: [at `799488f`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5856050364) and [at `7ead0d8`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5868851188). This revision answers the second. A review of it by `rv6c-3db7f9d0` was in progress when the snapshot was taken; check the PR for its result. |
+| Standing | **reviewed**, as a second read: no blocking findings at this revision. **Not accepted**; acceptance is the maintainer's. |
+| Reviews | [At this revision](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5869660940), reviewer `rv6c-3db7f9d0`: no blocking findings, seven non-blocking. The reviewer was started by the coordinating session that also started the author, and says the review is a second read, not the independent review #1 requires for an R4 boundary change, and that it opens no gate. Earlier heads, both changes needed: [`799488f`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5856050364), [`7ead0d8`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5868851188). |
+| Gates | #3's gate is closed: it needs the accepted #2 artifact under #1 and under the proposed rule. #5's harness-wiring gate needs "reviewed" under #1; whether a second read counts is the maintainer's open decision, so treat it as closed until that is recorded. |
 | Evidence | **fixture** only. No live provider call has been made through this code. |
 
 If PR #6's head is no longer this revision, this section is stale until it is
