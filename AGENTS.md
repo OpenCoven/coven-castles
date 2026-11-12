@@ -7,9 +7,11 @@ its children #2–#5.
 
 ## Hard rules
 
-- **Read-only.** Never create, start, stop, resize, archive, reset or delete a
-  sandbox, and never change provider configuration. Do not call the live
-  provider at all without explicit authorization for a named window.
+- **Read-only.** Castles itself never creates, starts, stops, resizes,
+  archives, resets or deletes a sandbox, and never changes provider
+  configuration. A stop/start that #4 or #5 calls for is authorized separately
+  and goes through the canonical owner. Do not call the live provider at all
+  without explicit authorization for a named window.
 - **No second adapter.** Provider I/O goes only through
   `SandboxInspectionClient` in `src/preflight.ts`, backed by the existing
   Coven Agents lifecycle owner. If upstream lacks a capability, open a linked
@@ -30,8 +32,8 @@ corepack pnpm typecheck
 corepack pnpm check --fixture fixtures/preflight/cases/ready.json   # exits 3: fixture, never readiness
 ```
 
-Add a failing boundary test before a fix, committed separately. Report exact
-commands and results. Enable the secret-scanning hook once per clone:
+Add a failing boundary test before a fix (committing it separately is a
+proposed addition to #1). Report exact commands and results. Enable the secret-scanning hook once per clone:
 `git config core.hooksPath .githooks` (needs gitleaks).
 
 ## Paths and ownership
@@ -45,7 +47,7 @@ every shared file, is [`docs/ownership.md`](docs/ownership.md).
 | `src/run.ts`, `runtime/`, `tests/run.test.ts` | #3 |
 | `src/observe.ts`, `src/export.ts`, `tests/recovery.test.ts` | #4 |
 | `fixtures/report-task/`, `tests/mvp.test.ts`, `scripts/smoke.ts`, `docs/acceptance.md` | #5 |
-| CLI entrypoint, package and toolchain files, `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, shared `docs/`, `.github/` templates | #2 as shared-file steward |
+| CLI entrypoint, package and toolchain files, `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, shared `docs/`, `.github/` templates | #2 as shared-file steward (proposed for the last three) |
 
 Changing a path you do not own needs a linked request and an explicit handoff
 from its steward. The epic maintainer resolves overlap.
@@ -93,9 +95,9 @@ Exactly one `status:*` label per open issue: `ready`, `ready-offline`,
 ## Review
 
 `risk:r4` changes need independent review; name the reviewer and the reviewed
-SHA in the handoff. You never review or merge your own change. Proposed
-additions to #1 (fresh clone at an exact SHA, no re-review of your own fixes,
-comment-only reviews on a shared account) are in
+SHA in the handoff. Proposed additions to #1 (no self-review or self-merge,
+fresh clone at an exact SHA, no re-review of your own fixes, comment-only
+reviews on a shared account) are in
 [`docs/coordination.md`](docs/coordination.md#review).
 
 ## PR checklist

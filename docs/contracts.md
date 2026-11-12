@@ -16,8 +16,8 @@ this page's shorthand, an **addition to #1**.
 
 | Standing | Meaning |
 | --- | --- |
-| **proposed** | Published by its author at an exact SHA, and either not reviewed or reviewed with a blocking finding open. Opens no gate. A consumer may use it for read-only investigation, failure-case design and offline fixture work only. |
-| **reviewed** | A reviewer other than the author has reviewed that exact SHA, the review is linked, and no blocking finding is open. Under #1 this opens the consumer's gate. |
+| **proposed** | Published by its author at an exact SHA, and either not reviewed or reviewed with a blocking finding open. Opens no gate. A consumer may use it for read-only investigation and failure-case design only; it writes no tests or fixtures against it. (#5's fixture preparation under #1 does not consume the contract.) |
+| **reviewed** | That exact SHA has had the review its producing issue's Review row names (maintainer review for #2; independent review for #3 and #4, and for any `risk:r4` change), by someone other than the author; the review is linked and no blocking finding is open. Under #1 this opens the consumer's gate. |
 | **accepted** | The maintainer has confirmed acceptance of that SHA in a comment. #1 requires this before closure, for the #2 artifact that #3 consumes, and for the #2 to #4 revisions behind #5's live qualification. |
 
 **Proposed addition, awaiting a maintainer decision:** only **accepted** opens
@@ -40,9 +40,9 @@ Snapshot of draft PR
 | | |
 | --- | --- |
 | Revision | `13ab3bc2c823fe12b482a6701ab4df2c28e6733c` |
-| Standing | **reviewed**, as a second read: no blocking findings at this revision. **Not accepted**; acceptance is the maintainer's. |
-| Reviews | [At this revision](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5869660940), reviewer `rv6c-3db7f9d0`: no blocking findings, seven non-blocking. The reviewer was started by the coordinating session that also started the author, and says the review is a second read, not the independent review #1 requires for an R4 boundary change, and that it opens no gate. Earlier heads, both changes needed: [`799488f`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5856050364), [`7ead0d8`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5868851188). |
-| Gates | #3's gate is closed: it needs the accepted #2 artifact under #1 and under the proposed rule. #5's harness-wiring gate needs "reviewed" under #1; whether a second read counts is the maintainer's open decision, so treat it as closed until that is recorded. |
+| Standing | A second-read review found no blocking findings at this revision. It is not yet **reviewed** in this page's sense, because #2's Review row names maintainer review. **Not accepted**; acceptance is the maintainer's. |
+| Reviews | [At this revision](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5869660940), reviewer `rv6c-3db7f9d0`: no blocking findings, seven non-blocking. The reviewer was started by the coordinating session that also started the author, and says the review is a second read, not independent review, and that it opens no gate. #2 is labelled `risk:r3`. Earlier heads, both changes needed: [`799488f`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5856050364), [`7ead0d8`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5868851188). |
+| Gates | #3's gate is closed: it needs the accepted #2 artifact under #1 and under the proposed rule. #5's harness-wiring gate needs #2's reviewed package and test command; the review #2 names is the maintainer's and has not happened, so that gate is closed too. |
 | Evidence | **fixture** only. No live provider call has been made through this code. |
 
 If PR #6's head is no longer this revision, this section is stale until it is
@@ -105,7 +105,7 @@ Schema `castles.preflight.v1`:
 | `sourcePolicy` | Policy from `SUPPORTED_PROFILE`, with the `repo@sha:path` pins. Never derived from the sandbox. Most values are read from pinned source; `network.networkAllowList` (`{ basis: "castles-decision", maxEntries: 10, minIpv4Prefix: 8 }`) is a Castles decision with no upstream pin |
 | `observed` | What the seam reported, or `null`. Provider text is never copied: see below |
 | `providerCalls` | `{ inspect }`: 0 or 1 |
-| `upstream` | The upstream seam's issue link and status |
+| `upstream` | `{ issue, seam }`: the upstream issue link, and `seam: "missing"` |
 
 Status precedence when several findings apply: `unauthorized` >
 `reconciliation-required` > `incompatible` > `unavailable` > `stopped` >
@@ -119,10 +119,12 @@ alone does not withhold it.
 Inside `observed`, `state`, `target`, `image.snapshot`, `platform.os`,
 `platform.architecture`, `binding.lifecycle` and `binding.attemptFence` each
 carry a value from a fixed set or `"unrecognised"`; `sdk.version` carries a
-`major.minor.patch` version or `"unrecognised"`. All but the two `binding`
-fields are `null` when the value is absent or not a string; those two report
-`"unrecognised"` instead. Other fields are numbers, booleans or fixed
-literals.
+`major.minor.patch` version or `"unrecognised"`. The two `binding` fields are
+never `null`: a response in which either is absent or not a string is refused
+whole (`inspection_contract_violation`, `observed: null`), and any other
+string outside the set reads `"unrecognised"`. The other six are `null` when
+the value is absent or not a string. Other fields are numbers, booleans, fixed
+literals or `null`.
 
 Two rules behind existing reason codes, both Castles decisions:
 
@@ -197,9 +199,11 @@ corepack pnpm typecheck
 ```
 
 `test` runs `tsx --test tests/*.test.ts`, so a new `tests/<name>.test.ts` is
-picked up without a manifest change. One test needs Node's permission model
-and is skipped where the Node in use lacks it; the README lists the versions. Requests to change the script, add a
-script or widen `tsconfig.json` go to the #2 steward.
+picked up without a manifest change. Three tests depend on the Node version:
+two run the CLI under Node's permission model, and one network control also
+needs `--allow-net`. On Node 24.22.0 the first two run and only the network
+control is skipped; the README lists the versions. Requests to change the
+script, add a script or widen `tsconfig.json` go to the #2 steward.
 
 ### Source pins and mutation owners
 

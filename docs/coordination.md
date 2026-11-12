@@ -209,7 +209,7 @@ you transition; never accumulate two.
 | `status:blocked` | Stopped on a concrete, stated unblock condition | whoever hits the block |
 
 Typical path: `ready` or `ready-offline` → `in-progress` → `in-review` →
-closed by the maintainer. `blocked` can be entered from any state and must say
+closed once a maintainer has confirmed acceptance. `blocked` can be entered from any state and must say
 what unblocks it. On completion the issue is closed as completed and the
 status label removed.
 
@@ -363,6 +363,8 @@ until the maintainer confirms or strikes it.
 | No force-push or rebase of your own pushed branch; merge instead | same section |
 | The "Set by" column for status labels | [Assignee and status labels](#assignee-and-status-labels) |
 | The `static` label and the working reading of real-daemon | [Evidence classes](#evidence-classes) |
-| No self-review, including no re-review of your own fixes; fresh clone at an exact SHA; stating independence; comment-only reviews on a shared account | [Review](#review) |
+| No self-review or self-merge, including no re-review of your own fixes; fresh clone at an exact SHA; stating independence; comment-only reviews on a shared account | [Review](#review) |
 | Maintainer acceptance for every gate; the proposed, reviewed and accepted standings | [Lanes and gates](#lanes-and-gates), [`contracts.md`](contracts.md#standing) |
-| Stewardship of the documentation and template paths; the work-claim issue template | [`ownership.md`](ownership.md#shared-files-stewarded-by-2) |
+| Stewardship of the documentation and template paths; the maintainer-owned paths | [`ownership.md`](ownership.md#shared-files-stewarded-by-2) |
+| The work-claim and blocker-report issue templates, each of which opens a separate issue | [`README.md`](README.md#templates) |
+| Committing the failing test separately; opening every PR as a draft | [`../CONTRIBUTING.md`](../CONTRIBUTING.md#test-first) |

@@ -82,8 +82,8 @@ Run `test` and `typecheck` before every push.
 
 ## Test first
 
-Add a failing test at the real boundary before the fix, and commit it
-separately so the history shows red, then green.
+Add a failing test at the real boundary before the fix. Proposed addition to
+#1: commit it separately so the history shows red, then green.
 
 - Tests for a lane live in that lane's test file. See
   [`docs/ownership.md`](docs/ownership.md).
@@ -143,9 +143,10 @@ Do not edit shared files concurrently. The steward for each is in
 
 ## Opening a pull request
 
-- Open it as a **draft**. The template asks for everything a reviewer needs.
+- Open it as a **draft** (a proposed addition to #1). The template asks for
+  everything a reviewer needs.
 - Use `Refs #N`. Do not use an auto-closing keyword while acceptance is
-  unverified; a maintainer closes issues.
+  unverified; a maintainer confirms acceptance before closure.
 - List consumed and produced contracts with exact SHAs. Update
   [`docs/contracts.md`](docs/contracts.md) through its steward if you change a
   contract.
@@ -156,10 +157,10 @@ Do not edit shared files concurrently. The steward for each is in
 
 ## Review
 
-You do not review or merge your own change. A reviewer works from a fresh
-clone at an exact SHA and reports findings; a maintainer confirms acceptance
-before closure. `risk:r4` changes need independent review. The full rules,
-including which of them are proposed additions to #1, are in
+`risk:r4` changes need independent review, and a maintainer confirms
+acceptance before closure. Proposed additions to #1: you do not review or
+merge your own change, and a reviewer works from a fresh clone at an exact SHA
+and reports findings. The full rules are in
 [`docs/coordination.md`](docs/coordination.md#review).
 
 ## Scope

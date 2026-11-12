@@ -57,6 +57,9 @@ it. #1 lists the original shared-file set; these are additions to it.
 
 ## Maintainer-owned
 
+**Addition to #1**, proposed: #1 does not list these paths. They are recorded
+as the maintainer's because the maintainer added them on `main`.
+
 | Path | Notes |
 | --- | --- |
 | `.githooks/pre-commit`, `.gitleaks.toml`, `.github/workflows/secret-scan.yml` | Secret scanning, added by the maintainer on `main`. Request changes from the maintainer. |
