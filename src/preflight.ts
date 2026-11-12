@@ -949,16 +949,24 @@ function evidenceOf(inspect: Inspect | null): PreflightEvidence {
  * seam is available: the binding is still validated, and the result names the
  * upstream blocker instead of guessing an endpoint.
  *
- * The edges a caller can reach from plain JavaScript are decided here, not
- * left to an exception or to a timer:
+ * For plain values, the edges a caller can reach from plain JavaScript are
+ * decided here, not left to an exception or to a timer:
  * - a client that is `undefined`, or any value without a callable
  *   `inspectBoundSandbox`, is the same as `null`: evidence `none`, no call
- *   counted, `upstream_seam_missing`;
+ *   counted, `upstream_seam_missing`. The property is read once, before the
+ *   binding is validated, because the evidence class depends on it;
  * - `providerCalls.inspect` is 1 exactly when the seam method was invoked;
- * - an environment that is not an object configures nothing
- *   (`sandbox_id_missing`); options that are not an object are no options;
+ * - an environment that is `null`, `undefined`, a primitive or a function
+ *   configures nothing (`sandbox_id_missing`); options that are `null`, a
+ *   primitive, a function or an array are no options. Any other object is
+ *   read, whatever built it;
  * - a `timeoutMs` that is a number above 2,147,483,647 means the default
  *   deadline; every other stated value goes to the timer as given.
+ *
+ * Not handled: a property whose read throws. An accessor that throws on the
+ * environment, the options or a response held in memory still rejects this
+ * call with the caller's own error. Only the read of the client's
+ * `inspectBoundSandbox` is caught.
  */
 export async function runPreflight(
   environment: Readonly<Record<string, string | undefined>>,

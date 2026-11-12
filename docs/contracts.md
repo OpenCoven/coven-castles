@@ -187,9 +187,19 @@ the 30,000 ms default, as no value does: a timer would turn it into 1 ms.
 Every other value is handed to the timer as given. Node then waits 1 ms for a
 number below 1 or `NaN` and converts a value that is not a number; one it
 cannot convert ends the check as `provider_unavailable`. What a non-positive
-or non-numeric timeout should mean is not decided. An `environment` that is
-not an object is reported as `sandbox_id_missing`, and `options` that are not
-an object are ignored; neither throws.
+or non-numeric timeout should mean is not decided.
+
+An `environment` that is `null`, `undefined`, a primitive or a function is
+reported as `sandbox_id_missing`. `options` that are `null`, a primitive, a
+function or an array are ignored. Any other object is read, whatever built
+it, so an array can be an `environment`. The client's `inspectBoundSandbox`
+property is read once, before the binding is validated, and nothing else is
+read from the client or from the method.
+
+These hold for plain values. A property whose read throws, on the
+`environment`, the `options` or a response held in memory, still makes
+`runPreflight` reject with the caller's own error; only a throwing read of
+the client's property is caught.
 
 **Consumers must gate on this, never on `status` alone.** A fixture replay can
 report `status: "ready"`; it is not readiness.

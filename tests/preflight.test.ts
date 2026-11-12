@@ -2753,6 +2753,30 @@ test("R6: a null or non-object environment is an unconfigured binding, not an ex
   }
 });
 
+test("N5 limit: a property whose read throws still rejects with the caller's error", async () => {
+  // Stated, not hidden (review rv11 N5): the edges above are decided for
+  // plain values. An accessor that throws is not handled, at 13ab3bc or
+  // here, and the caller's own error comes back. When that is decided, this
+  // test is the one to change.
+  const fixture = loadFixtureCase(casePath("ready"));
+  const raise = () => {
+    throw new Error(CANARY);
+  };
+  const client = createFixtureInspectionClient(fixture);
+  const environment = Object.defineProperty({ ...fixture.env }, "CASTLES_SANDBOX_ID", {
+    get: raise,
+  });
+  await assert.rejects(runPreflight(environment, client), { message: CANARY });
+  const options = Object.defineProperty({}, "timeoutMs", { get: raise });
+  await assert.rejects(runPreflight(fixture.env, client, options), { message: CANARY });
+  const inspection = structuredClone(fixture.inspection) as any;
+  Object.defineProperty(inspection.sandbox, "cpu", { get: raise });
+  await assert.rejects(
+    runPreflight(fixture.env, { inspectBoundSandbox: () => Promise.resolve(inspection) }),
+    { message: CANARY }
+  );
+});
+
 /**
  * Numbers no timer can hold. Node replaces a delay above 2^31-1 with 1 ms
  * and warns, so a caller asking for a long wait got none: the one timeout
