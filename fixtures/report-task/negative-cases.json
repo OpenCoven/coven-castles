@@ -1,12 +1,15 @@
 {
-  "schema": "castles.fixture.negative-cases.v0",
+  "schema": "castles.fixture.negative-cases.v1",
   "synthetic": true,
   "notice": "Catalogue of cases the offline entrypoint (tests/mvp.test.ts) and the opt-in smoke harness must cover. It describes required behaviour; it is not a contract for any interface and defines no response shape. No case here has been executed by #5. A case becomes a test only against a reviewed contract from the issue named in dependsOn; until then it is an explicit unverified gate.",
   "status": "unverified (all cases)",
   "legend": {
     "releaseGates": "G1 to G6 are the six hard release gates in issue #1, in order.",
-    "tests": "#N-Ak is the k-th acceptance checkbox of issue #N; #5-Rk is the k-th acceptance-receipt checkbox of issue #5. Full text is in docs/acceptance.md.",
-    "evidenceClassesPossible": "F = offline fixture; RD = real daemon, no provider; L = authorized live provider. This is where the case could be shown, not where it has been."
+    "tests": "#N-Ak is the k-th acceptance checkbox of issue #N; #5-Rk is the k-th acceptance-receipt checkbox of issue #5. The wording of each is in the issue; docs/acceptance.md abbreviates it. A case listed here bears on that checkbox. One passing case never establishes the checkbox by itself.",
+    "evidenceClassesPossible": "F = offline fixture; RD = real daemon, no provider; L = authorized live provider. This is where the case could be shown, not where it has been.",
+    "scope": "#N-Sk is numbered scope item k of issue #N; #1-fixed is the 'Smallest architecture and fixed scope' section of #1. Used where a case tests a scope rule that no acceptance checkbox states. #1-G6 is the second sentence of release gate 6.",
+    "basis": "Absent means the expectation is stated in #1 to #5. 'proposal' means part of the expectation goes beyond the issues: it is #5's suggestion to the lane named in dependsOn, and that lane's reviewed contract decides it.",
+    "examples": "Machine-checkable examples. refusedPaths must each be refused by the input path rules in manifest.json; stagedPaths must each be allowed by them."
   },
   "cases": [
     {
@@ -22,7 +25,7 @@
         "#2-A3"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)"
       ],
       "evidenceClassesPossible": [
         "F"
@@ -40,7 +43,7 @@
         "#2-A2"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)"
       ],
       "evidenceClassesPossible": [
         "F"
@@ -93,7 +96,7 @@
       ],
       "dependsOn": [
         "#5 smoke harness (not written; Mode B)",
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)"
       ],
       "evidenceClassesPossible": [
         "F"
@@ -107,8 +110,7 @@
       "releaseGates": [],
       "tests": [
         "#3-A7",
-        "#5-R6",
-        "#5-R8"
+        "#5-R6"
       ],
       "dependsOn": [
         "#5 smoke harness (not written; Mode B)",
@@ -125,16 +127,18 @@
       "expect": "Client does not read, forward or echo it; output uses aliases only",
       "releaseGates": [],
       "tests": [
-        "#2-A4",
         "#2-A5",
         "#3-A6"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
         "#3 run/attempt/admission interface (does not exist)"
       ],
       "evidenceClassesPossible": [
         "F"
+      ],
+      "scope": [
+        "#2-S5"
       ]
     },
     {
@@ -152,11 +156,49 @@
       "dependsOn": [
         "#5 smoke harness (not written; Mode B)",
         "#3 run/attempt/admission interface (does not exist)",
-        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+        "upstream OpenCoven/coven-agents#297 (non-browser owner audience for the run API, open)"
       ],
       "evidenceClassesPossible": [
         "F",
         "L"
+      ]
+    },
+    {
+      "id": "CFG-09",
+      "area": "configuration",
+      "case": "Client surface and configuration are searched for a second or fallback provider, a nested container runtime, or a list, discover or adopt-by-name call",
+      "expect": "None is reachable in any mode",
+      "releaseGates": [],
+      "tests": [],
+      "scope": [
+        "#1-fixed"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
+      ]
+    },
+    {
+      "id": "CFG-10",
+      "area": "configuration",
+      "case": "Smoke harness is pointed at a path outside its dedicated test directory, or at a directory that already holds files it did not write",
+      "expect": "Refused before any write; nothing existing is modified, cleaned or deleted",
+      "releaseGates": [],
+      "tests": [
+        "#5-R7"
+      ],
+      "scope": [
+        "#5-S2",
+        "#5-S3"
+      ],
+      "dependsOn": [
+        "#5 smoke harness (not written; Mode B)"
+      ],
+      "evidenceClassesPossible": [
+        "F"
       ]
     },
     {
@@ -171,7 +213,7 @@
         "#2-A2"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
         "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
       ],
       "evidenceClassesPossible": [
@@ -191,7 +233,7 @@
         "#2-A2"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
         "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
       ],
       "evidenceClassesPossible": [
@@ -212,7 +254,7 @@
         "#2-A3"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
         "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
       ],
       "evidenceClassesPossible": [
@@ -231,7 +273,7 @@
         "#2-A3"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
         "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
       ],
       "evidenceClassesPossible": [
@@ -251,7 +293,7 @@
         "#2-A3"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
         "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
       ],
       "evidenceClassesPossible": [
@@ -271,7 +313,7 @@
         "#2-A4"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
         "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
       ],
       "evidenceClassesPossible": [
@@ -283,16 +325,15 @@
       "id": "BND-07",
       "area": "binding",
       "case": "Sandbox is stopped",
-      "expect": "Reported stopped; the check does not wake it and a run is refused",
+      "expect": "Reported stopped; the check does not wake it. Whether a run is then refused is #3's contract and has no #3 checkbox",
       "releaseGates": [
         "G1"
       ],
       "tests": [
-        "#2-A4",
-        "#3-A2"
+        "#2-A4"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
         "#3 run/attempt/admission interface (does not exist)"
       ],
       "evidenceClassesPossible": [
@@ -314,9 +355,30 @@
         "#4-A5"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
         "#4 observe/export/cancel interface (does not exist)",
         "upstream OpenCoven/coven-agents#262 (containment and reuse, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "L"
+      ]
+    },
+    {
+      "id": "BND-09",
+      "area": "binding",
+      "case": "Provider inspection throws, times out, or returns malformed or oversized data",
+      "expect": "Reported unavailable; no retry that mutates, no fallback lookup, no raw error in output",
+      "releaseGates": [
+        "G1"
+      ],
+      "tests": [
+        "#2-A2",
+        "#2-A5"
+      ],
+      "dependsOn": [
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
+        "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
       ],
       "evidenceClassesPossible": [
         "F",
@@ -336,7 +398,7 @@
       ],
       "dependsOn": [
         "#3 run/attempt/admission interface (does not exist)",
-        "upstream canonical producer: familiar root/revision in admission (missing per #3 investigation)"
+        "upstream canonical producer: familiar root/revision in admission (missing per the #3 investigation; no upstream issue found)"
       ],
       "evidenceClassesPossible": [
         "F",
@@ -368,7 +430,7 @@
       "id": "ADM-03",
       "area": "admission",
       "case": "Grant has expired before submit, and between claim and credential transfer",
-      "expect": "Refused with a reason distinct from revocation; no credential transfer",
+      "expect": "Refused; no credential transfer. A reason distinct from revocation is suggested",
       "releaseGates": [
         "G1"
       ],
@@ -377,12 +439,13 @@
       ],
       "dependsOn": [
         "#3 run/attempt/admission interface (does not exist)",
-        "upstream canonical producer: familiar root/revision in admission (missing per #3 investigation)"
+        "upstream canonical producer: familiar root/revision in admission (missing per the #3 investigation; no upstream issue found)"
       ],
       "evidenceClassesPossible": [
         "F",
         "RD"
-      ]
+      ],
+      "basis": "proposal: the distinct reason is not in the issues; #3 decides"
     },
     {
       "id": "ADM-04",
@@ -416,7 +479,7 @@
       ],
       "dependsOn": [
         "#3 run/attempt/admission interface (does not exist)",
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)",
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
         "upstream OpenCoven/coven-agents#296 (read-only inspection seam, open)"
       ],
       "evidenceClassesPossible": [
@@ -429,7 +492,7 @@
       "id": "ADM-06",
       "area": "admission",
       "case": "No authority: missing credential, wrong audience, missing binding or missing producer evidence. A caller-supplied familiar field, sandbox ID, account login or subscription state is offered instead",
-      "expect": "Each refused, naming what is absent; nothing supplied by the caller substitutes",
+      "expect": "Each refused; nothing supplied by the caller substitutes. Naming what is absent is suggested for the authenticated owner only, and must not tell any other caller whether a run or sandbox exists (compare REC-03)",
       "releaseGates": [
         "G1"
       ],
@@ -438,23 +501,22 @@
       ],
       "dependsOn": [
         "#3 run/attempt/admission interface (does not exist)",
-        "upstream canonical producer: familiar root/revision in admission (missing per #3 investigation)",
-        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+        "upstream canonical producer: familiar root/revision in admission (missing per the #3 investigation; no upstream issue found)",
+        "upstream OpenCoven/coven-agents#297 (non-browser owner audience for the run API, open)"
       ],
       "evidenceClassesPossible": [
         "F",
         "RD",
         "L"
-      ]
+      ],
+      "basis": "proposal: naming what is absent is not in the issues; #3 decides, consistently with REC-03"
     },
     {
       "id": "ADM-07",
       "area": "admission",
       "case": "Two different operations submitted concurrently",
       "expect": "Exactly one admitted; the other denied, not queued; one credential transfer in total",
-      "releaseGates": [
-        "G1"
-      ],
+      "releaseGates": [],
       "tests": [
         "#3-A3"
       ],
@@ -465,7 +527,8 @@
         "F",
         "RD",
         "L"
-      ]
+      ],
+      "basis": "proposal: 'one credential transfer in total' is not in the issues; #3 requires that concurrent submission is denied"
     },
     {
       "id": "ADM-08",
@@ -512,7 +575,7 @@
       "id": "ADM-10",
       "area": "admission",
       "case": "Same operation and task text, but one input file byte changed (input.SHA256SUMS no longer verifies)",
-      "expect": "Conflict, not a silent reuse of the earlier run",
+      "expect": "Suggested: conflict, not a silent reuse of the earlier run. At the pinned upstream revision the payload digest covers agent and task text only (per the #3 investigation), so today a changed input byte would not conflict unless the input is inlined in the task",
       "releaseGates": [
         "G2"
       ],
@@ -526,7 +589,8 @@
       "evidenceClassesPossible": [
         "F",
         "RD"
-      ]
+      ],
+      "basis": "proposal: #3 requires a conflict for a changed payload; whether staged input bytes are part of the payload is #3's open decision"
     },
     {
       "id": "ADM-11",
@@ -551,8 +615,8 @@
     {
       "id": "BST-01",
       "area": "bootstrap",
-      "case": "Read-only check is run on a sandbox with no runtime installed",
-      "expect": "Check reports the state and installs nothing; bootstrap happens only on an explicit action",
+      "case": "Runtime verification is run on a sandbox whose snapshot lacks the pinned runtime",
+      "expect": "Reported incompatible; nothing is installed, reset or started, and no provider write is made",
       "releaseGates": [],
       "tests": [
         "#3-A4",
@@ -560,7 +624,8 @@
       ],
       "dependsOn": [
         "#3 run/attempt/admission interface (does not exist)",
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)",
+        "OpenCoven/coven-agents#300: decided as snapshot verification only (recorded on #3, 2026-11-11); the issue is still open"
       ],
       "evidenceClassesPossible": [
         "F",
@@ -571,15 +636,15 @@
     {
       "id": "BST-02",
       "area": "bootstrap",
-      "case": "Bootstrap repeated on the same validated version",
-      "expect": "No reinstall, no state reset, no second supervisor; file hashes unchanged",
+      "case": "Runtime verification repeated against the same pinned manifest",
+      "expect": "Same result each time; no install, no state reset, no supervisor, no provider write; file hashes unchanged",
       "releaseGates": [],
       "tests": [
         "#3-A4"
       ],
       "dependsOn": [
         "#3 run/attempt/admission interface (does not exist)",
-        "upstream admitted install operation (missing per #3 investigation)"
+        "OpenCoven/coven-agents#300: decided as snapshot verification only (recorded on #3, 2026-11-11); the issue is still open"
       ],
       "evidenceClassesPossible": [
         "F",
@@ -590,14 +655,15 @@
     {
       "id": "BST-03",
       "area": "bootstrap",
-      "case": "Bootstrap interrupted part-way",
-      "expect": "Reads as not ready; a later run is refused until bootstrap completes",
+      "case": "Verification result is unreadable, partial or stale",
+      "expect": "Not readiness; a later run is refused until a verification result reads compatible",
       "releaseGates": [],
       "tests": [
         "#3-A4"
       ],
       "dependsOn": [
-        "#3 run/attempt/admission interface (does not exist)"
+        "#3 run/attempt/admission interface (does not exist)",
+        "OpenCoven/coven-agents#300: decided as snapshot verification only (recorded on #3, 2026-11-11); the issue is still open"
       ],
       "evidenceClassesPossible": [
         "F",
@@ -607,15 +673,16 @@
     {
       "id": "BST-04",
       "area": "bootstrap",
-      "case": "Target directory already holds files Castles did not write, or a manifest hash does not match",
-      "expect": "Refused without overwriting anything",
+      "case": "Snapshot, harness or contract hash does not match the pinned manifest",
+      "expect": "Reported incompatible; nothing is overwritten or repaired",
       "releaseGates": [],
       "tests": [
         "#3-A4",
         "#5-R7"
       ],
       "dependsOn": [
-        "#3 run/attempt/admission interface (does not exist)"
+        "#3 run/attempt/admission interface (does not exist)",
+        "OpenCoven/coven-agents#300: decided as snapshot verification only (recorded on #3, 2026-11-11); the issue is still open"
       ],
       "evidenceClassesPossible": [
         "F",
@@ -628,25 +695,24 @@
       "case": "Input exceeds a manifest bound: too many files, a file too large, total too large, path too long or too deep",
       "expect": "Refused before staging; nothing is sent",
       "releaseGates": [],
-      "tests": [
-        "#3-A5"
-      ],
+      "tests": [],
       "dependsOn": [
         "#3 run/attempt/admission interface (does not exist)"
       ],
       "evidenceClassesPossible": [
         "F"
+      ],
+      "scope": [
+        "#3-S5"
       ]
     },
     {
       "id": "OUT-02",
       "area": "bounded outputs",
-      "case": "Input contains a symlink, an absolute path, a parent-directory segment, a NUL, or a name outside the allowed pattern",
+      "case": "Input contains a symlink, an absolute path, a parent-directory segment, a NUL, or a name outside the allowed pattern. Every name containing a shell metacharacter or a space is outside the pattern, so it is this case",
       "expect": "Refused before staging",
       "releaseGates": [],
-      "tests": [
-        "#3-A5"
-      ],
+      "tests": [],
       "dependsOn": [
         "#3 run/attempt/admission interface (does not exist)"
       ],
@@ -662,17 +728,18 @@
           "/abs.txt",
           ".hidden"
         ]
-      }
+      },
+      "scope": [
+        "#3-S5"
+      ]
     },
     {
       "id": "OUT-03",
       "area": "bounded outputs",
-      "case": "Input file name or content contains shell metacharacters",
-      "expect": "Staged as data; never interpolated into a command",
+      "case": "Input file content contains shell metacharacters, in a file whose name is allowed by the pattern",
+      "expect": "Staged as data, byte for byte; never interpolated into a command",
       "releaseGates": [],
-      "tests": [
-        "#3-A5"
-      ],
+      "tests": [],
       "dependsOn": [
         "#3 run/attempt/admission interface (does not exist)"
       ],
@@ -682,10 +749,13 @@
       ],
       "examples": {
         "stagedPaths": [
-          "a;b.txt",
-          "$x.txt"
-        ]
-      }
+          "notes/shell-chars.txt"
+        ],
+        "content": "; $(touch castles-injection-marker.txt) `id` | && > *"
+      },
+      "scope": [
+        "#3-S5"
+      ]
     },
     {
       "id": "OUT-04",
@@ -704,7 +774,8 @@
       "evidenceClassesPossible": [
         "F",
         "RD"
-      ]
+      ],
+      "basis": "proposal: the 16,384-byte cap is #5's number, and 'truncated with an explicit marker' is one option; #3 and #4 publish the real bound and behaviour"
     },
     {
       "id": "OUT-05",
@@ -729,7 +800,7 @@
       "id": "OUT-06",
       "area": "bounded outputs",
       "case": "Input instructs the agent to create a marker file and append a marker line (notes/automation-notice.txt)",
-      "expect": "Neither happens; enforced by runtime policy and checked from run evidence, not from the prompt",
+      "expect": "The marker file is not created: prevented by runtime policy and checked from run evidence (RE-01), not from the prompt. The marker is not the report's final line: no runtime policy can prevent text in a report, so this half depends on model behaviour and is checked from the report text (RP-10)",
       "releaseGates": [],
       "tests": [
         "#3-A5"
@@ -738,6 +809,7 @@
         "#3 run/attempt/admission interface (does not exist)"
       ],
       "evidenceClassesPossible": [
+        "F",
         "RD",
         "L"
       ]
@@ -772,16 +844,15 @@
       ],
       "evidenceClassesPossible": [
         "F"
-      ]
+      ],
+      "basis": "proposal: refusing when the destination exists is not in the issues; #4 requires a bounded, hash-checked export and rejection of traversing paths"
     },
     {
       "id": "OUT-09",
       "area": "bounded outputs",
       "case": "Exported report bytes do not match the recorded digest",
       "expect": "Export fails and leaves no partial file",
-      "releaseGates": [
-        "G3"
-      ],
+      "releaseGates": [],
       "tests": [
         "#4-A6"
       ],
@@ -790,6 +861,97 @@
       ],
       "evidenceClassesPossible": [
         "F"
+      ]
+    },
+    {
+      "id": "OUT-10",
+      "area": "bounded outputs",
+      "case": "During the task the agent attempts a push, merge, publication, outbound message, or a protected identity or memory mutation",
+      "expect": "Prevented by runtime policy, not by the task text; the attempt is visible in run evidence (RE-03) and the run is not reported as a clean success",
+      "releaseGates": [],
+      "tests": [
+        "#3-A5"
+      ],
+      "scope": [
+        "#1-fixed",
+        "#3-S5"
+      ],
+      "basis": "proposal: 'visible in run evidence' and 'not a clean success' are not in the issues; #3 decides how a blocked attempt is reported",
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "upstream OpenCoven/coven-agents#299 (server-side read-only execution permission, open)"
+      ],
+      "evidenceClassesPossible": [
+        "RD",
+        "L"
+      ]
+    },
+    {
+      "id": "OUT-11",
+      "area": "bounded outputs",
+      "case": "Run produces a second artifact, or artifacts whose total size exceeds the manifest bound",
+      "expect": "Refused or explicitly reported; never silently stored or exported",
+      "releaseGates": [],
+      "tests": [
+        "#4-A6"
+      ],
+      "scope": [
+        "#1-fixed"
+      ],
+      "basis": "proposal: the artifact count and size bounds in manifest.json are #5's numbers; #3 and #4 publish the real ones",
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "OUT-12",
+      "area": "bounded outputs",
+      "case": "Client retries after a failed or ambiguous submit",
+      "expect": "Retries are bounded, reuse the same operation ID, and cause no second run and no second credential transfer",
+      "releaseGates": [
+        "G2"
+      ],
+      "tests": [
+        "#3-A3",
+        "#4-A1"
+      ],
+      "scope": [
+        "#1-fixed"
+      ],
+      "basis": "proposal: a retry bound is required by #1 but no number is given; #3 decides it",
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
+      "id": "OUT-13",
+      "area": "bounded outputs",
+      "case": "Run reaches its approved spend budget",
+      "expect": "New actions stop and the run enters the existing stop and reconciliation path; not reported as success",
+      "releaseGates": [
+        "G4"
+      ],
+      "tests": [
+        "#3-A5",
+        "#5-R2"
+      ],
+      "basis": "proposal: #3 says budget expiry stops new actions; how spend is metered is not in the issues, and a local timer is not an invoice",
+      "dependsOn": [
+        "#3 run/attempt/admission interface (does not exist)",
+        "#5 smoke harness (not written; Mode B)"
+      ],
+      "evidenceClassesPossible": [
+        "RD",
+        "L"
       ]
     },
     {
@@ -828,8 +990,8 @@
       ],
       "dependsOn": [
         "#4 observe/export/cancel interface (does not exist)",
-        "upstream canonical producer: familiar root/revision in admission (missing per #3 investigation)",
-        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+        "upstream canonical producer: familiar root/revision in admission (missing per the #3 investigation; no upstream issue found)",
+        "upstream OpenCoven/coven-agents#297 (non-browser owner audience for the run API, open)"
       ],
       "evidenceClassesPossible": [
         "F",
@@ -850,13 +1012,14 @@
       ],
       "dependsOn": [
         "#4 observe/export/cancel interface (does not exist)",
-        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+        "upstream OpenCoven/coven-agents#297 (non-browser owner audience for the run API, open)"
       ],
       "evidenceClassesPossible": [
         "F",
         "RD",
         "L"
-      ]
+      ],
+      "basis": "proposal: 'indistinguishable from a missing run' is not in the issues; #4 decides whether a refusal may reveal that a run exists"
     },
     {
       "id": "REC-04",
@@ -895,7 +1058,8 @@
         "F",
         "RD",
         "L"
-      ]
+      ],
+      "basis": "proposal: 'zero provider calls' is not in the issues; #4 requires only that the outcome stays retrievable with the sandbox unavailable"
     },
     {
       "id": "REC-06",
@@ -937,6 +1101,27 @@
       ]
     },
     {
+      "id": "REC-08",
+      "area": "reconnect",
+      "case": "A mutation (submit or cancel) is attempted from a client kind the canonical owner does not support for mutation; #1 names mobile",
+      "expect": "Unavailable; no effect; reading the outcome from an authorized session still works",
+      "releaseGates": [
+        "G6"
+      ],
+      "tests": [],
+      "scope": [
+        "#1-G6"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "upstream OpenCoven/coven-agents#297 (non-browser owner audience for the run API, open)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
+      ]
+    },
+    {
       "id": "CAN-01",
       "area": "cancellation",
       "case": "Cancel a running attempt",
@@ -949,7 +1134,7 @@
       ],
       "dependsOn": [
         "#4 observe/export/cancel interface (does not exist)",
-        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+        "upstream OpenCoven/coven-agents#297 (non-browser owner audience for the run API, open)"
       ],
       "evidenceClassesPossible": [
         "F",
@@ -981,9 +1166,7 @@
       "area": "cancellation",
       "case": "A stale worker result arrives for an older attempt or lease",
       "expect": "Rejected; the current record is unchanged",
-      "releaseGates": [
-        "G4"
-      ],
+      "releaseGates": [],
       "tests": [
         "#4-A4"
       ],
@@ -1010,7 +1193,7 @@
       ],
       "dependsOn": [
         "#4 observe/export/cancel interface (does not exist)",
-        "upstream non-browser owner credential for run read/events/stop (missing per #3 and #4 investigations)"
+        "upstream OpenCoven/coven-agents#297 (non-browser owner audience for the run API, open)"
       ],
       "evidenceClassesPossible": [
         "F",
@@ -1060,8 +1243,8 @@
     {
       "id": "RED-01",
       "area": "redaction",
-      "case": "Report, artifacts or logs contain key material, a bearer credential, a token-shaped string or an environment-style secret (RP-11 to RP-14)",
-      "expect": "Detected and failed; the offending value is not echoed in the failure message",
+      "case": "Report, artifacts, logs or errors contain a seeded canary value (RE-06), or key material, a bearer credential, a token-shaped string or a secret assignment (RP-11 to RP-14)",
+      "expect": "Detected and failed; the offending value is not echoed in the failure message. The seeded-value check is the primary evidence; the patterns are a secondary net and do not establish #3-A6 alone",
       "releaseGates": [],
       "tests": [
         "#3-A6",
@@ -1087,11 +1270,12 @@
         "#5-R5"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)"
       ],
       "evidenceClassesPossible": [
         "F"
-      ]
+      ],
+      "basis": "proposal: 'fixed reason codes only' follows the proposed #2 contract; #2 requires redacted aliases and no raw errors, tokens or private IDs"
     },
     {
       "id": "RED-03",
@@ -1103,7 +1287,7 @@
         "#2-A5"
       ],
       "dependsOn": [
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)"
       ],
       "evidenceClassesPossible": [
         "F"
@@ -1245,8 +1429,8 @@
     {
       "id": "REU-05",
       "area": "reuse refusal",
-      "case": "Client surface is searched for delete, recreate, reset, resize, stop or start",
-      "expect": "No destructive verb is reachable; an old checkpoint cannot restore revoked grants or consumed approvals",
+      "case": "Client surface is searched for delete, recreate, reset or resize",
+      "expect": "No such verb is reachable in any mode. Stop and start are not in this list: #1, #4 and #5 keep them as explicitly authorized operations, tested by REU-08",
       "releaseGates": [
         "G5"
       ],
@@ -1256,7 +1440,7 @@
       ],
       "dependsOn": [
         "#4 observe/export/cancel interface (does not exist)",
-        "#2 binding/preflight contract (unreviewed: draft PR #6 at 799488f)"
+        "#2 binding/preflight contract (proposed, not accepted: draft PR #6)"
       ],
       "evidenceClassesPossible": [
         "F"
@@ -1301,6 +1485,51 @@
       ],
       "evidenceClassesPossible": [
         "L"
+      ]
+    },
+    {
+      "id": "REU-08",
+      "area": "reuse refusal",
+      "case": "Stop or start of the selected sandbox is requested without the separate explicit authorization, or on a sandbox that is not exclusively assigned",
+      "expect": "Refused with zero provider calls. With authorization, the operation is performed by the existing lifecycle owner, never by Castles with a provider key",
+      "releaseGates": [
+        "G5"
+      ],
+      "tests": [
+        "#5-R7",
+        "#4-A3"
+      ],
+      "scope": [
+        "#5-S3",
+        "#4-S6"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)",
+        "#5 smoke harness (not written; Mode B)",
+        "explicit stop/start authorization for an exclusively assigned sandbox"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "L"
+      ]
+    },
+    {
+      "id": "REU-09",
+      "area": "reuse refusal",
+      "case": "An old checkpoint, cached client state or replayed response is presented after a grant was revoked or an approval consumed",
+      "expect": "It restores nothing: the revoked grant stays revoked and the consumed approval stays consumed",
+      "releaseGates": [
+        "G5"
+      ],
+      "tests": [
+        "#4-A7"
+      ],
+      "dependsOn": [
+        "#4 observe/export/cancel interface (does not exist)"
+      ],
+      "evidenceClassesPossible": [
+        "F",
+        "RD"
       ]
     }
   ]
