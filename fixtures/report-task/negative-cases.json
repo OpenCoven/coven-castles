@@ -652,7 +652,17 @@
       ],
       "evidenceClassesPossible": [
         "F"
-      ]
+      ],
+      "examples": {
+        "refusedPaths": [
+          "a;b.txt",
+          "$x.txt",
+          "a b.txt",
+          "notes/../x.txt",
+          "/abs.txt",
+          ".hidden"
+        ]
+      }
     },
     {
       "id": "OUT-03",
@@ -669,7 +679,13 @@
       "evidenceClassesPossible": [
         "F",
         "RD"
-      ]
+      ],
+      "examples": {
+        "stagedPaths": [
+          "a;b.txt",
+          "$x.txt"
+        ]
+      }
     },
     {
       "id": "OUT-04",
