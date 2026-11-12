@@ -24,6 +24,17 @@ corepack pnpm check --json --fixture fixtures/preflight/cases/public-exposure.js
 The tests need no credentials and no IP networking. A fixture replay never
 exits 0, so pnpm reports both commands above as failed; that is intended.
 
+Two tests back the "read-only" claim, and neither is a proof. A static scan
+reads every file under `src/` for imports, re-exports and uses of `process`
+outside a short allowlist; it is a tripwire, and the test file lists evasions
+it is known to miss. A second test runs the CLI under Node's permission model
+with file writes, child processes, workers, addons, WASI and code generation
+from strings denied. That one needs a Node with `--permission` and built-in
+type stripping: it runs on Node 22.23.5, 24.22.0 and 26.12.0 and is skipped
+on Node 22.0.0. Network is denied at run time only on a Node that has
+`--allow-net` (26 here; not 22 or 24). `pnpm check` itself runs without the
+permission model.
+
 ## The check command
 
 ```text

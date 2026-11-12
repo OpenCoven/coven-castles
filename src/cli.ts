@@ -20,8 +20,8 @@ import {
   renderHuman,
   renderJson,
   runPreflight,
-} from "./preflight";
-import { BINDING_ENVIRONMENT_KEYS } from "./profile";
+} from "./preflight.ts";
+import { BINDING_ENVIRONMENT_KEYS } from "./profile.ts";
 
 const USAGE = `usage: castles check [--json] [--fixture <case.json>]
 

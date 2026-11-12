@@ -16,7 +16,7 @@ import {
   SOURCE_PINS,
   SUPPORTED_PROFILE,
   UPSTREAM_SEAM,
-} from "./profile";
+} from "./profile.ts";
 
 export const FIXTURE_LABEL =
   "SYNTHETIC FIXTURE - invented values, not provider evidence";

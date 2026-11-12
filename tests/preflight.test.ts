@@ -10,6 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -1722,10 +1723,24 @@ test("the missing upstream binding seam is an explicit blocker with a link", () 
 // --- Structural: no second adapter, no network, no writes ------------------
 
 /**
- * An allowlist, not a blocklist (review N2): every import must be a static
- * named import of a binding listed here. Anything else fails, including a
- * new `node:fs` function, a namespace or default import of a module that can
- * write, a dynamic import, `require`, or a network/process global.
+ * A static scan of every file under src/. It is a tripwire, not a proof.
+ *
+ * What it checks:
+ * - src/ holds only `.ts` files, and every one is scanned;
+ * - every `import` and every `export ... from`, wherever it sits on a line,
+ *   names either a `./x.ts` file that is itself in src/, or a binding listed
+ *   in ALLOWED_IMPORTS; nothing else may be imported or re-exported;
+ * - the name of a Node built-in module appears in a string only as the
+ *   specifier of such an import;
+ * - `process` is used only in the forms listed in PROCESS_USE, which allows
+ *   reading the four binding keys and nothing else from the environment;
+ * - none of the words in FORBIDDEN_ANYWHERE appears at all, comments and
+ *   strings included, and no `\u` or `\x` escape does either.
+ *
+ * What it cannot do: it reads text, not a syntax tree, so it does not hold
+ * the property "this code cannot reach a capability". SCAN_KNOWN_GAPS lists
+ * evasions that pass it. The permission-model run at the end of this file is
+ * the run-time check, with its own stated limits.
  */
 const ALLOWED_IMPORTS: Readonly<Record<string, readonly string[]>> = {
   "node:crypto": ["createHash"],
@@ -1733,70 +1748,123 @@ const ALLOWED_IMPORTS: Readonly<Record<string, readonly string[]>> = {
   "node:process": ["default"],
   "node:util": ["parseArgs"],
 };
-const FORBIDDEN_GLOBALS =
-  /\b(?:globalThis|fetch|XMLHttpRequest|WebSocket|EventSource|require|eval|Function|Worker|Deno|Bun)\b|\bimport\s*\(|\bimport\.meta\b|process\.(?:binding|dlopen|kill|chdir|getBuiltinModule|mainModule)/u;
+const BUILTIN_NAMES = new Set(
+  builtinModules.flatMap((name) => {
+    const bare = name.replace(/^node:/u, "");
+    return [bare, `node:${bare}`];
+  })
+);
+const FORBIDDEN_ANYWHERE =
+  /\b(?:globalThis|global|self|window|require|eval|Function|constructor|__proto__|prototype|Reflect|Proxy|fetch|XMLHttpRequest|WebSocket|EventSource|Worker|WebAssembly|Deno|Bun|getBuiltinModule|dlopen|mainModule|createRequire)\b|\bimport\s*\(|\bimport\s*\.|\\u|\\x/u;
+const PROCESS_WORD = /(?<![\w$/-]|node:)process(?![\w$])/gu;
+const PROCESS_USE =
+  /^process(?:\.env\[key\]|\.exit\(2\)|\.exitCode = |\.loadEnvFile\("\.env\.local"\)|\.stdout\.write\(|\.stderr\.write\(| from "node:process";)/u;
+const MODULE_STATEMENT =
+  /\b(import|export)\b(?!\s*["'])\s*([^;"'`]*?)\s*\bfrom\s*(["'])([^"'\n]*)\3|\bimport\s*(["'])([^"'\n]*)\5/gu;
+const RELATIVE_SPECIFIER = /^\.\/[a-z][a-z0-9-]*\.ts$/u;
 
-function importsOf(source: string) {
-  const found: { names: string[]; specifier: string }[] = [];
-  const statement =
-    /^import\s+(?:type\s+)?([\s\S]*?)\s+from\s+"([^"]+)";?$/gmu;
-  for (const match of source.matchAll(statement)) {
-    const clause = (match[1] ?? "").trim();
-    const names = clause.startsWith("{")
-      ? clause
-          .replace(/^\{|\}$/gu, "")
-          .split(",")
-          .map((name) => name.trim().replace(/^type\s+/u, ""))
-          .filter((name) => name !== "")
-      : clause.startsWith("*")
-        ? ["*"]
-        : ["default"];
-    found.push({ names, specifier: match[2] ?? "" });
-  }
-  return found;
-}
-
+/** Naive on purpose: checks that must not be fooled by it read raw text. */
 function withoutComments(source: string): string {
   return source
     .replace(/\/\*[\s\S]*?\*\//gu, "")
     .replace(/^\s*\/\/.*$/gmu, "");
 }
 
-function capabilityProblems(file: string, source: string): string[] {
-  const problems: string[] = [];
-  const code = withoutComments(source);
-  const imports = importsOf(code);
-  const importKeywords = [...code.matchAll(/^\s*import\b/gmu)].length;
-  if (imports.length !== importKeywords) {
-    problems.push(`${file}: an import statement is not a plain static import`);
+function importedNames(clause: string): string[] {
+  const names: string[] = [];
+  let rest = clause.replace(/^type\s+/u, "");
+  const braces = /\{([^}]*)\}/u.exec(rest);
+  if (braces) {
+    for (const part of (braces[1] ?? "").split(",")) {
+      const name = part.trim().replace(/^type\s+/u, "").split(/\s+as\s+/u)[0];
+      if (name) {
+        names.push(name.trim());
+      }
+    }
+    rest = rest.replace(braces[0], "");
   }
-  for (const { names, specifier } of imports) {
-    if (specifier.startsWith("./")) {
+  for (const part of rest.split(",")) {
+    if (part.trim() !== "") {
+      names.push(part.trim().startsWith("*") ? "*" : "default");
+    }
+  }
+  return names;
+}
+
+function scanSources(files: ReadonlyMap<string, string>): string[] {
+  const problems: string[] = [];
+  for (const [file, source] of files) {
+    if (!file.endsWith(".ts")) {
+      problems.push(`${file}: not a TypeScript source file`);
       continue;
     }
-    const allowed = ALLOWED_IMPORTS[specifier];
-    if (!allowed) {
-      problems.push(`${file}: imports ${specifier}`);
-      continue;
+    const code = withoutComments(source);
+
+    const forbidden = FORBIDDEN_ANYWHERE.exec(source);
+    if (forbidden) {
+      problems.push(`${file}: contains ${forbidden[0]}`);
     }
-    for (const name of names) {
-      if (!allowed.includes(name)) {
-        problems.push(`${file}: imports ${name} from ${specifier}`);
+
+    let moduleStatements = 0;
+    let importStatements = 0;
+    let builtinSpecifiers = 0;
+    for (const match of code.matchAll(MODULE_STATEMENT)) {
+      moduleStatements += match[4] === undefined ? 0 : 1;
+      importStatements += match[1] === "export" ? 0 : 1;
+      const specifier = match[4] ?? match[6] ?? "";
+      if (BUILTIN_NAMES.has(specifier)) {
+        builtinSpecifiers += 1;
+      }
+      if (match[4] === undefined) {
+        problems.push(`${file}: side-effect import of ${specifier}`);
+        continue;
+      }
+      if (specifier.startsWith(".")) {
+        const target = join(dirname(file), specifier).replaceAll("\\", "/");
+        if (!RELATIVE_SPECIFIER.test(specifier) || !files.has(target)) {
+          problems.push(`${file}: imports ${specifier}, not a file in src/`);
+        }
+        continue;
+      }
+      const allowed = ALLOWED_IMPORTS[specifier];
+      if (!allowed) {
+        problems.push(`${file}: imports ${specifier}`);
+        continue;
+      }
+      for (const name of importedNames(match[2] ?? "")) {
+        if (match[1] === "export" || !allowed.includes(name)) {
+          problems.push(`${file}: ${match[1]}s ${name} from ${specifier}`);
+        }
+      }
+    }
+    if ([...code.matchAll(/\bimport\b/gu)].length !== importStatements) {
+      problems.push(`${file}: an import is not a plain static import`);
+    }
+    if ([...code.matchAll(/\bfrom\s*["'`]/gu)].length !== moduleStatements) {
+      problems.push(`${file}: a from clause is not a plain import or export`);
+    }
+    // Raw text: a built-in module's name in any string must be accounted for
+    // by an import above, so hiding one from the comment stripper shows.
+    const builtinLiterals = [
+      ...source.matchAll(/(["'`])([^"'`\n]*)\1/gu),
+    ].filter((match) => BUILTIN_NAMES.has(match[2] ?? "")).length;
+    if (builtinLiterals !== builtinSpecifiers) {
+      problems.push(`${file}: a built-in module name outside a static import`);
+    }
+
+    for (const match of code.matchAll(PROCESS_WORD)) {
+      if (!PROCESS_USE.test(code.slice(match.index))) {
+        problems.push(`${file}: process used outside the allowed forms`);
+      }
+    }
+    for (const match of source.matchAll(PROCESS_WORD)) {
+      const rest = source.slice(match.index);
+      if (/^process\s*[.[?,;:)}=(]/u.test(rest) && !PROCESS_USE.test(rest)) {
+        problems.push(`${file}: process member outside the allowed forms`);
       }
     }
   }
-  const forbidden = FORBIDDEN_GLOBALS.exec(code);
-  if (forbidden) {
-    problems.push(`${file}: uses ${forbidden[0]}`);
-  }
   return problems;
-}
-
-/** At this commit: the old per-file scan over the three named files. */
-function scanSources(files: ReadonlyMap<string, string>): string[] {
-  return ["cli.ts", "preflight.ts", "profile.ts"].flatMap((file) =>
-    capabilityProblems(file, files.get(file) ?? "")
-  );
 }
 
 /** Every entry under src/, as posix paths relative to src/. */
@@ -2222,9 +2290,10 @@ test("CLI loads the binding from .env.local, and exported variables win", async 
  * - Anything about a run without these flags. `pnpm check` runs through tsx
  *   with no permission model; this test is not a sandbox for operators.
  *
- * Where it does not run: it needs `--permission` and built-in type stripping
- * (Node 22.18 or later in the 22 line, and Node 24). On an older Node 22,
- * including 22.0.0, these tests are skipped and only the scan applies.
+ * Where it does not run: it needs `--permission` and built-in type stripping.
+ * Observed: it runs on Node 22.23.5, 24.22.0 and 26.12.0, and is skipped on
+ * Node 22.0.0, the stated minimum, where only the scan applies. The first
+ * 22.x release on which it runs was not determined.
  */
 const allowedNodeFlags = process.allowedNodeEnvironmentFlags;
 const PERMISSION_SKIP: string | false =
