@@ -194,11 +194,85 @@ function alias(prefix: "own" | "sbx", value: string | undefined): string | null 
   return `${prefix}_${digest.slice(0, 12)}`;
 }
 
-const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;
+/**
+ * Echo vocabulary. Provider-supplied text is never copied into a result:
+ * `observed` carries only a value from one of these fixed sets, a strict
+ * `major.minor.patch` SDK version, `"unrecognised"` for any other string, or
+ * null for an absent or non-string value. A field set to a private ID, a
+ * credential or any other free text therefore cannot reach human or JSON
+ * output.
+ *
+ * Sources: sandbox states are the `SandboxState` values of the public
+ * `@daytona/api-client` 0.220.0 package; binding lifecycles are
+ * `RunnerSandboxLifecycle` in the pinned coven-agents `lib/runner/types.ts`.
+ * Attempt-fence values and the architecture list are Castles' own: the
+ * first belongs to the proposed inspection shape, and no architecture is
+ * pinned upstream.
+ */
+const UNRECOGNISED = "unrecognised";
+const KNOWN = Object.freeze({
+  architecture: ["x86_64", "amd64", "aarch64", "arm64"],
+  attemptFence: ["clear", "cleanup_required"],
+  bindingLifecycle: [
+    "unprovisioned",
+    "provisioning",
+    "provisioning_ambiguous",
+    "ready",
+    "resizing",
+    "resetting",
+    "decommissioning",
+    "decommission_failed",
+  ],
+  os: [SUPPORTED_PROFILE.platform.os],
+  snapshot: [SUPPORTED_PROFILE.image.qualifiedSnapshot],
+  state: [
+    "creating",
+    "restoring",
+    "destroyed",
+    "destroying",
+    "started",
+    "stopped",
+    "starting",
+    "stopping",
+    "error",
+    "build_failed",
+    "pending_build",
+    "building_snapshot",
+    "unknown",
+    "pulling_snapshot",
+    "archived",
+    "archiving",
+    "resizing",
+    "snapshotting",
+    "forking",
+    "pausing",
+    "paused",
+    "resuming",
+  ],
+  target: SUPPORTED_PROFILE.targets,
+} as const satisfies Record<string, readonly string[]>);
 
-/** A short, single-line, allowlisted token, or nothing. */
-function token(value: unknown): string | null {
-  return typeof value === "string" && SAFE_TOKEN.test(value) ? value : null;
+/** Three plain decimal components and nothing else. */
+const SDK_VERSION =
+  /^(?:0|[1-9][0-9]{0,3})\.(?:0|[1-9][0-9]{0,3})\.(?:0|[1-9][0-9]{0,3})$/;
+
+function isKnown(value: unknown, set: readonly string[]): value is string {
+  return typeof value === "string" && set.includes(value);
+}
+
+/** A member of the set, `"unrecognised"` for other text, null if absent. */
+function known(value: unknown, set: readonly string[]): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return set.includes(value) ? value : UNRECOGNISED;
+}
+
+function sdkVersion(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return SDK_VERSION.test(value) ? value : UNRECOGNISED;
 }
 
 function integer(value: unknown): number | null {
@@ -592,7 +666,9 @@ function evaluateCompatibility(
   } else if (platform.os !== policy.platform.os) {
     fail("platform_unsupported", "platform.os");
   }
-  if (token(platform.architecture) === null) {
+  // No architecture is pinned, so none is required; but it must be stated,
+  // and stated as a value Castles knows. Anything else reads as not stated.
+  if (!isKnown(platform.architecture, KNOWN.architecture)) {
     missing("platform.architecture");
   }
 }
@@ -630,9 +706,9 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
       warmPool: sandbox.warmPoolId !== undefined && sandbox.warmPoolId !== null,
     },
     binding: {
-      attemptFence: token(binding.attemptFence) ?? "unrecognised",
+      attemptFence: known(binding.attemptFence, KNOWN.attemptFence) ?? UNRECOGNISED,
       generation: binding.generation,
-      lifecycle: token(binding.lifecycle) ?? "unrecognised",
+      lifecycle: known(binding.lifecycle, KNOWN.bindingLifecycle) ?? UNRECOGNISED,
     },
     exposure: {
       egressAllowListEntries: Math.min(
@@ -646,7 +722,7 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
           : null,
       public: typeof sandbox.public === "boolean" ? sandbox.public : null,
     },
-    image: { snapshot: token(sandbox.snapshot) },
+    image: { snapshot: known(sandbox.snapshot, KNOWN.snapshot) },
     lifecycle: {
       autoArchiveInterval: integer(sandbox.autoArchiveInterval),
       autoDeleteInterval: integer(sandbox.autoDeleteInterval),
@@ -658,8 +734,8 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
       autoStopInterval: integer(sandbox.autoStopInterval),
     },
     platform: {
-      architecture: token(platform.architecture),
-      os: token(platform.os),
+      architecture: known(platform.architecture, KNOWN.architecture),
+      os: known(platform.os, KNOWN.os),
     },
     resources: {
       cpu,
@@ -671,9 +747,9 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
         diskGiB === target.diskGiB,
       memoryGiB,
     },
-    sdk: { version: token(sdk.version) },
-    state: token(sandbox.state),
-    target: token(sandbox.target),
+    sdk: { version: sdkVersion(sdk.version) },
+    state: known(sandbox.state, KNOWN.state),
+    target: known(sandbox.target, KNOWN.target),
   };
 }
 
@@ -832,7 +908,10 @@ export function isLiveReady(value: PreflightResult): boolean {
 
 // --- Rendering --------------------------------------------------------------
 
-/** Bounded by construction: every string is a literal, alias, or safe token. */
+/**
+ * Bounded by construction: every string is a literal, an alias, a member of
+ * a fixed set, or a strict three-part version.
+ */
 export function renderJson(value: PreflightResult): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }

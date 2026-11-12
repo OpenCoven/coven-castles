@@ -1,7 +1,9 @@
 # Preflight fixtures
 
 **Synthetic. Not provider evidence.** Every value here is invented
-(`fixture-sandbox-0001`, `fixture-agent-0001`, `fixture.invalid`, `fixture-arch`).
+(`fixture-sandbox-0001`, `fixture-agent-0001`, `fixture.invalid`). Values
+that must come from a fixed set to be accepted (`x86_64`, `linux`, `us`,
+`started`) are real names used synthetically.
 No file in this directory was captured from Daytona or from a Coven Agents
 deployment, and a passing fixture proves nothing about a live sandbox.
 
