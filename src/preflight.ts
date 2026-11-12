@@ -287,9 +287,15 @@ function integer(value: unknown): number | null {
 /**
  * The only integers `observed` may carry. An identifier may be all digits,
  * so a numeric field is a second way for a configured ID to come back from
- * the seam. Every reading this profile can accept lies between -1 (auto-delete
- * disabled) and 43,200 (the auto-archive ceiling); the range leaves room to
- * show a reading that is out of policy, and no more.
+ * the seam. Every resource and lifecycle reading this profile can accept
+ * lies between -1 (auto-delete disabled) and 43,200 (the auto-archive
+ * ceiling); the range leaves room to show a reading that is out of policy,
+ * and no more.
+ *
+ * The recorded generation is the one field whose accepted values can lie
+ * outside the range: a binding may state up to nine digits. From 100,000 up
+ * it is not echoed even when it matches. The match still shows, as the
+ * absence of `generation_mismatch` beside `target.expectedGeneration`.
  */
 const ECHOED_INTEGER = Object.freeze({ max: 99_999, min: -1 });
 

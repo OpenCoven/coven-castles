@@ -130,9 +130,10 @@ Observed integers (`resources.cpu`, `memoryGiB`, `diskGiB` and `gpu`, the four
 `lifecycle` intervals and `binding.generation`) are echoed only from -1 to
 99,999. Outside that range, as when the value is not an integer, the field is
 `null`, so `binding.generation` can be `null`. Status and reason codes are
-decided on the value itself and are the same whether or not it is echoed. An
-identifier that is itself an integer inside that range cannot be told from a
-reading.
+decided on the value itself and are the same whether or not it is echoed: a
+recorded generation of 100,000 or more that matches the binding is `ready`
+with `binding.generation: null`. An identifier that is itself an integer
+inside that range cannot be told from a reading.
 
 Two rules behind existing reason codes, both Castles decisions:
 

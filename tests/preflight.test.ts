@@ -1113,6 +1113,26 @@ test("R1: an observed integer is echoed from -1 to 99999 and is null outside, wi
   }
 });
 
+test("R1 consequence: a matching generation beyond the echoed range is ready and is not echoed", async () => {
+  // Stated, not hidden: the binding format allows a nine-digit generation.
+  // The match shows as no generation_mismatch beside the expected value.
+  const fixture = loadFixtureCase(casePath("ready"));
+  for (const [generation, echoed] of [
+    [99_999, 99_999],
+    [100_000, null],
+    [999_999_999, null],
+  ] as const) {
+    const env = { ...fixture.env, CASTLES_SANDBOX_GENERATION: String(generation) };
+    const inspection = structuredClone(fixture.inspection) as any;
+    inspection.binding.generation = generation;
+    const result = await runPreflight(env, tripwireClient(() => inspection).client);
+    assert.equal(result.status, "ready", String(generation));
+    assert.deepEqual(result.reasons, [], String(generation));
+    assert.equal(result.target.expectedGeneration, generation);
+    assert.equal(result.observed?.binding.generation, echoed, String(generation));
+  }
+});
+
 test("R1 limit: an ID that is itself an integer inside the echo range can coincide with a reading", async () => {
   // Stated, not hidden: the rule bounds what a numeric field can carry to
   // -1..99999. It cannot tell a reading of 4 from a configured ID of "4".
