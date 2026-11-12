@@ -299,14 +299,25 @@ function allowListEntries(value: unknown): number {
  * One allowed domain: a plain multi-label name and nothing else. No wildcard
  * in any position (`*`, `*.tld`, `*.example.test`), no scheme, port or path.
  *
+ * ASCII only. The character classes spell out both cases and the pattern has
+ * no `i` or `u` flag, so no Unicode case folding applies: a look-alike such
+ * as U+017F or U+212A is refused rather than read as a letter. The final
+ * label must start with a letter, which refuses every IP literal
+ * (`127.0.0.1`, `10.1`, `1.0x7f`): an address belongs in the network list,
+ * where its range is examined.
+ *
  * This is deliberately stricter than the owning service, whose
  * `daytonaDomainAllowList` (coven-agents `lib/runner/daytona/config.ts` at
  * the pinned revision) also accepts a single leading `*.` label. A sandbox
  * configured with such an entry is reported incompatible here.
  */
-const ALLOWED_DOMAIN =
-  /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/iu;
-const IPV4_CIDR = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/u;
+const DOMAIN_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
+const FINAL_DOMAIN_LABEL = "[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
+const ALLOWED_DOMAIN = new RegExp(
+  `^(?:${DOMAIN_LABEL}\\.)+${FINAL_DOMAIN_LABEL}$`
+);
+const IPV4_CIDR =
+  /^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\/([0-9]{1,2})$/;
 /** Castles decisions with no upstream pin; see `SUPPORTED_PROFILE.network`. */
 const NETWORK_ALLOW_LIST = SUPPORTED_PROFILE.network.networkAllowList;
 
