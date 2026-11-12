@@ -22,7 +22,7 @@
     },
     "platform": {
       "os": "linux",
-      "architecture": "fixture-arch"
+      "architecture": "x86_64"
     },
     "sandbox": {
       "id": "fixture-sandbox-0001",

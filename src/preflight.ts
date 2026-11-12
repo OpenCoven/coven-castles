@@ -16,7 +16,7 @@ import {
   SOURCE_PINS,
   SUPPORTED_PROFILE,
   UPSTREAM_SEAM,
-} from "./profile";
+} from "./profile.ts";
 
 export const FIXTURE_LABEL =
   "SYNTHETIC FIXTURE - invented values, not provider evidence";
@@ -194,11 +194,85 @@ function alias(prefix: "own" | "sbx", value: string | undefined): string | null 
   return `${prefix}_${digest.slice(0, 12)}`;
 }
 
-const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;
+/**
+ * Echo vocabulary. Provider-supplied text is never copied into a result:
+ * `observed` carries only a value from one of these fixed sets, a strict
+ * `major.minor.patch` SDK version, `"unrecognised"` for any other string, or
+ * null for an absent or non-string value. A field set to a private ID, a
+ * credential or any other free text therefore cannot reach human or JSON
+ * output.
+ *
+ * Sources: sandbox states are the `SandboxState` values of the public
+ * `@daytona/api-client` 0.220.0 package; binding lifecycles are
+ * `RunnerSandboxLifecycle` in the pinned coven-agents `lib/runner/types.ts`.
+ * Attempt-fence values and the architecture list are Castles' own: the
+ * first belongs to the proposed inspection shape, and no architecture is
+ * pinned upstream.
+ */
+const UNRECOGNISED = "unrecognised";
+const KNOWN = Object.freeze({
+  architecture: ["x86_64", "amd64", "aarch64", "arm64"],
+  attemptFence: ["clear", "cleanup_required"],
+  bindingLifecycle: [
+    "unprovisioned",
+    "provisioning",
+    "provisioning_ambiguous",
+    "ready",
+    "resizing",
+    "resetting",
+    "decommissioning",
+    "decommission_failed",
+  ],
+  os: [SUPPORTED_PROFILE.platform.os],
+  snapshot: [SUPPORTED_PROFILE.image.qualifiedSnapshot],
+  state: [
+    "creating",
+    "restoring",
+    "destroyed",
+    "destroying",
+    "started",
+    "stopped",
+    "starting",
+    "stopping",
+    "error",
+    "build_failed",
+    "pending_build",
+    "building_snapshot",
+    "unknown",
+    "pulling_snapshot",
+    "archived",
+    "archiving",
+    "resizing",
+    "snapshotting",
+    "forking",
+    "pausing",
+    "paused",
+    "resuming",
+  ],
+  target: SUPPORTED_PROFILE.targets,
+} as const satisfies Record<string, readonly string[]>);
 
-/** A short, single-line, allowlisted token, or nothing. */
-function token(value: unknown): string | null {
-  return typeof value === "string" && SAFE_TOKEN.test(value) ? value : null;
+/** Three plain decimal components and nothing else. */
+const SDK_VERSION =
+  /^(?:0|[1-9][0-9]{0,3})\.(?:0|[1-9][0-9]{0,3})\.(?:0|[1-9][0-9]{0,3})$/;
+
+function isKnown(value: unknown, set: readonly string[]): value is string {
+  return typeof value === "string" && set.includes(value);
+}
+
+/** A member of the set, `"unrecognised"` for other text, null if absent. */
+function known(value: unknown, set: readonly string[]): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return set.includes(value) ? value : UNRECOGNISED;
+}
+
+function sdkVersion(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return SDK_VERSION.test(value) ? value : UNRECOGNISED;
 }
 
 function integer(value: unknown): number | null {
@@ -225,16 +299,27 @@ function allowListEntries(value: unknown): number {
  * One allowed domain: a plain multi-label name and nothing else. No wildcard
  * in any position (`*`, `*.tld`, `*.example.test`), no scheme, port or path.
  *
+ * ASCII only. The character classes spell out both cases and the pattern has
+ * no `i` or `u` flag, so no Unicode case folding applies: a look-alike such
+ * as U+017F or U+212A is refused rather than read as a letter. The final
+ * label must start with a letter, which refuses every IP literal
+ * (`127.0.0.1`, `10.1`, `1.0x7f`): an address belongs in the network list,
+ * where its range is examined.
+ *
  * This is deliberately stricter than the owning service, whose
  * `daytonaDomainAllowList` (coven-agents `lib/runner/daytona/config.ts` at
  * the pinned revision) also accepts a single leading `*.` label. A sandbox
  * configured with such an entry is reported incompatible here.
  */
-const ALLOWED_DOMAIN =
-  /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/iu;
-const IPV4_CIDR = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/u;
-/** Shortest IPv4 prefix still treated as a restriction. */
-const MIN_IPV4_PREFIX = 8;
+const DOMAIN_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
+const FINAL_DOMAIN_LABEL = "[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
+const ALLOWED_DOMAIN = new RegExp(
+  `^(?:${DOMAIN_LABEL}\\.)+${FINAL_DOMAIN_LABEL}$`
+);
+const IPV4_CIDR =
+  /^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\/([0-9]{1,2})$/;
+/** Castles decisions with no upstream pin; see `SUPPORTED_PROFILE.network`. */
+const NETWORK_ALLOW_LIST = SUPPORTED_PROFILE.network.networkAllowList;
 
 function isAllowedDomain(entry: string): boolean {
   return entry.length <= 253 && ALLOWED_DOMAIN.test(entry);
@@ -264,7 +349,7 @@ function isBoundedIpv4Range(entry: string): boolean {
   ];
   return (
     [a, b, c, d].every((octet) => octet <= 255) &&
-    prefix >= MIN_IPV4_PREFIX &&
+    prefix >= NETWORK_ALLOW_LIST.minIpv4Prefix &&
     prefix <= 32
   );
 }
@@ -463,13 +548,16 @@ function evaluateCompatibility(
   if (typeof sandbox.networkBlockAll !== "boolean") {
     missing("networkBlockAll");
   }
-  // An allow list only restricts egress if every entry does. Entries are
-  // examined, not counted: one wildcard or any-address entry opens the list,
-  // and block-all or a second, safe list does not excuse it.
+  // An allow list only restricts egress if every entry does AND the list as
+  // a whole does. One wildcard or any-address entry opens the list; so does
+  // a network list split into many ranges, which is why its length is
+  // bounded. Block-all or a second, safe list does not excuse an unsafe one.
+  // The domain rule is stricter than the owning service; the network-list
+  // and block-all rules are Castles decisions with no upstream pin.
   let allowListsUsable = true;
-  for (const [field, accepts] of [
-    ["domainAllowList", isAllowedDomain],
-    ["networkAllowList", isBoundedIpv4Range],
+  for (const [field, accepts, maxEntries] of [
+    ["domainAllowList", isAllowedDomain, Number.POSITIVE_INFINITY],
+    ["networkAllowList", isBoundedIpv4Range, NETWORK_ALLOW_LIST.maxEntries],
   ] as const) {
     const value = sandbox[field];
     if (value === undefined || value === null) {
@@ -478,7 +566,10 @@ function evaluateCompatibility(
     if (typeof value !== "string") {
       missing(field);
       allowListsUsable = false;
-    } else if (!allowListItems(value).every(accepts)) {
+    } else if (
+      allowListItems(value).length > maxEntries ||
+      !allowListItems(value).every(accepts)
+    ) {
       fail("egress_allow_list_unsafe", field);
       allowListsUsable = false;
     }
@@ -517,10 +608,13 @@ function evaluateCompatibility(
     fail("lifecycle_auto_pause", "autoPauseInterval");
   }
   // Stated decision: `autoDestroyAt`, `volumes`, `warmPoolId` and
-  // `linkedSandboxId` are optional in the provider model, and the owning
-  // service's drift inventory reads an absent key as "not set" (pinned
-  // resource-inventory.ts). An absent or null key is therefore not missing
-  // metadata; any present value fails.
+  // `linkedSandboxId` are optional in the provider model. For an ABSENT key
+  // this matches the owning service, whose drift inventory (pinned
+  // resource-inventory.ts) compares `autoDestroyAt`, `warmPoolId` and
+  // `linkedSandboxId` with `undefined`. For an explicit `null` it does not:
+  // the owner's comparison would report drift, while Castles reads null as
+  // "not set" as well. That is a Castles choice, looser than the owner for
+  // null only. Any other present value fails.
   if (sandbox.autoDestroyAt !== undefined && sandbox.autoDestroyAt !== null) {
     fail("lifecycle_ttl", "autoDestroyAt");
   }
@@ -586,7 +680,9 @@ function evaluateCompatibility(
   } else if (platform.os !== policy.platform.os) {
     fail("platform_unsupported", "platform.os");
   }
-  if (token(platform.architecture) === null) {
+  // No architecture is pinned, so none is required; but it must be stated,
+  // and stated as a value Castles knows. Anything else reads as not stated.
+  if (!isKnown(platform.architecture, KNOWN.architecture)) {
     missing("platform.architecture");
   }
 }
@@ -624,9 +720,9 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
       warmPool: sandbox.warmPoolId !== undefined && sandbox.warmPoolId !== null,
     },
     binding: {
-      attemptFence: token(binding.attemptFence) ?? "unrecognised",
+      attemptFence: known(binding.attemptFence, KNOWN.attemptFence) ?? UNRECOGNISED,
       generation: binding.generation,
-      lifecycle: token(binding.lifecycle) ?? "unrecognised",
+      lifecycle: known(binding.lifecycle, KNOWN.bindingLifecycle) ?? UNRECOGNISED,
     },
     exposure: {
       egressAllowListEntries: Math.min(
@@ -640,7 +736,7 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
           : null,
       public: typeof sandbox.public === "boolean" ? sandbox.public : null,
     },
-    image: { snapshot: token(sandbox.snapshot) },
+    image: { snapshot: known(sandbox.snapshot, KNOWN.snapshot) },
     lifecycle: {
       autoArchiveInterval: integer(sandbox.autoArchiveInterval),
       autoDeleteInterval: integer(sandbox.autoDeleteInterval),
@@ -652,8 +748,8 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
       autoStopInterval: integer(sandbox.autoStopInterval),
     },
     platform: {
-      architecture: token(platform.architecture),
-      os: token(platform.os),
+      architecture: known(platform.architecture, KNOWN.architecture),
+      os: known(platform.os, KNOWN.os),
     },
     resources: {
       cpu,
@@ -665,9 +761,9 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
         diskGiB === target.diskGiB,
       memoryGiB,
     },
-    sdk: { version: token(sdk.version) },
-    state: token(sandbox.state),
-    target: token(sandbox.target),
+    sdk: { version: sdkVersion(sdk.version) },
+    state: known(sandbox.state, KNOWN.state),
+    target: known(sandbox.target, KNOWN.target),
   };
 }
 
@@ -709,10 +805,20 @@ async function inspectOnce(
   }
 }
 
-export type PreflightOptions = Readonly<{
-  evidence: PreflightEvidence;
-  timeoutMs?: number;
-}>;
+export type PreflightOptions = Readonly<{ timeoutMs?: number }>;
+
+/**
+ * The evidence class is a fact about the client, so it is derived here and
+ * cannot be supplied by a caller. No live client exists at this head (the
+ * upstream seam is missing), so nothing this library returns is
+ * `live-provider`: no client means no inspection, and every client object,
+ * whoever built it and whatever properties it carries, is non-live. When the
+ * seam lands, the live client factory added to this module becomes the only
+ * source of `live-provider`.
+ */
+function evidenceOf(client: SandboxInspectionClient | null): PreflightEvidence {
+  return client === null ? "none" : "fixture";
+}
 
 /**
  * Checks the one configured sandbox. Passing `null` for the client means no
@@ -722,8 +828,9 @@ export type PreflightOptions = Readonly<{
 export async function runPreflight(
   environment: Readonly<Record<string, string | undefined>>,
   client: SandboxInspectionClient | null,
-  options: PreflightOptions
+  options: PreflightOptions = {}
 ): Promise<PreflightResult> {
+  const evidence = evidenceOf(client);
   const findings = new Findings();
   const parsed = parseBinding(environment);
   if (!parsed.ok) {
@@ -734,12 +841,12 @@ export async function runPreflight(
         : "unavailable",
       parsed.problem
     );
-    return result(findings, parsed.partial, options.evidence, 0, null);
+    return result(findings, parsed.partial, evidence, 0, null);
   }
   const { binding } = parsed;
   if (client === null) {
     findings.add("unavailable", "upstream_seam_missing");
-    return result(findings, binding, options.evidence, 0, null);
+    return result(findings, binding, evidence, 0, null);
   }
 
   const inspection = await inspectOnce(
@@ -749,7 +856,7 @@ export async function runPreflight(
   );
   if (inspection.kind === "refused") {
     findings.add(inspection.status, inspection.code);
-    return result(findings, binding, options.evidence, 1, null);
+    return result(findings, binding, evidence, 1, null);
   }
   const envelope = inspection.value;
 
@@ -772,7 +879,7 @@ export async function runPreflight(
     identityHeld = false;
   }
   if (!identityHeld) {
-    return result(findings, binding, options.evidence, 1, null);
+    return result(findings, binding, evidence, 1, null);
   }
 
   if (envelope.binding.generation !== binding.expectedGeneration) {
@@ -812,13 +919,14 @@ export async function runPreflight(
 
   evaluateCompatibility(envelope, findings);
   evaluateState(envelope, findings);
-  return result(findings, binding, options.evidence, 1, observe(envelope));
+  return result(findings, binding, evidence, 1, observe(envelope));
 }
 
 /**
  * The only result that may be treated as readiness. A fixture replay that
  * reports `ready` is not: consumers must gate on this, never on `status`
- * alone.
+ * alone. It reads two fields and so also works on a parsed JSON result; it
+ * cannot detect a result object that a caller built or altered by hand.
  */
 export function isLiveReady(value: PreflightResult): boolean {
   return value.status === "ready" && value.evidence === "live-provider";
@@ -826,7 +934,10 @@ export function isLiveReady(value: PreflightResult): boolean {
 
 // --- Rendering --------------------------------------------------------------
 
-/** Bounded by construction: every string is a literal, alias, or safe token. */
+/**
+ * Bounded by construction: every string is a literal, an alias, a member of
+ * a fixed set, or a strict three-part version.
+ */
 export function renderJson(value: PreflightResult): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }

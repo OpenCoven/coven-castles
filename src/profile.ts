@@ -22,7 +22,7 @@ export const SOURCE_PINS = Object.freeze([
     pin: pin("pnpm-lock.yaml"),
   },
   {
-    covers: "tsx --test and the package tsconfig shape",
+    covers: "the tsx --test and tsc --noEmit scripts",
     pin: pin("packages/agent-contracts/package.json"),
   },
   {
@@ -47,7 +47,8 @@ export const SOURCE_PINS = Object.freeze([
     pin: pin("lib/runner/daytona/snapshot-name.ts"),
   },
   {
-    covers: "snapshot image base (Linux)",
+    covers:
+      "snapshot image base (Linux); snapshot creation (outside the listed mutations)",
     pin: pin("lib/runner/daytona/image.ts"),
   },
   {
@@ -67,6 +68,14 @@ export const SOURCE_PINS = Object.freeze([
     pin: pin("lib/runner/daytona/resource-recovery.ts"),
   },
   {
+    covers: "diagnostic sandbox create and delete owner",
+    pin: pin("lib/runner/diagnostics.ts"),
+  },
+  {
+    covers: "command execution inside a sandbox (outside the listed mutations)",
+    pin: pin("lib/runner/daytona/process.ts"),
+  },
+  {
     covers: "execution boundary, authority, cleanup fences",
     pin: pin("docs/architecture/adr-002-daytona-execution-boundary.md"),
   },
@@ -81,8 +90,17 @@ export const SOURCE_PINS = Object.freeze([
 ] as const);
 
 /**
- * The existing owner of every provider mutation. Castles performs none of
- * them; this table exists so a reader can find who does.
+ * The existing owner of each sandbox mutation found at the pin. Castles
+ * performs none of them; this table exists so a reader can find who does.
+ *
+ * The first eight rows are the persistent agent sandbox. The last two are a
+ * separate, short-lived sandbox: `diagnoseDaytonaSandbox` creates an
+ * ephemeral diagnostic sandbox and deletes it itself. It is listed so that
+ * "who can create or delete a sandbox" has a complete answer; it never
+ * touches the bound sandbox Castles inspects.
+ *
+ * The table is a reading of the pinned files named in it. It is not a proof
+ * that no other call site exists upstream.
  */
 export const MUTATION_OWNERS = Object.freeze([
   {
@@ -133,6 +151,36 @@ export const MUTATION_OWNERS = Object.freeze([
     owner: pin("lib/runner/daytona/sandbox.ts"),
     via: "adoptDaytonaSandboxPolicy (labels, auto-stop, auto-archive)",
   },
+  {
+    castles: "never",
+    mutation: "diagnostic-create",
+    owner: pin("lib/runner/diagnostics.ts"),
+    via: "diagnoseDaytonaSandbox (its own ephemeral diagnostic sandbox, 5 minute TTL)",
+  },
+  {
+    castles: "never",
+    mutation: "diagnostic-delete",
+    owner: pin("lib/runner/diagnostics.ts"),
+    via: "diagnoseDaytonaSandbox / runEphemeralDiagnostic (deletes the sandbox it created)",
+  },
+] as const);
+
+/**
+ * Provider operations that change something but are not sandbox lifecycle
+ * mutations, and so are outside the table above. Castles performs neither.
+ * Named here so their absence from the table is a statement, not a gap.
+ */
+export const OUTSIDE_LISTED_MUTATIONS = Object.freeze([
+  {
+    at: pin("lib/runner/daytona/process.ts"),
+    castles: "never",
+    operation: "command execution inside a sandbox",
+  },
+  {
+    at: pin("lib/runner/daytona/image.ts"),
+    castles: "never",
+    operation: "snapshot creation",
+  },
 ] as const);
 
 /**
@@ -159,7 +207,34 @@ export const SUPPORTED_PROFILE = Object.freeze({
     autoStopMinutes: Object.freeze({ max: 60, min: 5 }),
     ttl: "disabled",
   }),
-  network: Object.freeze({ egress: "restricted", public: false }),
+  network: Object.freeze({
+    egress: "restricted",
+    /**
+     * A Castles policy decision with NO upstream pin. Neither
+     * `networkAllowList` nor `networkBlockAll` appears in any pinned
+     * coven-agents file: the owning service configures a domain allow list
+     * only, and its drift inventory compares that list alone. So for network
+     * lists and block-all, Castles accepts shapes the owner never produces,
+     * under these rules of its own:
+     *
+     * - each entry is an IPv4 range no wider than `/minIpv4Prefix`;
+     * - the list holds at most `maxEntries` entries, because a restriction
+     *   is a property of the whole list (256 ranges of /8 are every address);
+     * - `networkBlockAll: true` counts as restricted egress.
+     *
+     * `maxEntries` is 10 because the public Daytona network-limits
+     * documentation states that maximum. That figure is unverified against
+     * the provider and is not stated in the SDK 0.220.0 types, so it is a
+     * Castles bound, not a provider pin. At the bound the widest accepted
+     * list is ten /8 ranges, about 4% of IPv4 space.
+     */
+    networkAllowList: Object.freeze({
+      basis: "castles-decision",
+      maxEntries: 10,
+      minIpv4Prefix: 8,
+    }),
+    public: false,
+  }),
   platform: Object.freeze({
     // No architecture is pinned upstream and the provider sandbox model at
     // this SDK generation reports none. It must be stated by the seam; it is

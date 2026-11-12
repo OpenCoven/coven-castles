@@ -2,8 +2,8 @@
  * castles check [--json] [--fixture <case.json>]
  *
  * One read-only command. It reads the CASTLES_* binding from the environment
- * (or, with --fixture, entirely from one synthetic case file), never reads a
- * provider or harness credential, and writes nothing but its own stdout.
+ * (or, with --fixture, entirely from one synthetic case file), never looks
+ * up a provider or harness credential, and writes only to stdout and stderr.
  *
  * Exit codes: 0 ready from a live provider read, 1 any other status, 2 usage
  * error, 3 a fixture replay that reported ready. A fixture never exits 0, so
@@ -20,8 +20,8 @@ import {
   renderHuman,
   renderJson,
   runPreflight,
-} from "./preflight";
-import { BINDING_ENVIRONMENT_KEYS } from "./profile";
+} from "./preflight.ts";
+import { BINDING_ENVIRONMENT_KEYS } from "./profile.ts";
 
 const USAGE = `usage: castles check [--json] [--fixture <case.json>]
 
@@ -45,13 +45,16 @@ function bindingEnvironment(): Record<string, string | undefined> {
     // Optional operator convenience; existing variables take precedence. The
     // file is resolved from the current working directory, so the binding
     // follows where the command is run (`pnpm check` runs at the package
-    // root). Only the four binding keys below are ever read from it.
+    // root). `loadEnvFile` loads EVERY key of that file into this process's
+    // environment; only the four binding keys below are consumed.
     process.loadEnvFile(".env.local");
   } catch {
     // No local file is the normal case.
   }
-  // Only the binding keys are ever read. Provider and harness credentials in
-  // the ambient environment are not looked at, copied, or forwarded.
+  // Only the binding keys are consumed. Any other variable, whether exported
+  // or loaded from the file, including a provider or harness credential, is
+  // present in the process environment but is never looked up, copied, or
+  // forwarded.
   const environment: Record<string, string | undefined> = {};
   for (const key of BINDING_ENVIRONMENT_KEYS) {
     environment[key] = process.env[key];
@@ -73,9 +76,7 @@ async function main(): Promise<void> {
   let result: PreflightResult;
   if (parsed.values.fixture === undefined) {
     // No live client exists: the upstream read-only seam is not available.
-    result = await runPreflight(bindingEnvironment(), null, {
-      evidence: "none",
-    });
+    result = await runPreflight(bindingEnvironment(), null);
   } else {
     let fixture: ReturnType<typeof loadFixtureCase>;
     try {
@@ -86,8 +87,7 @@ async function main(): Promise<void> {
     }
     result = await runPreflight(
       fixture.env,
-      createFixtureInspectionClient(fixture),
-      { evidence: "fixture" }
+      createFixtureInspectionClient(fixture)
     );
   }
 
