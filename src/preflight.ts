@@ -804,11 +804,30 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
 type Inspect = SandboxInspectionClient["inspectBoundSandbox"];
 
 /**
+ * Invokes a seam method with its client as the receiver, reading no
+ * property of the method: `invokeSeam(method, client, request, options)`.
+ * It is the built-in call operation, taken once from a function this module
+ * owns and bound to that same operation. Writing `method.call(...)` would
+ * read `call` from the method, so a method without the built-in one could
+ * not be invoked, and a method carrying its own would be bypassed.
+ */
+const builtInCall = seamOf.call as (
+  this: unknown,
+  ...args: unknown[]
+) => unknown;
+const invokeSeam = builtInCall.bind(builtInCall) as (
+  method: Inspect,
+  client: unknown,
+  ...args: Parameters<Inspect>
+) => ReturnType<Inspect>;
+
+/**
  * The seam method of a usable client, bound to that client, or null when
  * there is none. A client is any value whose `inspectBoundSandbox` is
  * callable; `null`, `undefined` and everything else are no client. The
  * property is read once, here, so what was judged usable is what gets
- * called, and a read that throws means no client.
+ * invoked, and a read that throws means no client. Nothing else is read
+ * from the client or from the method.
  */
 function seamOf(client: unknown): Inspect | null {
   if (client === null || client === undefined) {
@@ -820,7 +839,8 @@ function seamOf(client: unknown): Inspect | null {
     if (typeof method !== "function") {
       return null;
     }
-    return (request, options) => method.call(client, request, options);
+    const seam = method as Inspect;
+    return (request, options) => invokeSeam(seam, client, request, options);
   } catch {
     return null;
   }
