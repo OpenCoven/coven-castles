@@ -28,25 +28,41 @@ one. Until the maintainer decides, #1's wording applies as quoted above.
 [`coordination.md`](coordination.md#lanes-and-gates) and `AGENTS.md` say the
 same.
 
+Still undecided on 2026-11-12. That day the maintainer accepted the #2
+contract at an exact SHA (see [Produced by #2](#produced-by-2)), and the pull
+request that carries this proposal,
+[#9](https://github.com/OpenCoven/coven-castles/pull/9), was merged as
+`a4ced7b463edccbe2ddd89ad12645b60f0aacefb`. The
+[comment recording both](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865)
+says the decisions listed in that pull request's body, the gate rule among
+them, "remain open; merging them is not a decision on those items".
+
 Any change to a contract after review or acceptance is a new revision and
 starts again as **proposed**.
 
 ## Produced by #2
 
-Snapshot of draft PR
-[#6](https://github.com/OpenCoven/coven-castles/pull/6) taken
-2026-11-12T05:40Z. Everything below describes the source at this revision.
+Snapshot of PR [#6](https://github.com/OpenCoven/coven-castles/pull/6),
+merged into `main` on 2026-11-12 as
+`978a2465df8d3af5b8e693fa9d228a9055aa1db8`. The Standing, Acceptance limits
+and Gates rows were refreshed 2026-11-12T21:40Z. Everything below describes
+the source at this revision.
 
 | | |
 | --- | --- |
 | Revision | `13ab3bc2c823fe12b482a6701ab4df2c28e6733c` |
-| Standing | A second-read review found no blocking findings at this revision. It is not yet **reviewed** in this page's sense, because #2's Review row names maintainer review. **Not accepted**; acceptance is the maintainer's. |
+| Standing | **Accepted** by the maintainer on 2026-11-12, in [this comment on #2](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865), which names this SHA. Accepted artifact, in the comment's words: "the profile/binding result shape, client seam, source pins and offline test command as they stand at" this revision. Basis: the review at this revision in the next row; the comment says the maintainer was told it is a second read, not independent review, "and accepted on that basis". The comment was posted by the coordinating agent session on the shared account and records a decision the maintainer gave in that session. |
 | Reviews | [At this revision](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5869660940), reviewer `rv6c-3db7f9d0`: no blocking findings, seven non-blocking. The reviewer was started by the coordinating session that also started the author, and says the review is a second read, not independent review, and that it opens no gate. #2 is labelled `risk:r3`. Earlier heads, both changes needed: [`799488f`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5856050364), [`7ead0d8`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5868851188). |
-| Gates | #3's gate is closed: it needs the accepted #2 artifact under #1 and under the proposed rule. #5's harness-wiring gate needs #2's reviewed package and test command; the review #2 names is the maintainer's and has not happened, so that gate is closed too. |
+| Acceptance limits | The evidence behind the acceptance is fixture and static only. It authorizes no live provider call, spending, deployment or sandbox mutation, and changes no label or assignee. Three known follow-ups are not fixed at this revision: integer fields can echo an all-digit configured ID (R1); the capability scan does not stop a read of another environment variable (R2); five provider fields are not examined (R3). It is not a decision on the gate rule or on any other proposed addition; see [Standing](#standing). |
+| Gates | What follows from the acceptance, under #1's rule and under the proposed rule; this page does not choose between them. **#3:** its start gate on the #2 contract is met under both, because #1 and #3 ask for the accepted #2 artifact and the proposed rule asks for acceptance. #3 is not thereby unblocked: it is still labelled `status:blocked` on upstream capabilities (OpenCoven/coven-agents #297, #298, #299 and #262, all open on 2026-11-12; #300 is decided for Castles), listed in [`architecture.md`](architecture.md#open-upstream-dependencies). **#5 harness wiring:** under the proposed rule the gate's #2 condition is met, because acceptance is recorded. Under #1's rule the gate asks for #2's reviewed package and test command; a linked review with no blocking findings and the maintainer's acceptance on it both exist at this revision. Whether "reviewed" for #2 needs a separate maintainer review, as this page reads #2's Review row, is one of the open decisions, and the acceptance comment does not address it. **Live:** no live gate is open. Live preflight still needs the upstream seam ([coven-agents#296](https://github.com/OpenCoven/coven-agents/issues/296), open) and explicit authorization. |
 | Evidence | **fixture** only. No live provider call has been made through this code. |
 
-If PR #6's head is no longer this revision, this section is stale until it is
-refreshed.
+PR #6 is merged, so its head no longer moves. At
+`b5d7fc14add09fa94a7103031d7d625f710e519c`, `src/`, `tests/`,
+`fixtures/preflight/`, `package.json`, `pnpm-lock.yaml`, `tsconfig.json` and
+`.env.example` on `main` are identical to this revision. If they later differ,
+this section is stale until it is refreshed, and the changed contract is a new
+revision (see [Standing](#standing)).
 
 ### Binding
 
@@ -236,14 +252,23 @@ fixtures, and upstream containment and reuse evidence for #5.
 
 ## Produced by #5
 
-**Proposed** in draft PR
-[#7](https://github.com/OpenCoven/coven-castles/pull/7) and not on this
-branch: the report-task fixture, expected-report properties and the
-negative-case catalogue. As of 2026-11-12T05:25Z every review posted on it
-asked for changes, the latest at `b401909` with three blocking findings, and
-its author is pushing fixes, so no head is named here: read the PR. Nothing in
-it is reviewed clean or accepted. These are fixture file formats, not
-interface contracts.
+On `main` since 2026-11-12: the report-task fixture, expected-report
+properties and the negative-case catalogue, in `fixtures/report-task/`. They
+arrived with PR [#7](https://github.com/OpenCoven/coven-castles/pull/7),
+merged at head `302bb4533aaccde8165d8efe596502da286891b0` as
+`b5d7fc14add09fa94a7103031d7d625f710e519c`.
+
+The
+[latest review](https://github.com/OpenCoven/coven-castles/pull/7#pullrequestreview-5870277806),
+at that head, found no blocking findings and two non-blocking; earlier
+reviews at earlier heads asked for changes. The reviewer says it is a second
+read, not the independent review #1 asks for on a `risk:r4` lane, so the
+formats are not **reviewed** in this page's sense. They are **not accepted**:
+the [maintainer's comment](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865)
+names only the #2 artifact as accepted, records that PR #7 was to be merged at
+that head, and says the decisions in its body (the pinned fixture limits)
+remain open and that merging is not a decision on them. These are fixture file
+formats, not interface contracts.
 
 ## Updating this page
 
