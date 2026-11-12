@@ -22,7 +22,7 @@ export const SOURCE_PINS = Object.freeze([
     pin: pin("pnpm-lock.yaml"),
   },
   {
-    covers: "tsx --test and the package tsconfig shape",
+    covers: "the tsx --test and tsc --noEmit scripts",
     pin: pin("packages/agent-contracts/package.json"),
   },
   {

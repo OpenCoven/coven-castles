@@ -1578,6 +1578,40 @@ test("egress: no usable restriction at all is unrestricted; block-all alone is r
   });
   assert.equal(both.status, "ready");
   assert.equal(both.observed?.exposure.egressAllowListEntries, 3);
+
+  // The reported count is capped; the domain list itself has no entry bound.
+  const many = await withSandbox((sandbox) => {
+    sandbox.domainAllowList = Array.from(
+      { length: 1200 },
+      (_, index) => `h${index}.fixture.invalid`
+    ).join(",");
+  });
+  assert.equal(many.status, "ready");
+  assert.equal(many.observed?.exposure.egressAllowListEntries, 999);
+});
+
+test("a fixture case contributes only the four binding keys to the environment", () => {
+  const directory = mkdtempSync(join(tmpdir(), "castles-env-"));
+  try {
+    const path = join(directory, "case.json");
+    const original = JSON.parse(readFileSync(casePath("ready"), "utf8"));
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...original,
+        env: { ...original.env, CASTLES_EXTRA: "x", DAYTONA_API_KEY: CANARY },
+      })
+    );
+    assert.deepEqual(loadFixtureCase(path).env, original.env);
+    assert.deepEqual(Object.keys(original.env).sort(), [
+      "CASTLES_OWNER_AGENT_ID",
+      "CASTLES_PROFILE",
+      "CASTLES_SANDBOX_GENERATION",
+      "CASTLES_SANDBOX_ID",
+    ]);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 });
 
 async function worstCase() {
@@ -1961,6 +1995,10 @@ const SCAN_MUST_CATCH: readonly (readonly [string, ...Plant[]])[] = [
   ["named re-export", append("preflight.ts", 'export { request } from "node:https";')],
   ["star re-export", append("preflight.ts", 'export * from "node:child_process";')],
   ["namespace re-export", append("preflight.ts", 'export * as cp from "node:child_process";')],
+  ["re-export of an allowed binding", append("preflight.ts", 'export { readFileSync } from "node:fs";')],
+  ["string-named import of a package", prepend("cli.ts", 'import { "Daytona" as D } from "@daytona/sdk";')],
+  ["string-named re-export of a package", append("preflight.ts", 'export { "Daytona" as D } from "@daytona/sdk";')],
+  ["a success exit", append("cli.ts", "process.exit(0);")],
   // Other evasions the second review listed.
   ["optional-chained process member", append("cli.ts", 'process?.binding("fs");')],
   ["destructuring from process", append("cli.ts", "const { env, report } = process;")],
