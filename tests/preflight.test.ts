@@ -2610,7 +2610,19 @@ test("R6: one inspection is counted exactly when the seam method was invoked", a
 
 test("R6: options that are null or not an object are no options", async (t) => {
   const fixture = loadFixtureCase(casePath("ready"));
-  const junk = [null, 7, "timeoutMs", true, [], [5], () => undefined];
+  // The last two carry a `timeoutMs` (review rv11 B2): without them nothing
+  // here would notice an array or a function being read for its deadline.
+  const junk = [
+    null,
+    7,
+    "timeoutMs",
+    true,
+    [],
+    [5],
+    () => undefined,
+    Object.assign([], { timeoutMs: 25 }),
+    Object.assign(() => undefined, { timeoutMs: 25 }),
+  ];
   for (const options of junk) {
     const result = await runPreflight(
       fixture.env,
@@ -2625,11 +2637,30 @@ test("R6: options that are null or not an object are no options", async (t) => {
   for (const options of junk) {
     await assertDeadline(t, options as never, 30_000, `options ${String(options)}`);
   }
+  // What still counts as options: any other object, whatever built it.
+  class Stated {
+    timeoutMs = 25;
+  }
+  const bare = Object.assign(Object.create(null), { timeoutMs: 25 });
+  await assertDeadline(t, new Stated(), 25, "options from a class");
+  await assertDeadline(t, bare, 25, "options with a null prototype");
 });
 
 test("R6: a null or non-object environment is an unconfigured binding, not an exception", async () => {
   const unconfigured = { ok: false, partial: {}, problem: "sandbox_id_missing" };
-  for (const environment of [null, undefined, 7, "CASTLES_SANDBOX_ID", true, [], ["x"]]) {
+  // The last one carries a complete, valid binding (review rv11 B2): every
+  // other value here gave this result before any guard existed, or threw.
+  const notAnEnvironment = [
+    null,
+    undefined,
+    7,
+    "CASTLES_SANDBOX_ID",
+    true,
+    [],
+    ["x"],
+    Object.assign(() => undefined, VALID_ENV),
+  ];
+  for (const environment of notAnEnvironment) {
     const label = String(environment);
     assert.deepEqual(parseBinding(environment as never), unconfigured, label);
     const wire = tripwireClient(() => ({}));
@@ -2648,6 +2679,27 @@ test("R6: a null or non-object environment is an unconfigured binding, not an ex
     const none = await runPreflight(environment as never, null);
     assert.equal(none.evidence, "none", label);
     assert.deepEqual(none.reasons, [{ code: "sandbox_id_missing" }], label);
+  }
+
+  // What still counts as an environment: any other object, whatever built
+  // it. An array is an object here, so one carrying the keys is read.
+  class Configured {
+    CASTLES_OWNER_AGENT_ID = VALID_ENV.CASTLES_OWNER_AGENT_ID;
+    CASTLES_PROFILE = VALID_ENV.CASTLES_PROFILE;
+    CASTLES_SANDBOX_GENERATION = VALID_ENV.CASTLES_SANDBOX_GENERATION;
+    CASTLES_SANDBOX_ID = VALID_ENV.CASTLES_SANDBOX_ID;
+  }
+  const read: [string, unknown][] = [
+    ["from a class", new Configured()],
+    ["with a null prototype", Object.assign(Object.create(null), VALID_ENV)],
+    ["an array carrying the keys", Object.assign([], VALID_ENV)],
+  ];
+  for (const [label, environment] of read) {
+    assert.equal(parseBinding(environment as never).ok, true, label);
+    const wire = tripwireClient(() => ({}));
+    const result = await runPreflight(environment as never, wire.client);
+    assert.deepEqual(wire.calls, ["inspectBoundSandbox"], label);
+    assert.equal(result.providerCalls.inspect, 1, label);
   }
 });
 
