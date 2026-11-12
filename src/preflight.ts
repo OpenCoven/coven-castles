@@ -847,19 +847,30 @@ function seamOf(client: unknown): Inspect | null {
 }
 
 /**
- * The deadline for the one inspection call: `timeoutMs` when it is a number
- * from 1 to the longest delay a timer accepts, otherwise the default. Node
- * turns a delay outside that range, or one that is not a number, into 1 ms,
- * which would report every provider as unavailable; such a value is never
- * handed to a timer. Options that are not an object are no options.
+ * The deadline for the one inspection call. Options that are not an object
+ * (`null`, a primitive, a function) or that are an array are no options.
+ *
+ * One stated value is replaced: a number above the longest delay a timer
+ * accepts, `Infinity` included. Node turns such a delay into 1 ms, so a
+ * caller asking for a long wait would have every provider reported as
+ * unavailable; it means the default and is never handed to a timer.
+ *
+ * Every other stated value is handed to the timer as given, as it always
+ * was, and Node decides: 1 ms for a number below 1 or `NaN`, a conversion
+ * for a value that is not a number (so a string or a boxed number above the
+ * limit still becomes 1 ms), an exception for a bigint or a symbol, which
+ * `inspectOnce` flattens to `provider_unavailable`. What such a value should
+ * mean is an open question for the maintainer, not decided here; hence the
+ * cast.
  */
 function inspectionDeadline(options: unknown): number {
   const stated = isRecord(options) ? options.timeoutMs : undefined;
-  return typeof stated === "number" &&
-    stated >= 1 &&
-    stated <= MAX_INSPECTION_TIMEOUT_MS
-    ? stated
-    : DEFAULT_INSPECTION_TIMEOUT_MS;
+  if (stated === undefined || stated === null) {
+    return DEFAULT_INSPECTION_TIMEOUT_MS;
+  }
+  return typeof stated === "number" && stated > MAX_INSPECTION_TIMEOUT_MS
+    ? DEFAULT_INSPECTION_TIMEOUT_MS
+    : (stated as number);
 }
 
 /** One bounded inspection call. Any failure is flattened; nothing is kept. */
@@ -928,8 +939,8 @@ function evidenceOf(inspect: Inspect | null): PreflightEvidence {
  * - `providerCalls.inspect` is 1 exactly when the seam method was invoked;
  * - an environment that is not an object configures nothing
  *   (`sandbox_id_missing`); options that are not an object are no options;
- * - a `timeoutMs` outside 1 to 2,147,483,647, or not a number, means the
- *   default deadline.
+ * - a `timeoutMs` that is a number above 2,147,483,647 means the default
+ *   deadline; every other stated value goes to the timer as given.
  */
 export async function runPreflight(
   environment: Readonly<Record<string, string | undefined>>,

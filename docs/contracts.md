@@ -179,8 +179,12 @@ runPreflight(environment, client | null, options?: { timeoutMs?: number })
 `isLiveReady` is false for every result the library produces at this
 revision.
 
-`timeoutMs` is used when it is a number from 1 to 2,147,483,647; any other
-value, like no value, means the 30,000 ms default. An `environment` that is
+A `timeoutMs` that is a number above 2,147,483,647, `Infinity` included, means
+the 30,000 ms default, as no value does: a timer would turn it into 1 ms.
+Every other value is handed to the timer as given. Node then waits 1 ms for a
+number below 1 or `NaN` and converts a value that is not a number; one it
+cannot convert ends the check as `provider_unavailable`. What a non-positive
+or non-numeric timeout should mean is not decided. An `environment` that is
 not an object is reported as `sandbox_id_missing`, and `options` that are not
 an object are ignored; neither throws.
 
