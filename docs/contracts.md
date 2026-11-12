@@ -100,11 +100,11 @@ Schema `castles.preflight.v1`:
 | `schema` | `"castles.preflight.v1"` |
 | `status` | `ready`, `stopped`, `unavailable`, `incompatible`, `unauthorized` or `reconciliation-required` |
 | `reasons` | Up to 16 of `{ code, field? }`. `code` is a fixed literal; `field` is a literal from this module, never provider text |
-| `evidence` | `fixture`, `live-provider` or `none`. Derived from the client, never supplied by the caller: no client gives `none`, any client gives `fixture`, including when the binding is invalid. The library cannot return `live-provider` at this revision |
+| `evidence` | `fixture`, `live-provider` or `none`. Derived from the client, never supplied by the caller: no client gives `none`, any client gives `fixture`, including when the binding is invalid. A client is a value whose `inspectBoundSandbox` is callable; `null`, `undefined` and any other value are no client. The library cannot return `live-provider` at this revision |
 | `target` | `sandboxAlias`, `ownerAlias` (redacted, stable aliases), `expectedGeneration`, `profile` |
 | `sourcePolicy` | Policy from `SUPPORTED_PROFILE`, with the `repo@sha:path` pins. Never derived from the sandbox. Most values are read from pinned source; `network.networkAllowList` (`{ basis: "castles-decision", maxEntries: 10, minIpv4Prefix: 8 }`) is a Castles decision with no upstream pin |
 | `observed` | What the seam reported, or `null`. Provider text is never copied: see below |
-| `providerCalls` | `{ inspect }`: 0 or 1 |
+| `providerCalls` | `{ inspect }`: 1 if `inspectBoundSandbox` was invoked, otherwise 0 |
 | `upstream` | `{ issue, seam }`: the upstream issue link, and `seam: "missing"` |
 
 Status precedence when several findings apply: `unauthorized` >
@@ -125,6 +125,19 @@ whole (`inspection_contract_violation`, `observed: null`), and any other
 string outside the set reads `"unrecognised"`. The other six are `null` when
 the value is absent or not a string. Other fields are numbers, booleans, fixed
 literals or `null`.
+
+Observed integers (`resources.cpu`, `memoryGiB`, `diskGiB` and `gpu`, the four
+`lifecycle` intervals and `binding.generation`) are echoed only from -1 to
+99,999. Outside that range, as when the value is not an integer, the field is
+`null`, so `binding.generation` can be `null`. Status and reason codes are
+decided on the value itself and are the same whether or not it is echoed: a
+recorded generation of 100,000 or more that matches the binding is `ready`
+with `binding.generation: null`. An identifier that is itself an integer
+inside that range cannot be told from a reading. The two counts,
+`attachments.volumes` and `exposure.egressAllowListEntries`, are integers from
+0 to 999. `attachments.volumes` is 0 when the field is absent, and `null` when
+it holds anything else that is not an array, or an array whose length is not
+an integer.
 
 Two rules behind existing reason codes, both Castles decisions:
 
@@ -169,6 +182,25 @@ runPreflight(environment, client | null, options?: { timeoutMs?: number })
 `runPreflight` takes no `evidence` option. Because no live client exists,
 `isLiveReady` is false for every result the library produces at this
 revision.
+
+A `timeoutMs` that is a number above 2,147,483,647, `Infinity` included, means
+the 30,000 ms default, as no value does: a timer would turn it into 1 ms.
+Every other value is handed to the timer as given. Node then waits 1 ms for a
+number below 1 or `NaN` and converts a value that is not a number; one it
+cannot convert ends the check as `provider_unavailable`. What a non-positive
+or non-numeric timeout should mean is not decided.
+
+An `environment` that is `null`, `undefined`, a primitive or a function is
+reported as `sandbox_id_missing`. `options` that are `null`, a primitive, a
+function or an array are ignored. Any other object is read, whatever built
+it, so an array can be an `environment`. The client's `inspectBoundSandbox`
+property is read once, before the binding is validated, and nothing else is
+read from the client or from the method.
+
+These hold for plain values. A property whose read throws, on the
+`environment`, the `options` or a response held in memory, still makes
+`runPreflight` reject with the caller's own error; only a throwing read of
+the client's property is caught.
 
 **Consumers must gate on this, never on `status` alone.** A fixture replay can
 report `status: "ready"`; it is not readiness.

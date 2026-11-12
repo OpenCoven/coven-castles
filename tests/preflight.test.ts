@@ -17,6 +17,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   createFixtureInspectionClient,
+  DEFAULT_INSPECTION_TIMEOUT_MS,
   FIXTURE_LABEL,
   isLiveReady,
   loadFixtureCase,
@@ -28,6 +29,7 @@ import {
   type SandboxInspectionClient,
 } from "../src/preflight";
 import {
+  BINDING_ENVIRONMENT_KEYS,
   MUTATION_OWNERS,
   OUTSIDE_LISTED_MUTATIONS,
   parseBinding,
@@ -998,6 +1000,203 @@ test("reasons are capped", async () => {
   assert.ok(result.reasons.length <= 16);
 });
 
+// --- Observed integers are echoed only inside a small range (review R1) -----
+
+const INTEGER_FIELDS: readonly (readonly [
+  string,
+  (inspection: any, value: unknown) => void,
+  (result: PreflightResult) => unknown,
+])[] = [
+  ["sandbox.cpu", (i, v) => (i.sandbox.cpu = v), (r) => r.observed?.resources.cpu],
+  ["sandbox.memory", (i, v) => (i.sandbox.memory = v), (r) => r.observed?.resources.memoryGiB],
+  ["sandbox.disk", (i, v) => (i.sandbox.disk = v), (r) => r.observed?.resources.diskGiB],
+  ["sandbox.gpu", (i, v) => (i.sandbox.gpu = v), (r) => r.observed?.resources.gpu],
+  ["sandbox.autoStopInterval", (i, v) => (i.sandbox.autoStopInterval = v), (r) => r.observed?.lifecycle.autoStopInterval],
+  ["sandbox.autoArchiveInterval", (i, v) => (i.sandbox.autoArchiveInterval = v), (r) => r.observed?.lifecycle.autoArchiveInterval],
+  ["sandbox.autoDeleteInterval", (i, v) => (i.sandbox.autoDeleteInterval = v), (r) => r.observed?.lifecycle.autoDeleteInterval],
+  ["sandbox.autoPauseInterval", (i, v) => (i.sandbox.autoPauseInterval = v), (r) => r.observed?.lifecycle.autoPauseInterval],
+  ["binding.generation", (i, v) => (i.binding.generation = v), (r) => r.observed?.binding.generation],
+];
+
+test("R1: an all-digit configured ID returned in a numeric field never reaches output", async () => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  // Invented all-digit identifiers. The last is the smallest the rule covers.
+  for (const digits of ["900719925474", "4815162342", "900719925", "100000"]) {
+    for (const key of ["CASTLES_SANDBOX_ID", "CASTLES_OWNER_AGENT_ID"] as const) {
+      const env = { ...fixture.env, [key]: digits };
+      for (const [field, set, read] of INTEGER_FIELDS) {
+        const where = `${key}=${digits} returned in ${field}`;
+        const inspection = structuredClone(fixture.inspection) as any;
+        inspection.binding.agentId = env.CASTLES_OWNER_AGENT_ID;
+        inspection.binding.sandboxId = env.CASTLES_SANDBOX_ID;
+        inspection.sandbox.id = env.CASTLES_SANDBOX_ID;
+        set(inspection, Number(digits));
+        const wire = tripwireClient(() => inspection);
+        const result = await runPreflight(env, wire.client);
+        // Identity holds, so the observed block is disclosed; the number is not.
+        assert.notEqual(result.observed, null, where);
+        assert.notEqual(result.status, "ready", where);
+        assert.equal(read(result), null, where);
+        for (const output of [renderJson(result), renderHuman(result)]) {
+          assert.ok(!output.includes(digits), where);
+        }
+      }
+    }
+  }
+});
+
+test("R1: an observed integer is echoed from -1 to 99999 and is null outside, with status and reasons unchanged", async () => {
+  // Literals on purpose: a widened range must turn this red.
+  const inside = [-1, 0, 1, 99_999];
+  const outside = [
+    -2,
+    -100_000,
+    100_000,
+    2 ** 31,
+    999_999_999,
+    Number.MAX_SAFE_INTEGER,
+    Number.MIN_SAFE_INTEGER,
+  ];
+  for (const [field, set, read] of INTEGER_FIELDS) {
+    for (const value of inside) {
+      const result = await withInspection((inspection) => set(inspection, value));
+      assert.equal(read(result), value, `${field}=${value}`);
+    }
+    // 99999 is out of policy for every field, so a value beyond the range
+    // must be reported exactly as it is: same status, same reasons.
+    const reference = await withInspection((inspection) => set(inspection, 99_999));
+    assert.notEqual(reference.status, "ready", field);
+    assert.equal(reference.reasons.length, 1, field);
+    for (const value of outside) {
+      const where = `${field}=${value}`;
+      const result = await withInspection((inspection) => set(inspection, value));
+      assert.equal(read(result), null, where);
+      assert.equal(result.status, reference.status, where);
+      assert.deepEqual(result.reasons, reference.reasons, where);
+      assert.notEqual(result.observed, null, where);
+      const human = renderHuman(result);
+      const json = renderJson(result);
+      // -2 is too short to search for: "2" is in every output.
+      if (Math.abs(value) >= 100_000) {
+        for (const output of [human, json]) {
+          assert.ok(!output.includes(String(Math.abs(value))), where);
+        }
+      }
+      assert.doesNotMatch(human, /\bnull\b|undefined|NaN/u, where);
+    }
+  }
+  const stale = await withInspection((inspection) => {
+    inspection.binding.generation = 100_000;
+  });
+  assert.equal(stale.status, "reconciliation-required");
+  assert.deepEqual(stale.reasons, [
+    { code: "generation_mismatch", field: "binding.generation" },
+  ]);
+  assert.equal(JSON.parse(renderJson(stale)).observed.binding.generation, null);
+  assert.match(renderHuman(stale), /^  binding generation \?, lifecycle ready, /mu);
+
+  // matchesTarget follows the readings themselves, each of the three, and
+  // is false for a reading that is not echoed.
+  for (const [field, value] of [
+    ["cpu", 3],
+    ["memory", 5],
+    ["disk", 11],
+    ["disk", 9],
+    ["cpu", 100_000],
+    ["memory", 100_000],
+    ["disk", 100_000],
+  ] as const) {
+    const off = await withInspection((inspection) => {
+      inspection.sandbox[field] = value;
+    });
+    assert.equal(off.observed?.resources.matchesTarget, false, `${field}=${value}`);
+  }
+});
+
+test("R1 consequence: a matching generation beyond the echoed range is ready and is not echoed", async () => {
+  // Stated, not hidden: the binding format allows a nine-digit generation.
+  // The match shows as no generation_mismatch beside the expected value.
+  const fixture = loadFixtureCase(casePath("ready"));
+  for (const [generation, echoed] of [
+    [99_999, 99_999],
+    [100_000, null],
+    [999_999_999, null],
+  ] as const) {
+    const env = { ...fixture.env, CASTLES_SANDBOX_GENERATION: String(generation) };
+    const inspection = structuredClone(fixture.inspection) as any;
+    inspection.binding.generation = generation;
+    const result = await runPreflight(env, tripwireClient(() => inspection).client);
+    assert.equal(result.status, "ready", String(generation));
+    assert.deepEqual(result.reasons, [], String(generation));
+    assert.equal(result.target.expectedGeneration, generation);
+    assert.equal(result.observed?.binding.generation, echoed, String(generation));
+  }
+});
+
+test("R1 limit: an ID that is itself an integer inside the echo range can coincide with a reading", async () => {
+  // Stated, not hidden: the rule bounds what a numeric field can carry to
+  // -1..99999. It cannot tell a reading of 4 from a configured ID of "4".
+  const fixture = loadFixtureCase(casePath("ready"));
+  const env = { ...fixture.env, CASTLES_SANDBOX_ID: "4" };
+  const inspection = structuredClone(fixture.inspection) as any;
+  inspection.binding.sandboxId = "4";
+  inspection.sandbox.id = "4";
+  inspection.sandbox.cpu = 4;
+  const result = await runPreflight(env, tripwireClient(() => inspection).client);
+  assert.equal(result.status, "ready");
+  assert.equal(result.observed?.resources.cpu, 4);
+});
+
+test("N4: the volume count is echoed only as an integer from 0 to 999", async () => {
+  // The same leak class as R1, in a field that is not one of the nine
+  // (review rv11 N4). An array parsed from JSON always has a length that is
+  // an integer from 0 up, so the CLI cannot reach this. A response held in
+  // memory can: an array behind a proxy reports any length it likes, and the
+  // count was capped from above only.
+  const fixture = loadFixtureCase(casePath("ready"));
+  const digits = "900719925474";
+  const env = { ...fixture.env, CASTLES_SANDBOX_ID: digits };
+  const lengths: [string, unknown, number | null, string, string[]][] = [
+    ["minus the ID", -Number(digits), 0, "ready", []],
+    ["-1", -1, 0, "ready", []],
+    ["the ID as a fraction", Number(`0.${digits}`), null, "incompatible", ["volumes_present"]],
+    ["the ID as text", digits, null, "incompatible", ["volumes_present"]],
+    ["not a number", Number.NaN, null, "ready", []],
+    ["0", 0, 0, "ready", []],
+    ["5", 5, 5, "incompatible", ["volumes_present"]],
+    ["999", 999, 999, "incompatible", ["volumes_present"]],
+    ["the ID", Number(digits), 999, "incompatible", ["volumes_present"]],
+  ];
+  for (const [label, length, echoed, status, expected] of lengths) {
+    const inspection = structuredClone(fixture.inspection) as any;
+    inspection.binding.sandboxId = digits;
+    inspection.sandbox.id = digits;
+    inspection.sandbox.volumes = new Proxy([], {
+      get: (target, key, receiver) =>
+        key === "length" ? length : Reflect.get(target, key, receiver),
+    });
+    const result = await runPreflight(env, tripwireClient(() => inspection).client);
+    // Status and reasons are what they were at 13ab3bc; only the echo moves.
+    assert.equal(result.status, status, label);
+    assert.deepEqual(codes(result), expected, label);
+    assert.equal(result.observed?.attachments.volumes, echoed, label);
+    for (const output of [renderJson(result), renderHuman(result)]) {
+      assert.ok(!output.includes(digits), label);
+    }
+  }
+  // A real array is counted as before.
+  for (const [volumes, echoed] of [
+    [[], 0],
+    [["a"], 1],
+    [Array.from({ length: 1_500 }, () => "v"), 999],
+  ] as const) {
+    const inspection = structuredClone(fixture.inspection) as any;
+    inspection.sandbox.volumes = volumes;
+    const result = await runPreflight(fixture.env, tripwireClient(() => inspection).client);
+    assert.equal(result.observed?.attachments.volumes, echoed);
+  }
+});
+
 // --- Test gaps found by mutation (review N5, N6, N7) ------------------------
 // Behaviour was already correct for every case below; these pin it.
 
@@ -1754,6 +1953,999 @@ test("the missing upstream binding seam is an explicit blocker with a link", () 
   );
 });
 
+// --- Test gaps found by mutation (review rv6c-3db7f9d0, R4) -----------------
+// Behaviour was already correct for every case below; these pin it. Each
+// test names the single-edit mutation of src/ that it exists to catch.
+
+test("R4 egress: the entry cap counts every entry, duplicates included, and nothing else", async () => {
+  const network = async (value: string) =>
+    withSandbox((sandbox) => {
+      sandbox.domainAllowList = null;
+      sandbox.networkAllowList = value;
+    });
+  // Mutation: counting distinct entries. Eleven copies of one range are
+  // eleven entries.
+  const repeated = (count: number) =>
+    Array.from({ length: count }, () => "10.0.0.0/8").join(",");
+  for (const [label, value] of [
+    ["11 x the same /8", repeated(11)],
+    ["10 distinct ranges and one repeat", `${slash8(1, 10)},1.0.0.0/8`],
+    ["12 entries, 2 distinct", `${repeated(6)},${Array.from({ length: 6 }, () => "11.0.0.0/8").join(",")}`],
+  ] as const) {
+    const result = await network(value);
+    assert.equal(result.status, "incompatible", label);
+    assert.deepEqual(
+      result.reasons,
+      [{ code: "egress_allow_list_unsafe", field: "networkAllowList" }],
+      label
+    );
+  }
+  const tenRepeats = await network(repeated(10));
+  assert.equal(tenRepeats.status, "ready");
+  assert.equal(tenRepeats.observed?.exposure.egressAllowListEntries, 10);
+
+  // Mutation: counting raw comma-separated pieces. An empty piece is not an
+  // entry, so ten ranges stay ten however the commas are padded.
+  for (const [label, value] of [
+    ["trailing commas", `${slash8(1, 10)},,`],
+    ["leading commas", `,,${slash8(1, 10)}`],
+    ["doubled commas", slash8(1, 10).replaceAll(",", ",,")],
+    ["blank pieces", slash8(1, 10).replaceAll(",", " , , ")],
+  ] as const) {
+    const result = await network(value);
+    assert.equal(result.status, "ready", label);
+    assert.deepEqual(result.reasons, [], label);
+    assert.equal(result.observed?.exposure.egressAllowListEntries, 10, label);
+  }
+});
+
+test("R4 egress: the comma is the only separator in either allow list", async () => {
+  // Mutation: accepting `;` (or anything else) as a second separator. Two
+  // good entries joined by another character are one bad entry.
+  const separators = [
+    ";",
+    "|",
+    " ",
+    "\t",
+    "\n",
+    "\r\n",
+    ":",
+    "+",
+    "&",
+    "\uFF0C", // full-width comma
+    "\u3001", // ideographic comma
+    "\u061B", // Arabic semicolon
+  ];
+  for (const separator of separators) {
+    for (const [field, value] of [
+      ["networkAllowList", `10.0.0.0/8${separator}11.0.0.0/8`],
+      ["domainAllowList", `a.fixture.invalid${separator}b.fixture.invalid`],
+    ] as const) {
+      const where = `${field} joined by ${JSON.stringify(separator)}`;
+      const result = await withSandbox((sandbox) => {
+        sandbox.domainAllowList = null;
+        sandbox[field] = value;
+      });
+      assert.equal(result.status, "incompatible", where);
+      assert.deepEqual(
+        result.reasons,
+        [{ code: "egress_allow_list_unsafe", field }],
+        where
+      );
+      assert.equal(result.observed?.exposure.egressAllowListEntries, 1, where);
+    }
+  }
+});
+
+test("R4 domain: no underscore in a label, and no label starts or ends with a hyphen", async () => {
+  // Mutations: `_` allowed inside a label; a final label ending in `-`.
+  const refused = [
+    "fix_ture.invalid",
+    "_fixture.invalid",
+    "fixture_.invalid",
+    "a.fix_ture.invalid",
+    "fixture.in_valid",
+    "fixture.invalid_",
+    "fixture._invalid",
+    "fixture.invalid-",
+    "fixture.i-",
+    "fixture.in-valid-",
+    "fixture.-invalid",
+    "fixture.-",
+    "-.invalid",
+    "a.fixture-.invalid",
+  ];
+  for (const value of refused) {
+    for (const list of [value, `fixture.invalid,${value}`]) {
+      const result = await withSandbox((sandbox) => {
+        sandbox.domainAllowList = list;
+      });
+      assert.equal(result.status, "incompatible", JSON.stringify(list));
+      assert.deepEqual(
+        result.reasons,
+        [{ code: "egress_allow_list_unsafe", field: "domainAllowList" }],
+        JSON.stringify(list)
+      );
+    }
+  }
+  for (const value of [
+    "fix-ture.invalid",
+    "fixture.in-valid",
+    "f--x.in--valid",
+    "f.i",
+    "0-0.i-0",
+  ]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.domainAllowList = value;
+    });
+    assert.equal(result.status, "ready", value);
+    assert.deepEqual(result.reasons, [], value);
+  }
+});
+
+test("R4 sdk version: each part has at most four digits and nothing follows the version", async () => {
+  const withVersion = (version: string) =>
+    withInspection((inspection) => {
+      inspection.sdk.version = version;
+    });
+  // Mutation: version parts of up to 31 digits.
+  for (const version of ["9999.9999.9999", "1000.0.0", "0.1000.0", "0.0.1000"]) {
+    const result = await withVersion(version);
+    assert.equal(result.observed?.sdk.version, version, version);
+  }
+  const pinned = await withVersion("0.220.0");
+  assert.equal(pinned.status, "ready");
+  assert.equal(pinned.observed?.sdk.version, "0.220.0");
+  const lines = renderHuman(pinned).split("\n").length;
+
+  // Mutation: a multi-line flag on the version pattern, which would echo a
+  // valid version followed by a newline and any text.
+  const refused = [
+    "10000.0.0",
+    "0.10000.0",
+    "0.0.10000",
+    "12345678901234567890.0.0",
+    "0.220.1234567890123456789012345678901",
+    "0.220.0\n",
+    "\n0.220.0",
+    "0.220.0\nfixture-free-text",
+    "fixture-free-text\n0.220.0",
+    "0.220.0\r\nfixture-free-text",
+    "0.220.0\rfixture-free-text",
+    "0.220.0\u2028fixture-free-text",
+    "0.220.0\u2029fixture-free-text",
+    "0.220.0 ",
+    " 0.220.0",
+    "0.220.0\t",
+    "0.220.0\u0000",
+  ];
+  for (const version of refused) {
+    const where = JSON.stringify(version);
+    const result = await withVersion(version);
+    assert.equal(result.observed?.sdk.version, "unrecognised", where);
+    assert.equal(result.status, "incompatible", where);
+    assert.deepEqual(
+      result.reasons,
+      [{ code: "sdk_generation_mismatch", field: "sdk" }],
+      where
+    );
+    const human = renderHuman(result);
+    const json = renderJson(result);
+    assert.match(human, /; sdk unrecognised\n/u, where);
+    assert.equal(JSON.parse(json).observed.sdk.version, "unrecognised", where);
+    // One reason heading and one reason line more than the ready output,
+    // and no line supplied by the response.
+    assert.equal(human.split("\n").length, lines + 2, where);
+    for (const output of [human, json]) {
+      assert.doesNotMatch(output, /free-text/u, where);
+      assert.doesNotMatch(output, /[\r\u2028\u2029\u0000\t]/u, where);
+    }
+  }
+});
+
+// Written out, not derived from src/: removing a member from a set in
+// src/preflight.ts, or accepting a value from another set, must turn the two
+// tests below red. `x64` is left out on purpose: whether it should join the
+// architecture set is an open maintainer decision, and nothing here pins it.
+const ECHO_VOCABULARY: Readonly<Record<string, readonly string[]>> = {
+  "binding.attemptFence": ["clear", "cleanup_required"],
+  "binding.lifecycle": [
+    "unprovisioned",
+    "provisioning",
+    "provisioning_ambiguous",
+    "ready",
+    "resizing",
+    "resetting",
+    "decommissioning",
+    "decommission_failed",
+  ],
+  "platform.architecture": ["x86_64", "amd64", "aarch64", "arm64"],
+  "platform.os": ["linux"],
+  "sandbox.snapshot": ["coven-agents-copilot-2"],
+  "sandbox.state": [
+    "creating",
+    "restoring",
+    "destroyed",
+    "destroying",
+    "started",
+    "stopped",
+    "starting",
+    "stopping",
+    "error",
+    "build_failed",
+    "pending_build",
+    "building_snapshot",
+    "unknown",
+    "pulling_snapshot",
+    "archived",
+    "archiving",
+    "resizing",
+    "snapshotting",
+    "forking",
+    "pausing",
+    "paused",
+    "resuming",
+  ],
+  "sandbox.target": ["us", "eu"],
+};
+const ECHO_READERS: Readonly<
+  Record<string, (result: PreflightResult) => unknown>
+> = {
+  "binding.attemptFence": (r) => r.observed?.binding.attemptFence,
+  "binding.lifecycle": (r) => r.observed?.binding.lifecycle,
+  "platform.architecture": (r) => r.observed?.platform.architecture,
+  "platform.os": (r) => r.observed?.platform.os,
+  "sandbox.snapshot": (r) => r.observed?.image.snapshot,
+  "sandbox.state": (r) => r.observed?.state,
+  "sandbox.target": (r) => r.observed?.target,
+};
+// Plausible names that are in no set. An added member that is not listed
+// here, and belongs to no other field's set, is not caught: the sets are not
+// exported, so this test cannot compare them whole.
+const ECHO_NEAR_MISSES = [
+  "running",
+  "active",
+  "deleted",
+  "deleting",
+  "terminated",
+  "suspended",
+  "failed",
+  "pending",
+  "created",
+  "queued",
+  "held",
+  "locked",
+  "released",
+  "fenced",
+  "none",
+  "open",
+  "busy",
+  "i386",
+  "arm",
+  "armv7",
+  "riscv64",
+  "ppc64le",
+  "s390x",
+  "darwin",
+  "windows",
+  "win32",
+  "freebsd",
+  "ap",
+  "asia",
+  "local",
+  "default",
+  "coven-agents-copilot-1",
+  "coven-agents-copilot-3",
+  "coven-agents-copilot",
+  "coven-agents-copilot-20",
+];
+
+test("R4 vocabulary: every member of every fixed set is echoed exactly", async () => {
+  // Mutation: removing `amd64`, a sandbox state or a binding lifecycle.
+  const setters = new Map(ECHOED_FIELDS);
+  let checked = 0;
+  for (const [field, members] of Object.entries(ECHO_VOCABULARY)) {
+    for (const member of members) {
+      const result = await withInspection((inspection) =>
+        setters.get(field)?.(inspection, member)
+      );
+      assert.equal(ECHO_READERS[field]?.(result), member, `${field}=${member}`);
+      checked += 1;
+    }
+  }
+  assert.equal(checked, 2 + 8 + 4 + 1 + 1 + 22 + 2);
+  // Each stated architecture is also accepted, not only echoed.
+  for (const architecture of ECHO_VOCABULARY["platform.architecture"] ?? []) {
+    const result = await withInspection((inspection) => {
+      inspection.platform.architecture = architecture;
+    });
+    assert.equal(result.status, "ready", architecture);
+    assert.deepEqual(result.reasons, [], architecture);
+  }
+});
+
+test("R4 vocabulary: a member of another field's set, a near miss or a variant spelling is unrecognised", async () => {
+  // Mutation: adding a sandbox state or an attempt-fence value.
+  const setters = new Map(ECHOED_FIELDS);
+  const everyMember = Object.values(ECHO_VOCABULARY).flat();
+  for (const [field, members] of Object.entries(ECHO_VOCABULARY)) {
+    const variants = members.flatMap((member) => [
+      member.toUpperCase(),
+      `${member[0]?.toUpperCase()}${member.slice(1)}`,
+      ` ${member}`,
+      `${member} `,
+      `${member}\n`,
+      `${member}s`,
+      `${member}_`,
+      member.slice(0, -1),
+    ]);
+    const outside = new Set(
+      [...everyMember, ...ECHO_NEAR_MISSES, ...variants, ""].filter(
+        (value) => !members.includes(value)
+      )
+    );
+    assert.ok(outside.size >= 60, field);
+    for (const value of outside) {
+      const where = `${field}=${JSON.stringify(value)}`;
+      const result = await withInspection((inspection) =>
+        setters.get(field)?.(inspection, value)
+      );
+      assert.equal(ECHO_READERS[field]?.(result), "unrecognised", where);
+      assert.notEqual(result.status, "ready", where);
+    }
+  }
+});
+
+test("R4 evidence: every replayed outcome is fixture evidence, identity failures included", async () => {
+  // Mutation: an identity failure reported as `none` instead of `fixture`.
+  for (const name of [...FAIL_CLOSED_CASES, "ready", "stopped"]) {
+    const { fixture, result } = await runCase(name);
+    assert.equal(result.evidence, "fixture", name);
+    assert.equal(result.providerCalls.inspect, fixture.expect.inspectCalls, name);
+    assert.equal(isLiveReady(result), false, name);
+  }
+  const identity: [string, string, (inspection: any) => void][] = [
+    ["owner_mismatch", "unauthorized", (i) => (i.binding.agentId = "fixture-agent-9999")],
+    ["binding_mismatch", "unauthorized", (i) => (i.binding.sandboxId = "fixture-sandbox-9999")],
+    ["returned_id_mismatch", "reconciliation-required", (i) => (i.sandbox.id = "fixture-sandbox-9999")],
+  ];
+  for (const [code, status, edit] of identity) {
+    const result = await withInspection(edit);
+    assert.equal(result.status, status, code);
+    assert.deepEqual(codes(result), [code]);
+    assert.equal(result.evidence, "fixture", code);
+    assert.equal(result.providerCalls.inspect, 1, code);
+    assert.equal(result.observed, null, code);
+    assert.match(renderHuman(result), /^evidence: FIXTURE /mu, code);
+    assert.equal(JSON.parse(renderJson(result)).evidence, "fixture", code);
+  }
+});
+
+test("R4 owners: the whole mutation-owner table is these literal rows, `via` included", () => {
+  // Mutation: the `via` text of a row. Written out, not derived.
+  const at = (path: string) =>
+    `OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180:${path}`;
+  const sandbox = at("lib/runner/daytona/sandbox.ts");
+  const row = (mutation: string, owner: string, via: string) => ({
+    castles: "never",
+    mutation,
+    owner,
+    via,
+  });
+  assert.deepEqual(MUTATION_OWNERS, [
+    row("create", sandbox, "ensureDaytonaSandbox / ensureDaytonaSandboxForDispatch"),
+    row("start", sandbox, "ensureDaytonaSandbox* (start or recover on attach)"),
+    row(
+      "stop",
+      sandbox,
+      "provider auto-stop policy set at create; no application stop call at this pin"
+    ),
+    row(
+      "archive",
+      sandbox,
+      "provider auto-archive policy set at create; no application archive call at this pin"
+    ),
+    row(
+      "resize",
+      at("lib/runner/daytona/resource-repair.ts"),
+      "RunnerPersistentResourceLifecycle.repair"
+    ),
+    row(
+      "delete",
+      sandbox,
+      "RunnerPersistentResourceLifecycle.decommission / recover (also resource-recovery.ts)"
+    ),
+    row("reset", sandbox, "RunnerPersistentResourceLifecycle.reset"),
+    row(
+      "adopt-policy",
+      sandbox,
+      "adoptDaytonaSandboxPolicy (labels, auto-stop, auto-archive)"
+    ),
+    row(
+      "diagnostic-create",
+      at("lib/runner/diagnostics.ts"),
+      "diagnoseDaytonaSandbox (its own ephemeral diagnostic sandbox, 5 minute TTL)"
+    ),
+    row(
+      "diagnostic-delete",
+      at("lib/runner/diagnostics.ts"),
+      "diagnoseDaytonaSandbox / runEphemeralDiagnostic (deletes the sandbox it created)"
+    ),
+  ]);
+  assert.deepEqual(OUTSIDE_LISTED_MUTATIONS, [
+    {
+      at: at("lib/runner/daytona/process.ts"),
+      castles: "never",
+      operation: "command execution inside a sandbox",
+    },
+    {
+      at: at("lib/runner/daytona/image.ts"),
+      castles: "never",
+      operation: "snapshot creation",
+    },
+  ]);
+});
+
+const afterMicrotasks = () =>
+  new Promise<void>((resolve) => setImmediate(resolve));
+
+/**
+ * Asserts that a check against a client that never answers is abandoned at
+ * exactly `expectedMs` on a mocked clock: still pending one millisecond
+ * earlier, `provider_unavailable` at the deadline.
+ */
+async function assertDeadline(
+  context: { mock: { timers: { tick: (ms: number) => void } } },
+  options: Parameters<typeof runPreflight>[2] | undefined,
+  expectedMs: number,
+  label: string
+) {
+  const client: SandboxInspectionClient = {
+    inspectBoundSandbox: () => new Promise(() => undefined),
+  };
+  const seen: PreflightResult[] = [];
+  const pending =
+    options === undefined
+      ? runPreflight(VALID_ENV, client)
+      : runPreflight(VALID_ENV, client, options);
+  void pending.then((result) => {
+    seen.push(result);
+  });
+  await afterMicrotasks();
+  context.mock.timers.tick(expectedMs - 1);
+  await afterMicrotasks();
+  assert.equal(seen.length, 0, `${label}: settled before ${expectedMs} ms`);
+  context.mock.timers.tick(1);
+  await afterMicrotasks();
+  assert.equal(seen.length, 1, `${label}: not settled at ${expectedMs} ms`);
+  const [settled] = seen;
+  assert.equal(settled?.status, "unavailable", label);
+  assert.deepEqual(settled?.reasons, [{ code: "provider_unavailable" }], label);
+  assert.equal(settled?.providerCalls.inspect, 1, label);
+}
+
+test("R4 deadline: with no timeout option an unanswered inspection is abandoned at 30 seconds", async (t) => {
+  // Mutation: the 30-second default.
+  assert.equal(DEFAULT_INSPECTION_TIMEOUT_MS, 30_000);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await assertDeadline(t, undefined, 30_000, "no options");
+  await assertDeadline(t, {}, 30_000, "empty options");
+  await assertDeadline(t, { timeoutMs: undefined }, 30_000, "timeoutMs undefined");
+  // A stated deadline is used as stated.
+  await assertDeadline(t, { timeoutMs: 1234 }, 1234, "timeoutMs 1234");
+  await assertDeadline(t, { timeoutMs: 60_000 }, 60_000, "timeoutMs 60000");
+});
+
+// --- Library edges for #3 and #5 callers (review rv6c-3db7f9d0, R6) ---------
+
+test("R6: a missing or unusable client is no client: no call is counted, no evidence is claimed", async () => {
+  const unusable: [string, unknown][] = [
+    ["undefined", undefined],
+    ["an empty object", {}],
+    ["a method that is a string", { inspectBoundSandbox: "live-provider" }],
+    ["a method that is null", { inspectBoundSandbox: null }],
+    ["a method that is an object", { inspectBoundSandbox: {} }],
+    ["a string", "client"],
+    ["a number", 7],
+    ["true", true],
+    ["an array", []],
+    [
+      "a method whose read throws",
+      Object.defineProperty({}, "inspectBoundSandbox", {
+        get() {
+          throw new Error(CANARY);
+        },
+      }),
+    ],
+    [
+      "a proxy answering live-provider to every property",
+      new Proxy({}, { get: () => "live-provider" }),
+    ],
+  ];
+  const absent = await runPreflight(VALID_ENV, null);
+  assert.equal(absent.status, "unavailable");
+  assert.deepEqual(absent.reasons, [{ code: "upstream_seam_missing" }]);
+  assert.equal(absent.evidence, "none");
+  assert.equal(absent.providerCalls.inspect, 0);
+  const unbound = await runPreflight({}, null);
+  assert.deepEqual(unbound.reasons, [{ code: "sandbox_id_missing" }]);
+  assert.equal(unbound.evidence, "none");
+  for (const [label, client] of unusable) {
+    const result = await runPreflight(
+      VALID_ENV,
+      client as SandboxInspectionClient
+    );
+    assert.equal(result.status, "unavailable", label);
+    assert.deepEqual(result.reasons, [{ code: "upstream_seam_missing" }], label);
+    assert.equal(result.evidence, "none", label);
+    assert.equal(result.providerCalls.inspect, 0, label);
+    assert.equal(result.observed, null, label);
+    assert.equal(isLiveReady(result), false, label);
+    // Exactly what `null` gives, with or without a valid binding.
+    assert.deepEqual(result, absent, label);
+    assert.deepEqual(
+      await runPreflight({}, client as SandboxInspectionClient),
+      unbound,
+      label
+    );
+    assert.doesNotMatch(renderJson(result) + renderHuman(result), /canary/iu);
+  }
+});
+
+test("R6: one inspection is counted exactly when the seam method was invoked", async () => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  type Shape = [string, (count: () => void) => unknown, string, string[]];
+  const shapes: Shape[] = [
+    ["answers", (count) => ({ inspectBoundSandbox: () => (count(), Promise.resolve(fixture.inspection)) }), "ready", []],
+    ["answers without a promise", (count) => ({ inspectBoundSandbox: () => (count(), fixture.inspection) }), "ready", []],
+    [
+      "throws synchronously",
+      (count) => ({
+        inspectBoundSandbox: () => {
+          count();
+          throw new Error(CANARY);
+        },
+      }),
+      "unavailable",
+      ["provider_unavailable"],
+    ],
+    ["rejects", (count) => ({ inspectBoundSandbox: () => (count(), Promise.reject(new Error(CANARY))) }), "unavailable", ["provider_unavailable"]],
+    ["never answers", (count) => ({ inspectBoundSandbox: () => (count(), new Promise(() => undefined)) }), "unavailable", ["provider_unavailable"]],
+    ["answers outside the contract", (count) => ({ inspectBoundSandbox: () => (count(), Promise.resolve(CANARY)) }), "unavailable", ["inspection_contract_violation"]],
+    [
+      "uses its own receiver",
+      (count) => ({
+        inspectBoundSandbox(this: { response: unknown }) {
+          count();
+          return Promise.resolve(this.response);
+        },
+        response: fixture.inspection,
+      }),
+      "ready",
+      [],
+    ],
+    [
+      "is a callable object carrying the method",
+      (count) =>
+        Object.assign(() => undefined, {
+          inspectBoundSandbox: () => (count(), Promise.resolve(fixture.inspection)),
+        }),
+      "ready",
+      [],
+    ],
+    [
+      "inherits the method",
+      (count) =>
+        Object.create({
+          inspectBoundSandbox: () => (count(), Promise.resolve(fixture.inspection)),
+        }),
+      "ready",
+      [],
+    ],
+    // Review rv11 B1. A callable need not carry the built-in `call`, and one
+    // that carries its own must not be reached through it: the method itself
+    // is what gets invoked, whatever its properties say.
+    [
+      "is a method with a null prototype",
+      (count) => ({
+        inspectBoundSandbox: Object.setPrototypeOf(
+          () => (count(), Promise.resolve(fixture.inspection)),
+          null
+        ),
+      }),
+      "ready",
+      [],
+    ],
+    [
+      "is a callable proxy answering undefined to every property",
+      (count) => ({
+        inspectBoundSandbox: new Proxy(
+          () => (count(), Promise.resolve(fixture.inspection)),
+          { get: () => undefined }
+        ),
+      }),
+      "ready",
+      [],
+    ],
+    [
+      "is a callable proxy answering a stub to every property",
+      (count) => ({
+        inspectBoundSandbox: new Proxy(
+          () => (count(), Promise.resolve(fixture.inspection)),
+          { get: () => () => CANARY }
+        ),
+      }),
+      "ready",
+      [],
+    ],
+    [
+      "carries its own call answering ready, and itself rejects",
+      (count) => ({
+        inspectBoundSandbox: Object.assign(
+          () => (count(), Promise.reject(new Error(CANARY))),
+          {
+            apply: () => Promise.resolve(fixture.inspection),
+            bind: () => () => Promise.resolve(fixture.inspection),
+            call: () => Promise.resolve(fixture.inspection),
+          }
+        ),
+      }),
+      "unavailable",
+      ["provider_unavailable"],
+    ],
+  ];
+  for (const [label, build, status, expected] of shapes) {
+    let invoked = 0;
+    const client = build(() => {
+      invoked += 1;
+    }) as SandboxInspectionClient;
+    const result = await runPreflight(fixture.env, client, { timeoutMs: 25 });
+    assert.equal(invoked, 1, label);
+    assert.equal(result.providerCalls.inspect, 1, label);
+    assert.equal(result.evidence, "fixture", label);
+    assert.equal(result.status, status, label);
+    assert.deepEqual(codes(result), expected, label);
+    assert.doesNotMatch(renderJson(result) + renderHuman(result), /canary/iu);
+  }
+
+  // No property of the method is read on the way to invoking it.
+  const touched: PropertyKey[] = [];
+  let direct = 0;
+  const watched = new Proxy(
+    () => {
+      direct += 1;
+      return Promise.resolve(fixture.inspection);
+    },
+    {
+      get(target, key, receiver) {
+        touched.push(key);
+        return Reflect.get(target, key, receiver);
+      },
+    }
+  );
+  const untouched = await runPreflight(fixture.env, {
+    inspectBoundSandbox: watched,
+  } as SandboxInspectionClient);
+  assert.deepEqual(touched, []);
+  assert.equal(direct, 1);
+  assert.equal(untouched.status, "ready");
+  assert.equal(untouched.providerCalls.inspect, 1);
+
+  // The method is read once: what was judged usable is what gets called.
+  let reads = 0;
+  const shifting = Object.defineProperty({}, "inspectBoundSandbox", {
+    get() {
+      reads += 1;
+      return reads === 1 ? () => Promise.resolve(fixture.inspection) : undefined;
+    },
+  }) as SandboxInspectionClient;
+  const read = await runPreflight(fixture.env, shifting);
+  assert.equal(reads, 1);
+  assert.equal(read.status, "ready");
+  assert.equal(read.providerCalls.inspect, 1);
+
+  // An invalid binding stops the check before the client is called.
+  let early = 0;
+  const counted: SandboxInspectionClient = {
+    inspectBoundSandbox: () => {
+      early += 1;
+      return Promise.resolve(fixture.inspection);
+    },
+  };
+  const invalid = await runPreflight({}, counted);
+  assert.equal(early, 0);
+  assert.equal(invalid.providerCalls.inspect, 0);
+  assert.equal(invalid.evidence, "fixture");
+
+  // The client's property is still read, once, with an invalid binding: the
+  // evidence class depends on it (review rv11 N1). At 13ab3bc an invalid
+  // binding returned without touching the client.
+  let lazyReads = 0;
+  const lazy = Object.defineProperty({}, "inspectBoundSandbox", {
+    get() {
+      lazyReads += 1;
+      return counted.inspectBoundSandbox;
+    },
+  }) as SandboxInspectionClient;
+  const unbound = await runPreflight({}, lazy);
+  assert.equal(lazyReads, 1);
+  assert.equal(early, 0);
+  assert.equal(unbound.providerCalls.inspect, 0);
+  assert.equal(unbound.evidence, "fixture");
+});
+
+test("R6: options that are null or not an object are no options", async (t) => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  // The last two carry a `timeoutMs` (review rv11 B2): without them nothing
+  // here would notice an array or a function being read for its deadline.
+  const junk = [
+    null,
+    7,
+    "timeoutMs",
+    true,
+    [],
+    [5],
+    () => undefined,
+    Object.assign([], { timeoutMs: 25 }),
+    Object.assign(() => undefined, { timeoutMs: 25 }),
+  ];
+  for (const options of junk) {
+    const result = await runPreflight(
+      fixture.env,
+      createFixtureInspectionClient(fixture),
+      options as never
+    );
+    assert.equal(result.status, "ready", String(options));
+    assert.equal(result.evidence, "fixture", String(options));
+    assert.equal(result.providerCalls.inspect, 1, String(options));
+  }
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const options of junk) {
+    await assertDeadline(t, options as never, 30_000, `options ${String(options)}`);
+  }
+  // What still counts as options: any other object, whatever built it.
+  class Stated {
+    timeoutMs = 25;
+  }
+  const bare = Object.assign(Object.create(null), { timeoutMs: 25 });
+  await assertDeadline(t, new Stated(), 25, "options from a class");
+  await assertDeadline(t, bare, 25, "options with a null prototype");
+});
+
+test("R6: a null or non-object environment is an unconfigured binding, not an exception", async () => {
+  const unconfigured = { ok: false, partial: {}, problem: "sandbox_id_missing" };
+  // The last one carries a complete, valid binding (review rv11 B2): every
+  // other value here gave this result before any guard existed, or threw.
+  const notAnEnvironment = [
+    null,
+    undefined,
+    7,
+    "CASTLES_SANDBOX_ID",
+    true,
+    [],
+    ["x"],
+    Object.assign(() => undefined, VALID_ENV),
+  ];
+  for (const environment of notAnEnvironment) {
+    const label = String(environment);
+    assert.deepEqual(parseBinding(environment as never), unconfigured, label);
+    const wire = tripwireClient(() => ({}));
+    const result = await runPreflight(environment as never, wire.client);
+    assert.equal(result.status, "unavailable", label);
+    assert.deepEqual(result.reasons, [{ code: "sandbox_id_missing" }], label);
+    assert.deepEqual(wire.calls, [], label);
+    assert.equal(result.providerCalls.inspect, 0, label);
+    assert.equal(result.evidence, "fixture", label);
+    assert.equal(result.observed, null, label);
+    assert.deepEqual(
+      result.target,
+      { expectedGeneration: null, ownerAlias: null, profile: null, sandboxAlias: null },
+      label
+    );
+    const none = await runPreflight(environment as never, null);
+    assert.equal(none.evidence, "none", label);
+    assert.deepEqual(none.reasons, [{ code: "sandbox_id_missing" }], label);
+  }
+
+  // What still counts as an environment: any other object, whatever built
+  // it. An array is an object here, so one carrying the keys is read.
+  class Configured {
+    CASTLES_OWNER_AGENT_ID = VALID_ENV.CASTLES_OWNER_AGENT_ID;
+    CASTLES_PROFILE = VALID_ENV.CASTLES_PROFILE;
+    CASTLES_SANDBOX_GENERATION = VALID_ENV.CASTLES_SANDBOX_GENERATION;
+    CASTLES_SANDBOX_ID = VALID_ENV.CASTLES_SANDBOX_ID;
+  }
+  const read: [string, unknown][] = [
+    ["from a class", new Configured()],
+    ["with a null prototype", Object.assign(Object.create(null), VALID_ENV)],
+    ["an array carrying the keys", Object.assign([], VALID_ENV)],
+  ];
+  for (const [label, environment] of read) {
+    assert.equal(parseBinding(environment as never).ok, true, label);
+    const wire = tripwireClient(() => ({}));
+    const result = await runPreflight(environment as never, wire.client);
+    assert.deepEqual(wire.calls, ["inspectBoundSandbox"], label);
+    assert.equal(result.providerCalls.inspect, 1, label);
+  }
+});
+
+test("N5 limit: a property whose read throws still rejects with the caller's error", async () => {
+  // Stated, not hidden (review rv11 N5): the edges above are decided for
+  // plain values. An accessor that throws is not handled, at 13ab3bc or
+  // here, and the caller's own error comes back. When that is decided, this
+  // test is the one to change.
+  const fixture = loadFixtureCase(casePath("ready"));
+  const raise = () => {
+    throw new Error(CANARY);
+  };
+  const client = createFixtureInspectionClient(fixture);
+  const environment = Object.defineProperty({ ...fixture.env }, "CASTLES_SANDBOX_ID", {
+    get: raise,
+  });
+  await assert.rejects(runPreflight(environment, client), { message: CANARY });
+  const options = Object.defineProperty({}, "timeoutMs", { get: raise });
+  await assert.rejects(runPreflight(fixture.env, client, options), { message: CANARY });
+  const inspection = structuredClone(fixture.inspection) as any;
+  Object.defineProperty(inspection.sandbox, "cpu", { get: raise });
+  await assert.rejects(
+    runPreflight(fixture.env, { inspectBoundSandbox: () => Promise.resolve(inspection) }),
+    { message: CANARY }
+  );
+});
+
+/**
+ * Numbers no timer can hold. Node replaces a delay above 2^31-1 with 1 ms
+ * and warns, so a caller asking for a long wait got none: the one timeout
+ * defect review rv6c R6 reported.
+ */
+const OVER_LONG_TIMEOUTS: [string, number][] = [
+  ["2^31", 2 ** 31],
+  ["2^31 - 1 + 0.5", 2 ** 31 - 0.5],
+  ["Infinity", Number.POSITIVE_INFINITY],
+  ["MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER],
+  ["1e21", 1e21],
+];
+
+/**
+ * Every other stated value, a number or not. At the accepted revision
+ * 13ab3bc each of these was handed to the timer as given, and what a
+ * non-positive or non-numeric timeout should mean is an open question for
+ * the maintainer (review rv11 N2). Until it is answered they keep that
+ * behaviour: Node waits 1 ms for a number below 1 and for NaN, converts a
+ * string, a boolean or an array, and throws on a bigint, which the check
+ * flattens to `provider_unavailable`.
+ */
+const TIMEOUTS_LEFT_TO_THE_TIMER: [string, unknown][] = [
+  ["0", 0],
+  ["0.5", 0.5],
+  ["-1", -1],
+  ["-Infinity", Number.NEGATIVE_INFINITY],
+  ["NaN", Number.NaN],
+  ['"20"', "20"],
+  ["true", true],
+  ["an object", {}],
+  ["an array", [20]],
+  ["a bigint", 20n],
+  // Not numbers, so not changed either, though Node converts both to more
+  // than 2^31-1 and waits 1 ms: part of the same open question.
+  ['"4294967296"', "4294967296"],
+  ["a boxed 2^31", Object(2 ** 31)],
+];
+
+test("R6: a timeout above 2^31-1, Infinity included, falls back to the 30-second default", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const [label, timeoutMs] of OVER_LONG_TIMEOUTS) {
+    await assertDeadline(t, { timeoutMs }, 30_000, `timeoutMs ${label}`);
+  }
+  // No stated value is the default too, as it always was.
+  for (const timeoutMs of [undefined, null]) {
+    await assertDeadline(t, { timeoutMs } as never, 30_000, `timeoutMs ${timeoutMs}`);
+  }
+  // Up to the longest delay a timer accepts, the stated deadline is used.
+  for (const timeoutMs of [1, 20, 30_001, 2 ** 31 - 1]) {
+    await assertDeadline(t, { timeoutMs }, timeoutMs, `timeoutMs ${timeoutMs}`);
+  }
+});
+
+test("N2: every other stated timeout reaches the timer as given, as at 13ab3bc", async (t) => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const handed: unknown[] = [];
+  const realSetTimeout = globalThis.setTimeout;
+  // Records the delay and arms a real 1 ms timer in its place, so that this
+  // test does not make Node print its own warnings about the value.
+  t.mock.method(
+    globalThis,
+    "setTimeout",
+    (callback: () => void, delay?: unknown) => {
+      handed.push(delay);
+      return realSetTimeout(callback, 1);
+    }
+  );
+  for (const [label, timeoutMs] of TIMEOUTS_LEFT_TO_THE_TIMER) {
+    handed.length = 0;
+    const result = await runPreflight(
+      fixture.env,
+      createFixtureInspectionClient(fixture),
+      { timeoutMs } as never
+    );
+    assert.equal(result.status, "ready", `timeoutMs ${label}`);
+    assert.equal(handed.length, 1, `timeoutMs ${label}`);
+    assert.ok(
+      Object.is(handed[0], timeoutMs),
+      `timeoutMs ${label}: the timer was handed ${String(handed[0])}`
+    );
+  }
+  // The same seam shows the other side: a number above 2^31-1 never
+  // reaches the timer.
+  for (const [label, timeoutMs] of OVER_LONG_TIMEOUTS) {
+    handed.length = 0;
+    await runPreflight(fixture.env, createFixtureInspectionClient(fixture), {
+      timeoutMs,
+    });
+    assert.deepEqual(handed, [DEFAULT_INSPECTION_TIMEOUT_MS], `timeoutMs ${label}`);
+  }
+});
+
+test("N2: a timeout below 1 or not a number still abandons a silent provider at once, as at 13ab3bc", async () => {
+  // Real timers, and only values Node handles without printing a warning.
+  const silent: SandboxInspectionClient = {
+    inspectBoundSandbox: () => new Promise(() => undefined),
+  };
+  for (const [label, timeoutMs] of [
+    ["0", 0],
+    ["0.5", 0.5],
+    ['"20"', "20"],
+    ["true", true],
+    ["a bigint", 20n],
+  ] as const) {
+    let guard: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      runPreflight(VALID_ENV, silent, { timeoutMs } as never),
+      new Promise<"pending">((resolve) => {
+        guard = setTimeout(() => resolve("pending"), 2_000);
+      }),
+    ]);
+    clearTimeout(guard);
+    assert.notEqual(outcome, "pending", `timeoutMs ${label}: still waiting after 2 s`);
+    const result = outcome as PreflightResult;
+    assert.equal(result.status, "unavailable", `timeoutMs ${label}`);
+    assert.deepEqual(result.reasons, [{ code: "provider_unavailable" }], `timeoutMs ${label}`);
+    assert.equal(result.providerCalls.inspect, 1, `timeoutMs ${label}`);
+  }
+});
+
+test("R6: an over-long timeout does not abandon a provider that answers, and Node is never handed it", async () => {
+  // Real timers. Node replaces a delay above 2^31-1 with 1 ms and emits a
+  // warning; a check must not inherit that.
+  const fixture = loadFixtureCase(casePath("ready"));
+  const slow: SandboxInspectionClient = {
+    inspectBoundSandbox: () =>
+      new Promise((resolve) => {
+        setTimeout(() => resolve(fixture.inspection), 40);
+      }),
+  };
+  // Only timer warnings count: an unrelated one (Node 22.0.0 warns once that
+  // mocked timers are experimental) must not fail this test.
+  const warnings: string[] = [];
+  const onWarning = (warning: Error) => {
+    if (warning.name.startsWith("Timeout")) {
+      warnings.push(warning.name);
+    }
+  };
+  process.on("warning", onWarning);
+  try {
+    for (const [label, timeoutMs] of OVER_LONG_TIMEOUTS) {
+      const result = await runPreflight(fixture.env, slow, { timeoutMs });
+      assert.equal(result.status, "ready", `timeoutMs ${label}`);
+      assert.deepEqual(result.reasons, [], `timeoutMs ${label}`);
+    }
+    await afterMicrotasks();
+  } finally {
+    process.off("warning", onWarning);
+  }
+  assert.deepEqual(warnings, []);
+});
+
 // --- Structural: no second adapter, no network, no writes ------------------
 
 /**
@@ -1766,15 +2958,30 @@ test("the missing upstream binding seam is an explicit blocker with a link", () 
  *   in ALLOWED_IMPORTS; nothing else may be imported or re-exported;
  * - the name of a Node built-in module appears in a string only as the
  *   specifier of such an import;
- * - `process` is used only in the forms listed in PROCESS_USE, which allows
- *   reading the four binding keys and nothing else from the environment;
+ * - `process` is used only in the forms listed in PROCESS_USE;
+ * - the text `process.env[key]` appears only inside a loop that is, to the
+ *   character, BINDING_LOOP: `for (const key of BINDING_ENVIRONMENT_KEYS)`
+ *   with the one statement `environment[key] = process.env[key];`;
+ * - the name BINDING_ENVIRONMENT_KEYS appears, comments included, only in
+ *   its declaration in profile.ts, which must be KEY_LIST_DECLARATION (the
+ *   four binding keys, written out), as a plain member of an import from
+ *   `./profile.ts`, and as the iterable of such a `for` header;
+ * - the name readFileSync appears, comments included, only in READ_IMPORT
+ *   and as the call READ_CALL, `readFileSync(path, "utf8")`: no flag and no
+ *   options object can be passed to it;
  * - none of the words in FORBIDDEN_ANYWHERE appears at all, comments and
  *   strings included, and no `\u` or `\x` escape does either.
  *
  * What it cannot do: it reads text, not a syntax tree, so it does not hold
- * the property "this code cannot reach a capability". SCAN_KNOWN_GAPS lists
- * evasions that pass it. The permission-model run at the end of this file is
- * the run-time check, with its own stated limits.
+ * the property "this code cannot reach a capability". In particular it does
+ * not know what `key`, `path` or the key list hold when the code runs. The
+ * environment rule shows that the one loop is spelled as expected and that
+ * the list it names is declared as four keys; it does not show that only
+ * those four variables are read. SCAN_KNOWN_GAPS lists examples of evasions
+ * that pass, among them a key list widened without being named and a read
+ * of any file through the allowed call. The permission-model run at the end of this file
+ * is the run-time check, with its own stated limits; it does not restrict
+ * environment reads at all.
  */
 const ALLOWED_IMPORTS: Readonly<Record<string, readonly string[]>> = {
   "node:crypto": ["createHash"],
@@ -1796,6 +3003,25 @@ const PROCESS_USE =
 const MODULE_STATEMENT =
   /\b(import|export)\b(?!\s*["'])\s*([^;"'`]*?)\s*\bfrom\s*(["'])([^"'\n]*)\3|\bimport\s*(["'])([^"'\n]*)\5/gu;
 const RELATIVE_SPECIFIER = /^\.\/[a-z][a-z0-9-]*\.ts$/u;
+/** The only text in which the environment may be read. */
+const BINDING_LOOP =
+  /for \(const key of BINDING_ENVIRONMENT_KEYS\) \{\s*environment\[key\] = process\.env\[key\];\s*\}/gu;
+const ENVIRONMENT_READ = /process\.env\[key\]/gu;
+const KEY_LIST = "BINDING_ENVIRONMENT_KEYS";
+const KEY_LIST_WORD = /(?<![\w$])BINDING_ENVIRONMENT_KEYS(?![\w$])/gu;
+const KEY_LIST_FILE = "profile.ts";
+const KEY_LIST_DECLARATION = [
+  "export const BINDING_ENVIRONMENT_KEYS = [",
+  '  "CASTLES_PROFILE",',
+  '  "CASTLES_SANDBOX_ID",',
+  '  "CASTLES_OWNER_AGENT_ID",',
+  '  "CASTLES_SANDBOX_GENERATION",',
+  "] as const;",
+].join("\n");
+const KEY_LIST_ITERATION = "for (const key of ";
+const READ_WORD = /(?<![\w$])readFileSync(?![\w$])/gu;
+const READ_IMPORT = 'import { readFileSync } from "node:fs";';
+const READ_CALL = 'readFileSync(path, "utf8")';
 
 /** Naive on purpose: checks that must not be fooled by it read raw text. */
 function withoutComments(source: string): string {
@@ -1897,6 +3123,55 @@ function scanSources(files: ReadonlyMap<string, string>): string[] {
         problems.push(`${file}: process member outside the allowed forms`);
       }
     }
+
+    // Raw text from here on: these names may not appear in a comment either.
+    const within = (
+      spans: readonly RegExpMatchArray[],
+      at: number
+    ): boolean =>
+      spans.some(
+        (span) =>
+          at > (span.index ?? 0) && at < (span.index ?? 0) + span[0].length
+      );
+
+    const bindingLoops = [...source.matchAll(BINDING_LOOP)];
+    for (const match of source.matchAll(ENVIRONMENT_READ)) {
+      if (!within(bindingLoops, match.index)) {
+        problems.push(`${file}: environment read outside the binding-key loop`);
+      }
+    }
+
+    const profileImports = [...source.matchAll(MODULE_STATEMENT)].filter(
+      (match) => match[1] === "import" && match[4] === `./${KEY_LIST_FILE}`
+    );
+    for (const match of source.matchAll(KEY_LIST_WORD)) {
+      const at = match.index;
+      const before = source.slice(Math.max(0, at - 200), at);
+      const after = source.slice(at + KEY_LIST.length);
+      const declared =
+        file === KEY_LIST_FILE &&
+        before.endsWith("export const ") &&
+        source.startsWith(KEY_LIST_DECLARATION, at - "export const ".length);
+      const iterated =
+        before.endsWith(KEY_LIST_ITERATION) && after.startsWith(") {");
+      const imported =
+        /[{,]\s*$/u.test(before) &&
+        /^\s*[,}]/u.test(after) &&
+        within(profileImports, at);
+      if (!declared && !iterated && !imported) {
+        problems.push(`${file}: the binding key list used outside its allowed forms`);
+      }
+    }
+
+    for (const match of source.matchAll(READ_WORD)) {
+      const at = match.index;
+      const imported =
+        source.slice(Math.max(0, at - "import { ".length), at) === "import { " &&
+        source.startsWith(READ_IMPORT, at - "import { ".length);
+      if (!imported && !source.startsWith(READ_CALL, at)) {
+        problems.push(`${file}: readFileSync outside its import and its one call form`);
+      }
+    }
   }
   return problems;
 }
@@ -1950,6 +3225,14 @@ const addFile =
   (file: string, text: string): Plant =>
   (files) => {
     files.set(file, text);
+  };
+/** Replaces text that must be present, so a plant cannot silently miss. */
+const replaceIn =
+  (file: string, from: string, to: string): Plant =>
+  (files) => {
+    const source = files.get(file) ?? "";
+    assert.ok(source.includes(from), `plant target missing in ${file}`);
+    files.set(file, source.replace(from, to));
   };
 
 /** Each of these must be reported by the scan. */
@@ -2033,41 +3316,201 @@ const SCAN_MUST_CATCH: readonly (readonly [string, ...Plant[]])[] = [
   ["JavaScript file in src", addFile("helper.js", "")],
   ["Worker", append("cli.ts", 'new Worker("./x.ts");')],
   ["WebSocket", append("cli.ts", 'new WebSocket("wss://provider.invalid");')],
+  // The third review (rv6c-3db7f9d0, R2): any variable through `[key]`.
+  [
+    "environment read in a second loop over other keys",
+    append(
+      "cli.ts",
+      'const kept: string[] = [];\nfor (const key of ["DAYTONA_API_KEY", "GITHUB_TOKEN"]) {\n  kept.push(process.env[key] ?? "");\n}'
+    ),
+  ],
+  [
+    "environment read through a variable named key",
+    append("cli.ts", 'const key = "DAYTONA_API_KEY";\nconst value = process.env[key];'),
+  ],
+  [
+    "the binding loop doing more than copy the four values",
+    replaceIn(
+      "cli.ts",
+      "    environment[key] = process.env[key];\n",
+      '    environment[key] = process.env[key];\n    process.stderr.write(process.env[key] ?? "");\n'
+    ),
+  ],
+  [
+    "the binding loop over a shadowed key list",
+    replaceIn(
+      "cli.ts",
+      "  const environment: Record<string, string | undefined> = {};\n",
+      '  const environment: Record<string, string | undefined> = {};\n  const BINDING_ENVIRONMENT_KEYS = ["DAYTONA_API_KEY"];\n'
+    ),
+  ],
+  [
+    "the binding loop over a renamed import",
+    append("profile.ts", 'export const OTHER_KEYS = ["DAYTONA_API_KEY"] as const;'),
+    replaceIn(
+      "cli.ts",
+      'import { BINDING_ENVIRONMENT_KEYS } from "./profile.ts";',
+      'import { OTHER_KEYS as BINDING_ENVIRONMENT_KEYS } from "./profile.ts";'
+    ),
+  ],
+  [
+    "a fifth key in the binding key list",
+    replaceIn(
+      "profile.ts",
+      '  "CASTLES_SANDBOX_GENERATION",\n] as const;',
+      '  "CASTLES_SANDBOX_GENERATION",\n  "DAYTONA_API_KEY",\n] as const;'
+    ),
+  ],
+  [
+    "the binding key list widened at run time",
+    append(
+      "preflight.ts",
+      '(BINDING_ENVIRONMENT_KEYS as unknown as string[]).push("DAYTONA_API_KEY");'
+    ),
+  ],
+  [
+    "the binding key list aliased on import",
+    replaceIn(
+      "preflight.ts",
+      "  BINDING_ENVIRONMENT_KEYS,\n",
+      "  BINDING_ENVIRONMENT_KEYS,\n  BINDING_ENVIRONMENT_KEYS as keys,\n"
+    ),
+    append("preflight.ts", '(keys as unknown as string[]).push("DAYTONA_API_KEY");'),
+  ],
+  // The same review: an allowed import that can write through its flags.
+  [
+    "readFileSync with an append flag, swallowed",
+    append(
+      "preflight.ts",
+      'try {\n  readFileSync("/tmp/castles-planted", { flag: "a" });\n} catch {}'
+    ),
+  ],
+  [
+    "readFileSync with a write flag beside an encoding",
+    append("preflight.ts", 'readFileSync("x", { encoding: "utf8", flag: "w" });'),
+  ],
+  ["readFileSync under another name", append("preflight.ts", "const read = readFileSync;")],
+  [
+    "readFileSync with a flag between string-borne comment markers",
+    append("preflight.ts", 'const a = "/*"; readFileSync("x", { flag: "a" }); const b = "*/";'),
+  ],
+  [
+    "readFileSync of a named file",
+    append("preflight.ts", 'const local = readFileSync(".env", "utf8");'),
+  ],
+  [
+    "readFileSync of the same argument with a flag",
+    append("preflight.ts", 'readFileSync(path, { encoding: "utf8", flag: "a" });'),
+  ],
 ];
 
 /**
  * Evasions the scan is KNOWN not to catch. They are written down so the scan
  * is not mistaken for a proof: it reads text, so a property name built at run
  * time, or code hidden from the comment stripper and then aliased, gets
- * through. The permission-model run below is what stops these at run time.
+ * through. Each entry is the text, the file it goes into, and where: at the
+ * end, or first when it has to run before the binding loop to matter.
+ *
+ * The list is examples, not a complete account. Each entry is one use of a
+ * technique, and a technique has more uses than the one written down: the
+ * hidden alias of entry two reads the environment in entry six.
+ *
+ * What the permission-model run below stops is what the first two TEXTS do,
+ * not the techniques behind them. The first text builds a function from a
+ * string, and code generation from strings is denied; the second writes a
+ * report file, and file writes are denied. Nothing in this suite stops the
+ * other four, when scanned or when run: the permission-model run does not
+ * restrict the environment at all, and it allows reads of the paths each
+ * case names, so a read inside those paths succeeds and a denied one wrapped
+ * in try/catch goes unreported.
+ *
+ * Entries three and five each make the one allowed loop read a fifth
+ * variable without naming the key list where the scan looks. Five replaces
+ * the iterator every array shares and needs no import, so refusing
+ * namespace imports would close three and not five. Nothing in this suite
+ * shows that only the four binding variables are read; that holds by
+ * reading src/.
+ *
+ * Not a gap any more: a call such as `readFileSync(x, { flag: "a" })`, which
+ * creates or appends to a file through an allowed import. The scan now
+ * refuses every call but READ_CALL (see SCAN_MUST_CATCH).
  */
-const SCAN_KNOWN_GAPS: readonly (readonly [string, string])[] = [
+const SCAN_KNOWN_GAPS: readonly (readonly [string, string, string, "first"?])[] = [
   [
     "property name built at run time",
     'const k = ["constr", "uctor"].join("");\nconst reach = ([] as any)[k][k]("return this");',
+    "cli.ts",
   ],
   [
     "alias hidden between string-borne comment markers",
     'const a = "/*"; const p = process\nconst b = "*/";\n(p as any).report.writeReport("/tmp/castles-report.json");',
+    "cli.ts",
+  ],
+  [
+    "the binding key list widened through a namespace import and a computed name, so the one allowed loop reads a fifth variable",
+    'import * as profile from "./profile.ts";\n(profile as any)["BINDING_" + "ENVIRONMENT_KEYS"].push("DAYTONA_API_KEY");',
+    "preflight.ts",
+  ],
+  [
+    "a read of any file through the one allowed call form, swallowed",
+    'try {\n  const path = "/etc/hosts";\n  readFileSync(path, "utf8");\n} catch {}',
+    "preflight.ts",
+  ],
+  // Review rv11 N6.
+  [
+    "the iterator every array shares replaced, so the one allowed loop reads a fifth variable with the key list never named",
+    [
+      "const arrays = Object.getPrototypeOf([]);",
+      "const plain = arrays[Symbol.iterator];",
+      "arrays[Symbol.iterator] = function* (this: string[]) {",
+      "  yield* plain.call(this);",
+      '  if (this[0] === "CASTLES_PROFILE") {',
+      '    yield "DAYTONA_API_KEY";',
+      "  }",
+      "};",
+    ].join("\n"),
+    "cli.ts",
+    "first",
+  ],
+  [
+    "the hidden alias of entry two, reading a variable outside the binding keys",
+    'const a = "/*"; const p = process\nconst b = "*/";\nconst other = (p as any).env.DAYTONA_API_KEY;',
+    "cli.ts",
   ],
 ];
 
 test("the capability scan reports each known way of reaching a capability", () => {
+  const missed: string[] = [];
   for (const [label, ...plants] of SCAN_MUST_CATCH) {
     const files = readSourceTree();
     for (const plant of plants) {
       plant(files);
     }
-    assert.notDeepEqual(scanSources(files), [], label);
+    if (scanSources(files).length === 0) {
+      missed.push(label);
+    }
   }
+  assert.deepEqual(missed, []);
+});
+
+test("the binding key list is exactly the four CASTLES_ keys", () => {
+  // Literal on purpose. The scan pins the declaration's text; this pins the
+  // value the CLI loop iterates.
+  assert.deepEqual(BINDING_ENVIRONMENT_KEYS, [
+    "CASTLES_PROFILE",
+    "CASTLES_SANDBOX_ID",
+    "CASTLES_OWNER_AGENT_ID",
+    "CASTLES_SANDBOX_GENERATION",
+  ]);
 });
 
 test("the capability scan is a tripwire, not a proof: these known evasions pass it", () => {
-  for (const [label, text] of SCAN_KNOWN_GAPS) {
+  for (const [label, text, file, where] of SCAN_KNOWN_GAPS) {
     const files = readSourceTree();
-    append("cli.ts", text)(files);
+    (where === "first" ? prepend : append)(file, text)(files);
     assert.deepEqual(scanSources(files), [], label);
   }
+  assert.equal(SCAN_KNOWN_GAPS.length, 6);
 });
 
 // --- CLI: read-only command, human and JSON, no credentials ----------------
