@@ -100,11 +100,11 @@ Schema `castles.preflight.v1`:
 | `schema` | `"castles.preflight.v1"` |
 | `status` | `ready`, `stopped`, `unavailable`, `incompatible`, `unauthorized` or `reconciliation-required` |
 | `reasons` | Up to 16 of `{ code, field? }`. `code` is a fixed literal; `field` is a literal from this module, never provider text |
-| `evidence` | `fixture`, `live-provider` or `none`. Derived from the client, never supplied by the caller: no client gives `none`, any client gives `fixture`, including when the binding is invalid. The library cannot return `live-provider` at this revision |
+| `evidence` | `fixture`, `live-provider` or `none`. Derived from the client, never supplied by the caller: no client gives `none`, any client gives `fixture`, including when the binding is invalid. A client is a value whose `inspectBoundSandbox` is callable; `null`, `undefined` and any other value are no client. The library cannot return `live-provider` at this revision |
 | `target` | `sandboxAlias`, `ownerAlias` (redacted, stable aliases), `expectedGeneration`, `profile` |
 | `sourcePolicy` | Policy from `SUPPORTED_PROFILE`, with the `repo@sha:path` pins. Never derived from the sandbox. Most values are read from pinned source; `network.networkAllowList` (`{ basis: "castles-decision", maxEntries: 10, minIpv4Prefix: 8 }`) is a Castles decision with no upstream pin |
 | `observed` | What the seam reported, or `null`. Provider text is never copied: see below |
-| `providerCalls` | `{ inspect }`: 0 or 1 |
+| `providerCalls` | `{ inspect }`: 1 if `inspectBoundSandbox` was invoked, otherwise 0 |
 | `upstream` | `{ issue, seam }`: the upstream issue link, and `seam: "missing"` |
 
 Status precedence when several findings apply: `unauthorized` >
@@ -177,6 +177,11 @@ runPreflight(environment, client | null, options?: { timeoutMs?: number })
 `runPreflight` takes no `evidence` option. Because no live client exists,
 `isLiveReady` is false for every result the library produces at this
 revision.
+
+`timeoutMs` is used when it is a number from 1 to 2,147,483,647; any other
+value, like no value, means the 30,000 ms default. An `environment` that is
+not an object is reported as `sandbox_id_missing`, and `options` that are not
+an object are ignored; neither throws.
 
 **Consumers must gate on this, never on `status` alone.** A fixture replay can
 report `status: "ready"`; it is not readiness.

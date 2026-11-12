@@ -29,6 +29,8 @@ export const FIXTURE_LABEL =
 export const INSPECTION_CONTRACT = "castles.fixture.sandbox-inspection.v1";
 export const PREFLIGHT_JSON_MAX_BYTES = 16_384;
 export const DEFAULT_INSPECTION_TIMEOUT_MS = 30_000;
+/** The longest delay a Node timer accepts. Node turns a longer one into 1 ms. */
+const MAX_INSPECTION_TIMEOUT_MS = 2_147_483_647;
 const MAX_REASONS = 16;
 
 // --- The constrained client seam -------------------------------------------
@@ -793,9 +795,50 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
   };
 }
 
+type Inspect = SandboxInspectionClient["inspectBoundSandbox"];
+
+/**
+ * The seam method of a usable client, bound to that client, or null when
+ * there is none. A client is any value whose `inspectBoundSandbox` is
+ * callable; `null`, `undefined` and everything else are no client. The
+ * property is read once, here, so what was judged usable is what gets
+ * called, and a read that throws means no client.
+ */
+function seamOf(client: unknown): Inspect | null {
+  if (client === null || client === undefined) {
+    return null;
+  }
+  try {
+    const method: unknown = (client as Partial<SandboxInspectionClient>)
+      .inspectBoundSandbox;
+    if (typeof method !== "function") {
+      return null;
+    }
+    return (request, options) => method.call(client, request, options);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The deadline for the one inspection call: `timeoutMs` when it is a number
+ * from 1 to the longest delay a timer accepts, otherwise the default. Node
+ * turns a delay outside that range, or one that is not a number, into 1 ms,
+ * which would report every provider as unavailable; such a value is never
+ * handed to a timer. Options that are not an object are no options.
+ */
+function inspectionDeadline(options: unknown): number {
+  const stated = isRecord(options) ? options.timeoutMs : undefined;
+  return typeof stated === "number" &&
+    stated >= 1 &&
+    stated <= MAX_INSPECTION_TIMEOUT_MS
+    ? stated
+    : DEFAULT_INSPECTION_TIMEOUT_MS;
+}
+
 /** One bounded inspection call. Any failure is flattened; nothing is kept. */
 async function inspectOnce(
-  client: SandboxInspectionClient,
+  inspect: Inspect,
   binding: Binding,
   timeoutMs: number
 ): Promise<Inspection> {
@@ -804,7 +847,7 @@ async function inspectOnce(
   try {
     const response = await Promise.race([
       Promise.resolve().then(() =>
-        client.inspectBoundSandbox(
+        inspect(
           {
             agentId: binding.agentId,
             expectedGeneration: binding.expectedGeneration,
@@ -837,26 +880,38 @@ export type PreflightOptions = Readonly<{ timeoutMs?: number }>;
  * The evidence class is a fact about the client, so it is derived here and
  * cannot be supplied by a caller. No live client exists at this head (the
  * upstream seam is missing), so nothing this library returns is
- * `live-provider`: no client means no inspection, and every client object,
- * whoever built it and whatever properties it carries, is non-live. When the
- * seam lands, the live client factory added to this module becomes the only
- * source of `live-provider`.
+ * `live-provider`: no usable client means no inspection, and every usable
+ * client, whoever built it and whatever properties it carries, is non-live.
+ * When the seam lands, the live client factory added to this module becomes
+ * the only source of `live-provider`.
  */
-function evidenceOf(client: SandboxInspectionClient | null): PreflightEvidence {
-  return client === null ? "none" : "fixture";
+function evidenceOf(inspect: Inspect | null): PreflightEvidence {
+  return inspect === null ? "none" : "fixture";
 }
 
 /**
  * Checks the one configured sandbox. Passing `null` for the client means no
  * seam is available: the binding is still validated, and the result names the
  * upstream blocker instead of guessing an endpoint.
+ *
+ * The edges a caller can reach from plain JavaScript are decided here, not
+ * left to an exception or to a timer:
+ * - a client that is `undefined`, or any value without a callable
+ *   `inspectBoundSandbox`, is the same as `null`: evidence `none`, no call
+ *   counted, `upstream_seam_missing`;
+ * - `providerCalls.inspect` is 1 exactly when the seam method was invoked;
+ * - an environment that is not an object configures nothing
+ *   (`sandbox_id_missing`); options that are not an object are no options;
+ * - a `timeoutMs` outside 1 to 2,147,483,647, or not a number, means the
+ *   default deadline.
  */
 export async function runPreflight(
   environment: Readonly<Record<string, string | undefined>>,
   client: SandboxInspectionClient | null,
   options: PreflightOptions = {}
 ): Promise<PreflightResult> {
-  const evidence = evidenceOf(client);
+  const inspect = seamOf(client);
+  const evidence = evidenceOf(inspect);
   const findings = new Findings();
   const parsed = parseBinding(environment);
   if (!parsed.ok) {
@@ -870,15 +925,15 @@ export async function runPreflight(
     return result(findings, parsed.partial, evidence, 0, null);
   }
   const { binding } = parsed;
-  if (client === null) {
+  if (inspect === null) {
     findings.add("unavailable", "upstream_seam_missing");
     return result(findings, binding, evidence, 0, null);
   }
 
   const inspection = await inspectOnce(
-    client,
+    inspect,
     binding,
-    options.timeoutMs ?? DEFAULT_INSPECTION_TIMEOUT_MS
+    inspectionDeadline(options)
   );
   if (inspection.kind === "refused") {
     findings.add(inspection.status, inspection.code);

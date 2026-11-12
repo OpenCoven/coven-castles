@@ -297,6 +297,10 @@ const GENERATION = /^(?:0|[1-9]\d{0,8})$/u;
 /**
  * Parses the binding from an environment-shaped record. Exact values only:
  * no defaults, no trimming into validity, no lookup by name or label.
+ *
+ * An environment that is not an object (a `null` from a plain JavaScript
+ * caller, for one) configures nothing: it is reported as a missing sandbox
+ * ID, the same finding as an empty record, not as an exception.
  */
 export function parseBinding(
   environment: Readonly<Record<string, string | undefined>>
@@ -307,6 +311,9 @@ export function parseBinding(
     partial,
     problem,
   });
+  if (typeof environment !== "object" || environment === null) {
+    return fail("sandbox_id_missing");
+  }
 
   const sandboxId = environment.CASTLES_SANDBOX_ID;
   if (!sandboxId) {
