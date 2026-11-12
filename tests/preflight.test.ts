@@ -651,7 +651,7 @@ test("JSON output carries every source pin", async () => {
     parsed.sourcePolicy.pins,
     SOURCE_PINS.map((entry) => entry.pin)
   );
-  assert.equal(parsed.sourcePolicy.pins.length, 16);
+  assert.equal(parsed.sourcePolicy.pins.length, 18);
 });
 
 // --- Owner echo, disclosure and stated decisions (review N4 to N6) ---------

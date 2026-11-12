@@ -608,10 +608,13 @@ function evaluateCompatibility(
     fail("lifecycle_auto_pause", "autoPauseInterval");
   }
   // Stated decision: `autoDestroyAt`, `volumes`, `warmPoolId` and
-  // `linkedSandboxId` are optional in the provider model, and the owning
-  // service's drift inventory reads an absent key as "not set" (pinned
-  // resource-inventory.ts). An absent or null key is therefore not missing
-  // metadata; any present value fails.
+  // `linkedSandboxId` are optional in the provider model. For an ABSENT key
+  // this matches the owning service, whose drift inventory (pinned
+  // resource-inventory.ts) compares `autoDestroyAt`, `warmPoolId` and
+  // `linkedSandboxId` with `undefined`. For an explicit `null` it does not:
+  // the owner's comparison would report drift, while Castles reads null as
+  // "not set" as well. That is a Castles choice, looser than the owner for
+  // null only. Any other present value fails.
   if (sandbox.autoDestroyAt !== undefined && sandbox.autoDestroyAt !== null) {
     fail("lifecycle_ttl", "autoDestroyAt");
   }
