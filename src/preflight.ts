@@ -233,8 +233,8 @@ function allowListEntries(value: unknown): number {
 const ALLOWED_DOMAIN =
   /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/iu;
 const IPV4_CIDR = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/u;
-/** Shortest IPv4 prefix still treated as a restriction. */
-const MIN_IPV4_PREFIX = 8;
+/** Castles decisions with no upstream pin; see `SUPPORTED_PROFILE.network`. */
+const NETWORK_ALLOW_LIST = SUPPORTED_PROFILE.network.networkAllowList;
 
 function isAllowedDomain(entry: string): boolean {
   return entry.length <= 253 && ALLOWED_DOMAIN.test(entry);
@@ -264,7 +264,7 @@ function isBoundedIpv4Range(entry: string): boolean {
   ];
   return (
     [a, b, c, d].every((octet) => octet <= 255) &&
-    prefix >= MIN_IPV4_PREFIX &&
+    prefix >= NETWORK_ALLOW_LIST.minIpv4Prefix &&
     prefix <= 32
   );
 }
@@ -463,13 +463,16 @@ function evaluateCompatibility(
   if (typeof sandbox.networkBlockAll !== "boolean") {
     missing("networkBlockAll");
   }
-  // An allow list only restricts egress if every entry does. Entries are
-  // examined, not counted: one wildcard or any-address entry opens the list,
-  // and block-all or a second, safe list does not excuse it.
+  // An allow list only restricts egress if every entry does AND the list as
+  // a whole does. One wildcard or any-address entry opens the list; so does
+  // a network list split into many ranges, which is why its length is
+  // bounded. Block-all or a second, safe list does not excuse an unsafe one.
+  // The domain rule is stricter than the owning service; the network-list
+  // and block-all rules are Castles decisions with no upstream pin.
   let allowListsUsable = true;
-  for (const [field, accepts] of [
-    ["domainAllowList", isAllowedDomain],
-    ["networkAllowList", isBoundedIpv4Range],
+  for (const [field, accepts, maxEntries] of [
+    ["domainAllowList", isAllowedDomain, Number.POSITIVE_INFINITY],
+    ["networkAllowList", isBoundedIpv4Range, NETWORK_ALLOW_LIST.maxEntries],
   ] as const) {
     const value = sandbox[field];
     if (value === undefined || value === null) {
@@ -478,7 +481,10 @@ function evaluateCompatibility(
     if (typeof value !== "string") {
       missing(field);
       allowListsUsable = false;
-    } else if (!allowListItems(value).every(accepts)) {
+    } else if (
+      allowListItems(value).length > maxEntries ||
+      !allowListItems(value).every(accepts)
+    ) {
       fail("egress_allow_list_unsafe", field);
       allowListsUsable = false;
     }

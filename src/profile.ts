@@ -159,7 +159,34 @@ export const SUPPORTED_PROFILE = Object.freeze({
     autoStopMinutes: Object.freeze({ max: 60, min: 5 }),
     ttl: "disabled",
   }),
-  network: Object.freeze({ egress: "restricted", public: false }),
+  network: Object.freeze({
+    egress: "restricted",
+    /**
+     * A Castles policy decision with NO upstream pin. Neither
+     * `networkAllowList` nor `networkBlockAll` appears in any pinned
+     * coven-agents file: the owning service configures a domain allow list
+     * only, and its drift inventory compares that list alone. So for network
+     * lists and block-all, Castles accepts shapes the owner never produces,
+     * under these rules of its own:
+     *
+     * - each entry is an IPv4 range no wider than `/minIpv4Prefix`;
+     * - the list holds at most `maxEntries` entries, because a restriction
+     *   is a property of the whole list (256 ranges of /8 are every address);
+     * - `networkBlockAll: true` counts as restricted egress.
+     *
+     * `maxEntries` is 10 because the public Daytona network-limits
+     * documentation states that maximum. That figure is unverified against
+     * the provider and is not stated in the SDK 0.220.0 types, so it is a
+     * Castles bound, not a provider pin. At the bound the widest accepted
+     * list is ten /8 ranges, about 4% of IPv4 space.
+     */
+    networkAllowList: Object.freeze({
+      basis: "castles-decision",
+      maxEntries: 10,
+      minIpv4Prefix: 8,
+    }),
+    public: false,
+  }),
   platform: Object.freeze({
     // No architecture is pinned upstream and the provider sandbox model at
     // this SDK generation reports none. It must be stated by the seam; it is
