@@ -112,7 +112,8 @@ export type ObservedSandbox = Readonly<{
   }>;
   binding: Readonly<{
     attemptFence: string;
-    generation: number;
+    /** Null when the recorded generation is outside the echoed range. */
+    generation: number | null;
     lifecycle: string;
   }>;
   exposure: Readonly<{
@@ -200,7 +201,7 @@ function alias(prefix: "own" | "sbx", value: string | undefined): string | null 
  * `major.minor.patch` SDK version, `"unrecognised"` for any other string, or
  * null for an absent or non-string value. A field set to a private ID, a
  * credential or any other free text therefore cannot reach human or JSON
- * output.
+ * output. Numbers have their own rule: see `echoedInteger`.
  *
  * Sources: sandbox states are the `SandboxState` values of the public
  * `@daytona/api-client` 0.220.0 package; binding lifecycles are
@@ -278,6 +279,34 @@ function sdkVersion(value: unknown): string | null {
 function integer(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value)
     ? value
+    : null;
+}
+
+/**
+ * The only integers `observed` may carry. An identifier may be all digits,
+ * so a numeric field is a second way for a configured ID to come back from
+ * the seam. Every reading this profile can accept lies between -1 (auto-delete
+ * disabled) and 43,200 (the auto-archive ceiling); the range leaves room to
+ * show a reading that is out of policy, and no more.
+ */
+const ECHOED_INTEGER = Object.freeze({ max: 99_999, min: -1 });
+
+/**
+ * A reading as it may be printed: the integer itself inside
+ * `ECHOED_INTEGER`, null outside it or when it is not an integer. This
+ * bounds output only. Policy is always evaluated on the reading itself, so
+ * a number that is not echoed still produces its reason code.
+ *
+ * What this does not do: an ID that is itself an integer inside the range
+ * (at most five digits) cannot be told from a reading and is printed when a
+ * field reports that number.
+ */
+function echoedInteger(value: unknown): number | null {
+  const reading = integer(value);
+  return reading !== null &&
+    reading >= ECHOED_INTEGER.min &&
+    reading <= ECHOED_INTEGER.max
+    ? reading
     : null;
 }
 
@@ -703,9 +732,6 @@ function evaluateState(envelope: ObservedEnvelope, findings: Findings): void {
 
 function observe(envelope: ObservedEnvelope): ObservedSandbox {
   const { binding, platform, sandbox, sdk } = envelope;
-  const cpu = integer(sandbox.cpu);
-  const memoryGiB = integer(sandbox.memory);
-  const diskGiB = integer(sandbox.disk);
   const { target } = SUPPORTED_PROFILE.resources;
   return {
     attachments: {
@@ -721,7 +747,7 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
     },
     binding: {
       attemptFence: known(binding.attemptFence, KNOWN.attemptFence) ?? UNRECOGNISED,
-      generation: binding.generation,
+      generation: echoedInteger(binding.generation),
       lifecycle: known(binding.lifecycle, KNOWN.bindingLifecycle) ?? UNRECOGNISED,
     },
     exposure: {
@@ -738,28 +764,28 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
     },
     image: { snapshot: known(sandbox.snapshot, KNOWN.snapshot) },
     lifecycle: {
-      autoArchiveInterval: integer(sandbox.autoArchiveInterval),
-      autoDeleteInterval: integer(sandbox.autoDeleteInterval),
+      autoArchiveInterval: echoedInteger(sandbox.autoArchiveInterval),
+      autoDeleteInterval: echoedInteger(sandbox.autoDeleteInterval),
       autoDestroyAt:
         sandbox.autoDestroyAt === undefined || sandbox.autoDestroyAt === null
           ? "absent"
           : "present",
-      autoPauseInterval: integer(sandbox.autoPauseInterval),
-      autoStopInterval: integer(sandbox.autoStopInterval),
+      autoPauseInterval: echoedInteger(sandbox.autoPauseInterval),
+      autoStopInterval: echoedInteger(sandbox.autoStopInterval),
     },
     platform: {
       architecture: known(platform.architecture, KNOWN.architecture),
       os: known(platform.os, KNOWN.os),
     },
     resources: {
-      cpu,
-      diskGiB,
-      gpu: integer(sandbox.gpu),
+      cpu: echoedInteger(sandbox.cpu),
+      diskGiB: echoedInteger(sandbox.disk),
+      gpu: echoedInteger(sandbox.gpu),
       matchesTarget:
-        cpu === target.cpu &&
-        memoryGiB === target.memoryGiB &&
-        diskGiB === target.diskGiB,
-      memoryGiB,
+        sandbox.cpu === target.cpu &&
+        sandbox.memory === target.memoryGiB &&
+        sandbox.disk === target.diskGiB,
+      memoryGiB: echoedInteger(sandbox.memory),
     },
     sdk: { version: sdkVersion(sdk.version) },
     state: known(sandbox.state, KNOWN.state),
@@ -936,7 +962,8 @@ export function isLiveReady(value: PreflightResult): boolean {
 
 /**
  * Bounded by construction: every string is a literal, an alias, a member of
- * a fixed set, or a strict three-part version.
+ * a fixed set, or a strict three-part version; every observed number is a
+ * count capped at 999 or an integer inside `ECHOED_INTEGER`.
  */
 export function renderJson(value: PreflightResult): string {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -968,7 +995,7 @@ export function renderHuman(value: PreflightResult): string {
       "observed (as reported through the seam):",
       `  state ${observed.state ?? "?"}; ${observed.resources.cpu ?? "?"} vCPU / ${observed.resources.memoryGiB ?? "?"} GiB RAM / ${observed.resources.diskGiB ?? "?"} GiB disk; snapshot ${observed.image.snapshot ?? "?"}; ${observed.platform.os ?? "?"}/${observed.platform.architecture ?? "?"}; sdk ${observed.sdk.version ?? "?"}`,
       `  public ${observed.exposure.public ?? "?"}; egress allow-list entries ${observed.exposure.egressAllowListEntries}; auto-stop ${observed.lifecycle.autoStopInterval ?? "?"} min; auto-archive ${observed.lifecycle.autoArchiveInterval ?? "?"} min; auto-delete ${observed.lifecycle.autoDeleteInterval ?? "?"}; ttl ${observed.lifecycle.autoDestroyAt}`,
-      `  binding generation ${observed.binding.generation}, lifecycle ${observed.binding.lifecycle}, attempt fence ${observed.binding.attemptFence}`
+      `  binding generation ${observed.binding.generation ?? "?"}, lifecycle ${observed.binding.lifecycle}, attempt fence ${observed.binding.attemptFence}`
     );
   } else {
     lines.push("observed: nothing disclosed");

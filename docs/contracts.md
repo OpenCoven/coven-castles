@@ -126,6 +126,14 @@ string outside the set reads `"unrecognised"`. The other six are `null` when
 the value is absent or not a string. Other fields are numbers, booleans, fixed
 literals or `null`.
 
+Observed integers (`resources.cpu`, `memoryGiB`, `diskGiB` and `gpu`, the four
+`lifecycle` intervals and `binding.generation`) are echoed only from -1 to
+99,999. Outside that range, as when the value is not an integer, the field is
+`null`, so `binding.generation` can be `null`. Status and reason codes are
+decided on the value itself and are the same whether or not it is echoed. An
+identifier that is itself an integer inside that range cannot be told from a
+reading.
+
 Two rules behind existing reason codes, both Castles decisions:
 
 - An architecture other than `x86_64`, `amd64`, `aarch64` or `arm64` is
