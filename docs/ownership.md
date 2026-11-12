@@ -28,10 +28,10 @@ from another lane.
 | `src/observe.ts` | #4 | not yet | |
 | `src/export.ts` | #4 | not yet | |
 | `tests/recovery.test.ts` | #4 | not yet | |
-| `fixtures/report-task/` | #5 | not on this branch | Proposed in draft PR #7 |
+| `fixtures/report-task/` | #5 | yes | On `main` since PR #7 was merged (`b5d7fc14add09fa94a7103031d7d625f710e519c`) |
 | `tests/mvp.test.ts` | #5 | not yet | |
 | `scripts/smoke.ts` | #5 | not yet | Opt-in live harness |
-| `docs/acceptance.md` | #5 | not on this branch | Proposed in draft PR #7 |
+| `docs/acceptance.md` | #5 | yes | On `main` since PR #7 was merged (same commit) |
 
 ## Shared files, stewarded by #2
 
@@ -53,7 +53,13 @@ handoff from the steward. See
 
 Stewardship of the documentation and template paths above is proposed by the
 pull request that adds them and is not settled until the maintainer accepts
-it. #1 lists the original shared-file set; these are additions to it.
+it. #1 lists the original shared-file set; these are additions to it. That
+pull request, [#9](https://github.com/OpenCoven/coven-castles/pull/9), was
+merged on 2026-11-12 as `a4ced7b463edccbe2ddd89ad12645b60f0aacefb`. The
+[comment recording the maintainer's decision](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865),
+posted before the merge with the instruction to merge, says merging is not a
+decision on the items in that pull request's body, of which this is one, so
+the stewardship is still a proposal.
 
 ## Maintainer-owned
 

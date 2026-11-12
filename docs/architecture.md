@@ -33,6 +33,13 @@ tests/             offline tests
 fixtures/preflight synthetic inspection cases
 ```
 
+Since 2026-11-12 `main` also carries #5's offline preparation:
+`fixtures/report-task/` (a synthetic task, its input and expected-report
+properties, and a negative-case catalogue) and
+[`acceptance.md`](acceptance.md). They are data and notes. At
+`b5d7fc14add09fa94a7103031d7d625f710e519c` no test, script or source file
+reads them.
+
 There is no live path. A fully configured `castles check` reports
 `unavailable` with `upstream_seam_missing` and makes zero provider calls,
 because the read-only seam it needs does not exist upstream yet. Everything
