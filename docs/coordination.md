@@ -357,10 +357,11 @@ Everything on this page restates #1 except the items below. Each is a proposal
 until the maintainer confirms or strikes it. The pull request that added this
 page, [#9](https://github.com/OpenCoven/coven-castles/pull/9), was merged on
 2026-11-12 as `a4ced7b463edccbe2ddd89ad12645b60f0aacefb`. The
-[maintainer's comment](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865)
-recording that says the decisions listed in its body ("gate rule and the
-other proposed additions") "remain open; merging them is not a decision on
-those items", so the merge confirmed none of the items below.
+[comment recording the maintainer's decision](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865),
+posted before the merge with the instruction to merge, says the decisions
+listed in that pull request's body ("gate rule and the other proposed
+additions") "remain open; merging them is not a decision on those items", so
+the merge confirmed none of the items below.
 
 | Addition | Where |
 | --- | --- |

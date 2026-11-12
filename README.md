@@ -151,4 +151,6 @@ first.
 | [`docs/README.md`](docs/README.md) | Index of everything, including templates |
 
 Fixtures are described in
-[`fixtures/preflight/README.md`](fixtures/preflight/README.md).
+[`fixtures/preflight/README.md`](fixtures/preflight/README.md) and, for #5's
+report task, in
+[`fixtures/report-task/README.md`](fixtures/report-task/README.md).
