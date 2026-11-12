@@ -1,0 +1,6 @@
+# Gitleaks configuration, used by the pre-commit hook and the CI secret scan.
+title = "coven-castles gitleaks config"
+
+[extend]
+# Start from the built-in ruleset; add allowlists or custom rules below.
+useDefault = true
