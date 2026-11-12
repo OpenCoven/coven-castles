@@ -508,6 +508,53 @@ test("the network allow-list bounds are recorded as literal Castles policy", asy
   );
 });
 
+// --- Domain rule: ASCII names only, no IP literals (review N9) --------------
+
+test("a domain entry is an ASCII multi-label name, never Unicode or an IP literal", async () => {
+  const refused = [
+    "examp\u017Fe.invalid", // long s: folds to "s" under /iu
+    "\u212Aelvin.invalid", // Kelvin sign: folds to "k" under /iu
+    "fixture.inva\u017Fid",
+    "f\u0131xture.invalid", // dotless i
+    "\uFF46ixture.invalid", // full-width f
+    "fixture\u3002invalid", // ideographic full stop
+    "0.0.0.0",
+    "1.1.1.1",
+    "127.0.0.1",
+    "192.0.2.1",
+    "10.1",
+    "fixture.invalid.123",
+    "1.2.3.4.5",
+    "1.0x7f", // a hexadecimal final label is still an address to some parsers
+    "fixture.0invalid",
+  ];
+  for (const value of refused) {
+    for (const list of [value, `fixture.invalid,${value}`]) {
+      const result = await withSandbox((sandbox) => {
+        sandbox.domainAllowList = list;
+      });
+      assert.equal(result.status, "incompatible", JSON.stringify(list));
+      assert.deepEqual(
+        result.reasons,
+        [{ code: "egress_allow_list_unsafe", field: "domainAllowList" }],
+        JSON.stringify(list)
+      );
+    }
+  }
+  for (const value of [
+    "FIXTURE.Invalid",
+    "Kelvin.invalid",
+    "123.fixture.invalid",
+    "1.2.3.x4",
+    "xn--fixture-9ya.invalid",
+  ]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.domainAllowList = value;
+    });
+    assert.equal(result.status, "ready", value);
+  }
+});
+
 // --- Gates that had no test (review N1) ------------------------------------
 
 async function withInspection(edit: (inspection: any) => void) {
