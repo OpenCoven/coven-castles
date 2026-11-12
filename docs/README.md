@@ -34,9 +34,12 @@ do not replace them.
 | Template | Use it for |
 | --- | --- |
 | [Pull request](../.github/pull_request_template.md) | Every PR: contracts, changed paths, exact-head checks, remaining gates |
-| [Work claim](../.github/ISSUE_TEMPLATE/claim.md) | Claiming a bounded piece of work that has no issue yet. For an existing issue, post the handoff block as a comment instead |
+| [Work claim](../.github/ISSUE_TEMPLATE/claim.md) | Claiming a bounded piece of work that has no issue yet. For an existing issue, post the handoff block as a comment instead. Proposed: #1 records claims on the outcome issue, so the maintainer decides whether this template stays |
 | [Shared-file change request](../.github/ISSUE_TEMPLATE/shared-file-change.md) | Asking a steward to change a file you do not own |
 | [Blocker report](../.github/ISSUE_TEMPLATE/blocker.md) | Recording an exact blocking condition, its decision owner and the evidence that would clear it |
+
+The templates set no labels. An issue opened from one gets its `status:` label
+by hand.
 
 ## Not on this branch yet
 

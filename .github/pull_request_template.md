@@ -5,7 +5,7 @@ Rules: docs/coordination.md. Paths: docs/ownership.md. Contracts: docs/contracts
 
 Refs #<!-- issue number; do not use an auto-closing keyword -->
 
-Worker: `<worker-id>`. Evidence class of this PR: <!-- fixture / real-daemon / live-provider / none executable -->
+Worker: `<worker-id>`. Evidence class of this PR: <!-- fixture / real-daemon / live-provider; static if no behaviour ran -->
 
 ## What this changes
 

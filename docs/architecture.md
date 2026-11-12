@@ -113,10 +113,18 @@ promise that a process or its memory survived.
 
 ## The one supported profile
 
-`castles.daytona-private-linux.v1`: a private, persistent Linux sandbox; one
-familiar; one active attempt; at most 900 seconds per attempt or the tighter
-existing bound. Starting target 2 vCPU / 4 GiB RAM / 10 GiB disk, taken from a
-documented upstream pilot and **not measured** on any supplied sandbox.
+`castles.daytona-private-linux.v1`: a private, persistent Linux sandbox.
+Starting target 2 vCPU / 4 GiB RAM / 10 GiB disk, taken from a documented
+upstream pilot and **not measured** on any supplied sandbox.
+
+#1 also fixes the scope at one familiar and one active attempt, and limits
+each attempt to 900 seconds or the tighter existing bound. Those are #1's
+limits for the run path in #3. They are not fields of the profile, and nothing
+at this revision enforces them.
+
+> At `7ead0d8`, about to change: the egress rule and which provider fields are
+> echoed are open review findings on PR #6. See
+> [`contracts.md`](contracts.md#produced-by-2).
 
 Preflight checks, read-only: owner binding and generation, the recorded and
 returned sandbox IDs, lifecycle state, the credential-boundary marker,
@@ -149,7 +157,7 @@ re-checks every value derived from it.
 ## Open upstream dependencies
 
 Each of these blocks part of the MVP and is owned outside this repository.
-States are as of 2026-11-11; check the issue before relying on this list.
+States are as of 2026-11-12; check the issue before relying on this list.
 
 | Upstream issue | Needed for | State |
 | --- | --- | --- |
@@ -157,7 +165,7 @@ States are as of 2026-11-11; check the issue before relying on this list.
 | [coven-agents#297](https://github.com/OpenCoven/coven-agents/issues/297) Non-browser owner audience for the run API | Running, observing or cancelling from a CLI (#3, #4) | open |
 | [coven-agents#298](https://github.com/OpenCoven/coven-agents/issues/298) Bind dispatch to one supplied sandbox and refuse instead of creating | Running on the supplied sandbox (#3) | open |
 | [coven-agents#299](https://github.com/OpenCoven/coven-agents/issues/299) Server-side read-only execution permission for one owner run | Enforcing "no remote writes" outside the prompt (#3) | open |
-| [coven-agents#300](https://github.com/OpenCoven/coven-agents/issues/300) Bootstrap decision: snapshot verification or an admitted install | Bootstrap (#3) | open |
+| [coven-agents#300](https://github.com/OpenCoven/coven-agents/issues/300) Bootstrap decision: snapshot verification or an admitted install | Bootstrap (#3) | open upstream. Decided for Castles on 2026-11-11: option 1, snapshot verification only; Castles installs nothing. Recorded in [#3](https://github.com/OpenCoven/coven-castles/issues/3#issuecomment-6791982826) |
 | [coven-agents#262](https://github.com/OpenCoven/coven-agents/issues/262) Resource bounds, process containment and safe sandbox reuse | A second task on the same sandbox (#4, #5) | open |
 
 The investigation comments on #3 and #4 list further gaps (familiar revision

@@ -12,6 +12,8 @@ If it is, do not open a new issue: post the block below as a comment there.
 A claim is coordination only. It grants no permission to spend, deploy, reset,
 publish, merge, call the live provider or change credentials.
 Rules: docs/coordination.md
+This template sets no label. Give the new issue exactly one status: label by
+hand, or ask the maintainer to.
 -->
 
 ## Parent and scope

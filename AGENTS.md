@@ -58,15 +58,17 @@ Full rules, a worked example and what to do when claims collide:
 - Before editing, re-read the issue, its assignee, latest comments and linked
   PRs. One primary contributor per issue.
 - Use a unique worker ID, one branch (`castles/<issue>-<slug>-<worker>`) and
-  one worktree of your own. Never share a writable checkout. Never force-push.
+  one worktree of your own. Never share a writable checkout. Never force-push
+  another contributor's branch.
 - A new session is a new worker: take over by explicit handoff.
 - If claims collide, stop and let the existing owner or the epic maintainer
   resolve it. A missed checkpoint is a reason to ask, not to take over.
 - A claim, label or assignment is coordination only: it grants no permission
   to spend, deploy, reset, publish, merge or change credentials.
-- A gate opens only when the maintainer accepts a reviewed contract at an
-  exact SHA ([`docs/contracts.md`](docs/contracts.md)). Not on a merge, a
-  label or a reviewer's recommendation.
+- A gate opens on a linked, reviewed capability at an exact revision, not on
+  a merge, a label or a closed checkbox. A maintainer confirms acceptance
+  before closure. Proposed, not yet decided: acceptance for every gate
+  ([`docs/contracts.md`](docs/contracts.md#standing)).
 
 Post this block on the issue at start, at material checkpoints, at review and
 when relinquishing:
@@ -90,10 +92,11 @@ Exactly one `status:*` label per open issue: `ready`, `ready-offline`,
 
 ## Review
 
-You never review or merge your own change, including fixes you made to a PR
-you earlier reviewed. Review from a fresh clone at an exact SHA; on a shared
-GitHub account post reviews as comments. A reviewer recommends, the maintainer
-accepts. `risk:r4` changes need independent review.
+`risk:r4` changes need independent review; name the reviewer and the reviewed
+SHA in the handoff. You never review or merge your own change. Proposed
+additions to #1 (fresh clone at an exact SHA, no re-review of your own fixes,
+comment-only reviews on a shared account) are in
+[`docs/coordination.md`](docs/coordination.md#review).
 
 ## PR checklist
 
@@ -104,7 +107,7 @@ points that are most often missed:
 - [ ] `Refs #N` (no closing keyword while acceptance is unverified)
 - [ ] Consumed and produced contracts, with exact revisions
 - [ ] Changed paths, all owned or handed off
-- [ ] Exact-head checks: command, result, evidence class (fixture / real-daemon / live-provider)
+- [ ] Exact-head checks: command, result, evidence class (fixture / real-daemon / live-provider; `static` if no behaviour ran)
 - [ ] Remaining live gates stated; nothing fixture-only called verified
 - [ ] No secrets, real IDs or raw provider errors
 - [ ] Not self-reviewed, not self-merged

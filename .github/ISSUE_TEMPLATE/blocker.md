@@ -11,6 +11,8 @@ A blocker is a specific condition, not "waiting". If the capability belongs to
 another repository, open or link the issue there and link it here; do not
 build a local substitute.
 Set status:blocked on the affected issue and say what unblocks it.
+This template sets no label. Give the new issue exactly one status: label by
+hand, or ask the maintainer to.
 -->
 
 ## Blocked work

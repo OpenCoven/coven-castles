@@ -9,6 +9,8 @@ assignees: ""
 <!--
 Shared files and their stewards are listed in docs/ownership.md.
 Do not edit the file yourself while this request is open.
+This template sets no label. Give the new issue exactly one status: label by
+hand, or ask the maintainer to.
 -->
 
 ## Request

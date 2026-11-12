@@ -55,13 +55,15 @@ One branch and one worktree per worker. Pick a worker ID first
 
 ```sh
 git fetch origin
-git worktree add -b castles/<issue>-<slug>-<worker-id> \
+git worktree add --no-track -b castles/<issue>-<slug>-<worker-id> \
   ../coven-castles.worktrees/<issue>-<slug>-<worker-id> origin/main
 ```
 
 Never work in someone else's worktree, never share a writable checkout, and
-never force-push. When `main` moves, merge it into your branch and re-run the
-checks.
+never force-push another contributor's branch. When your base moves, merge it
+into your branch and re-run the checks; whether you may rebase your own branch
+instead is an open proposal in
+[`docs/coordination.md`](docs/coordination.md#one-branch-and-one-worktree-per-worker).
 
 ## Commands
 
@@ -96,11 +98,9 @@ separately so the history shows red, then green.
 Say which class every result belongs to. A higher class is never inferred from
 a lower one.
 
-| Class | Meaning |
-| --- | --- |
-| **fixture** | Offline test with synthetic input |
-| **real-daemon** | The canonical service with a real database, no provider |
-| **live-provider** | Authorized calls against the one supplied sandbox |
+The classes are **fixture**, **real-daemon** and **live-provider**, with
+`static` for a check that runs no behaviour. Their meanings are in
+[`docs/coordination.md`](docs/coordination.md#evidence-classes).
 
 Fixtures are synthetic and carry a label saying so. Do not capture a real
 provider response into a fixture, and do not add a mock that could be selected
@@ -111,8 +111,9 @@ with the reason.
 
 By default nothing here calls the live provider, and you must not either. Live
 work needs a maintainer's explicit authorization for a named operator and
-window. Never create, start, stop, resize, archive, reset or delete a sandbox.
-Details in
+window. Castles itself never creates, starts, stops, resizes, archives, resets
+or deletes a sandbox. A stop/start that #4 or #5 calls for is authorized
+separately and goes through the canonical owner. Details in
 [`docs/coordination.md`](docs/coordination.md#the-live-sandbox).
 
 ## What never to commit
@@ -156,9 +157,9 @@ Do not edit shared files concurrently. The steward for each is in
 ## Review
 
 You do not review or merge your own change. A reviewer works from a fresh
-clone at an exact SHA and reports findings; the maintainer accepts. `risk:r4`
-changes need independent review. The full rules, including how to review on a
-shared GitHub account, are in
+clone at an exact SHA and reports findings; a maintainer confirms acceptance
+before closure. `risk:r4` changes need independent review. The full rules,
+including which of them are proposed additions to #1, are in
 [`docs/coordination.md`](docs/coordination.md#review).
 
 ## Scope
