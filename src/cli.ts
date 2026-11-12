@@ -73,9 +73,7 @@ async function main(): Promise<void> {
   let result: PreflightResult;
   if (parsed.values.fixture === undefined) {
     // No live client exists: the upstream read-only seam is not available.
-    result = await runPreflight(bindingEnvironment(), null, {
-      evidence: "none",
-    });
+    result = await runPreflight(bindingEnvironment(), null);
   } else {
     let fixture: ReturnType<typeof loadFixtureCase>;
     try {
@@ -86,8 +84,7 @@ async function main(): Promise<void> {
     }
     result = await runPreflight(
       fixture.env,
-      createFixtureInspectionClient(fixture),
-      { evidence: "fixture" }
+      createFixtureInspectionClient(fixture)
     );
   }
 

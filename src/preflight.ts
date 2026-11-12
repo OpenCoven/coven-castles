@@ -791,10 +791,20 @@ async function inspectOnce(
   }
 }
 
-export type PreflightOptions = Readonly<{
-  evidence: PreflightEvidence;
-  timeoutMs?: number;
-}>;
+export type PreflightOptions = Readonly<{ timeoutMs?: number }>;
+
+/**
+ * The evidence class is a fact about the client, so it is derived here and
+ * cannot be supplied by a caller. No live client exists at this head (the
+ * upstream seam is missing), so nothing this library returns is
+ * `live-provider`: no client means no inspection, and every client object,
+ * whoever built it and whatever properties it carries, is non-live. When the
+ * seam lands, the live client factory added to this module becomes the only
+ * source of `live-provider`.
+ */
+function evidenceOf(client: SandboxInspectionClient | null): PreflightEvidence {
+  return client === null ? "none" : "fixture";
+}
 
 /**
  * Checks the one configured sandbox. Passing `null` for the client means no
@@ -804,8 +814,9 @@ export type PreflightOptions = Readonly<{
 export async function runPreflight(
   environment: Readonly<Record<string, string | undefined>>,
   client: SandboxInspectionClient | null,
-  options: PreflightOptions
+  options: PreflightOptions = {}
 ): Promise<PreflightResult> {
+  const evidence = evidenceOf(client);
   const findings = new Findings();
   const parsed = parseBinding(environment);
   if (!parsed.ok) {
@@ -816,12 +827,12 @@ export async function runPreflight(
         : "unavailable",
       parsed.problem
     );
-    return result(findings, parsed.partial, options.evidence, 0, null);
+    return result(findings, parsed.partial, evidence, 0, null);
   }
   const { binding } = parsed;
   if (client === null) {
     findings.add("unavailable", "upstream_seam_missing");
-    return result(findings, binding, options.evidence, 0, null);
+    return result(findings, binding, evidence, 0, null);
   }
 
   const inspection = await inspectOnce(
@@ -831,7 +842,7 @@ export async function runPreflight(
   );
   if (inspection.kind === "refused") {
     findings.add(inspection.status, inspection.code);
-    return result(findings, binding, options.evidence, 1, null);
+    return result(findings, binding, evidence, 1, null);
   }
   const envelope = inspection.value;
 
@@ -854,7 +865,7 @@ export async function runPreflight(
     identityHeld = false;
   }
   if (!identityHeld) {
-    return result(findings, binding, options.evidence, 1, null);
+    return result(findings, binding, evidence, 1, null);
   }
 
   if (envelope.binding.generation !== binding.expectedGeneration) {
@@ -894,13 +905,14 @@ export async function runPreflight(
 
   evaluateCompatibility(envelope, findings);
   evaluateState(envelope, findings);
-  return result(findings, binding, options.evidence, 1, observe(envelope));
+  return result(findings, binding, evidence, 1, observe(envelope));
 }
 
 /**
  * The only result that may be treated as readiness. A fixture replay that
  * reports `ready` is not: consumers must gate on this, never on `status`
- * alone.
+ * alone. It reads two fields and so also works on a parsed JSON result; it
+ * cannot detect a result object that a caller built or altered by hand.
  */
 export function isLiveReady(value: PreflightResult): boolean {
   return value.status === "ready" && value.evidence === "live-provider";

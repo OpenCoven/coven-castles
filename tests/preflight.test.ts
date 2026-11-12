@@ -80,9 +80,7 @@ function tripwireClient(respond: () => unknown) {
 async function runCase(name: string) {
   const fixture = loadFixtureCase(casePath(name));
   const wire = tripwireClient(() => fixture.inspection);
-  const result = await runPreflight(fixture.env, wire.client, {
-    evidence: "fixture",
-  });
+  const result = await runPreflight(fixture.env, wire.client);
   return { fixture, result, wire };
 }
 
@@ -200,7 +198,7 @@ async function withArchivedState() {
   };
   inspection.sandbox.state = "archived";
   const wire = tripwireClient(() => inspection);
-  return runPreflight(fixture.env, wire.client, { evidence: "fixture" });
+  return runPreflight(fixture.env, wire.client);
 }
 
 // --- Missing sandbox / ambiguity: no replacement, no adoption --------------
@@ -241,9 +239,7 @@ test("matching labels or name on the wrong ID grant nothing", async () => {
     sandboxId: "fixture-sandbox-0001",
   };
   const wire = tripwireClient(() => inspection);
-  const result = await runPreflight(fixture.env, wire.client, {
-    evidence: "fixture",
-  });
+  const result = await runPreflight(fixture.env, wire.client);
   assert.equal(result.status, "reconciliation-required");
   assert.deepEqual(codes(result), ["returned_id_mismatch"]);
 });
@@ -259,9 +255,7 @@ test("a throwing provider is unavailable and its raw error never surfaces", asyn
       `401 from https://provider.invalid/api/sandbox/fixture-sandbox-0001 token=${CANARY}`
     );
   });
-  const result = await runPreflight(fixture.env, wire.client, {
-    evidence: "fixture",
-  });
+  const result = await runPreflight(fixture.env, wire.client);
   assert.equal(result.status, "unavailable");
   assert.deepEqual(codes(result), ["provider_unavailable"]);
   for (const output of [renderJson(result), renderHuman(result)]) {
@@ -276,10 +270,7 @@ test("a provider that never answers is bounded by the deadline", async () => {
   const client: SandboxInspectionClient = {
     inspectBoundSandbox: () => new Promise(() => undefined),
   };
-  const result = await runPreflight(fixture.env, client, {
-    evidence: "fixture",
-    timeoutMs: 20,
-  });
+  const result = await runPreflight(fixture.env, client, { timeoutMs: 20 });
   assert.equal(result.status, "unavailable");
   assert.deepEqual(codes(result), ["provider_unavailable"]);
 });
@@ -297,9 +288,7 @@ test("a response outside the inspection contract fails closed", async () => {
     { ...(fixture.inspection as object), sandbox: null },
   ]) {
     const wire = tripwireClient(() => response);
-    const result = await runPreflight(fixture.env, wire.client, {
-      evidence: "fixture",
-    });
+    const result = await runPreflight(fixture.env, wire.client);
     assert.equal(result.status, "unavailable");
     assert.deepEqual(codes(result), ["inspection_contract_violation"]);
     assert.equal(result.observed, null);
@@ -323,9 +312,7 @@ test("an unsettled or unrecognised lifecycle state is never ready", async () => 
     };
     inspection.sandbox.state = state;
     const wire = tripwireClient(() => inspection);
-    const result = await runPreflight(fixture.env, wire.client, {
-      evidence: "fixture",
-    });
+    const result = await runPreflight(fixture.env, wire.client);
     assert.notEqual(result.status, "ready", String(state));
     assert.notEqual(result.status, "stopped", String(state));
   }
@@ -352,9 +339,7 @@ test("each unsafe policy field fails on its own", async () => {
     };
     inspection.sandbox[field] = value;
     const wire = tripwireClient(() => inspection);
-    const result = await runPreflight(fixture.env, wire.client, {
-      evidence: "fixture",
-    });
+    const result = await runPreflight(fixture.env, wire.client);
     assert.equal(result.status, "incompatible", code);
     assert.deepEqual(codes(result), [code]);
   }
@@ -369,7 +354,7 @@ async function withSandbox(edit: (sandbox: Record<string, unknown>) => void) {
   };
   edit(inspection.sandbox);
   const wire = tripwireClient(() => inspection);
-  return runPreflight(fixture.env, wire.client, { evidence: "fixture" });
+  return runPreflight(fixture.env, wire.client);
 }
 
 test("allow-list entries that do not restrict egress fail closed", async () => {
@@ -530,7 +515,7 @@ async function withInspection(edit: (inspection: any) => void) {
   const inspection = structuredClone(fixture.inspection);
   edit(inspection);
   const wire = tripwireClient(() => inspection);
-  return runPreflight(fixture.env, wire.client, { evidence: "fixture" });
+  return runPreflight(fixture.env, wire.client);
 }
 
 test("a missing or different credential-boundary marker needs reconciliation", async () => {
@@ -745,9 +730,7 @@ test("a different SDK generation is incompatible, not best-effort", async () => 
   };
   inspection.sdk.version = "0.221.0";
   const wire = tripwireClient(() => inspection);
-  const result = await runPreflight(fixture.env, wire.client, {
-    evidence: "fixture",
-  });
+  const result = await runPreflight(fixture.env, wire.client);
   assert.equal(result.status, "incompatible");
   assert.deepEqual(codes(result), ["sdk_generation_mismatch"]);
 });
@@ -759,9 +742,7 @@ test("identity failures outrank compatibility findings", async () => {
   };
   inspection.binding.generation = 9;
   const wire = tripwireClient(() => inspection);
-  const result = await runPreflight(fixture.env, wire.client, {
-    evidence: "fixture",
-  });
+  const result = await runPreflight(fixture.env, wire.client);
   assert.equal(result.status, "reconciliation-required");
   assert.deepEqual(codes(result), ["generation_mismatch", "public_exposure"]);
 });
@@ -826,9 +807,7 @@ test("JSON output stays bounded and clean under hostile provider metadata", asyn
   inspection.platform.architecture = "x".repeat(100_000);
   inspection.extra = CANARY.repeat(5000);
   const wire = tripwireClient(() => inspection);
-  const result = await runPreflight(fixture.env, wire.client, {
-    evidence: "fixture",
-  });
+  const result = await runPreflight(fixture.env, wire.client);
   const json = renderJson(result);
   assert.ok(Buffer.byteLength(json) <= PREFLIGHT_JSON_MAX_BYTES);
   assert.doesNotMatch(json, new RegExp(CANARY, "u"));
@@ -961,9 +940,7 @@ test("reasons are capped", async () => {
   };
   inspection.platform = {};
   const wire = tripwireClient(() => inspection);
-  const result = await runPreflight(fixture.env, wire.client, {
-    evidence: "fixture",
-  });
+  const result = await runPreflight(fixture.env, wire.client);
   assert.equal(result.status, "incompatible");
   assert.ok(result.reasons.length <= 16);
 });
