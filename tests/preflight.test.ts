@@ -459,6 +459,69 @@ test("plain domains and bounded IPv4 ranges are accepted as restricted egress", 
   }
 });
 
+// --- Egress: a restriction is a property of the whole list (review B1r) -----
+
+const slash8 = (from: number, count: number) =>
+  Array.from({ length: count }, (_, index) => `${from + index}.0.0.0/8`).join(
+    ","
+  );
+
+test("a network allow list split into many ranges is not a restriction", async () => {
+  const unsafe: [string, string][] = [
+    ["256 x /8, every IPv4 address", slash8(0, 256)],
+    ["11 x /8", slash8(1, 11)],
+    ["11 x /32", Array.from({ length: 11 }, (_, i) => `192.0.2.${i}/32`).join(",")],
+    ["11 entries with spaces", slash8(1, 11).replaceAll(",", " , ")],
+  ];
+  for (const [label, value] of unsafe) {
+    for (const networkBlockAll of [false, true]) {
+      const result = await withSandbox((sandbox) => {
+        sandbox.domainAllowList = null;
+        sandbox.networkBlockAll = networkBlockAll;
+        sandbox.networkAllowList = value;
+      });
+      assert.equal(result.status, "incompatible", label);
+      assert.deepEqual(
+        result.reasons,
+        [{ code: "egress_allow_list_unsafe", field: "networkAllowList" }],
+        label
+      );
+    }
+  }
+  // A safe domain list beside it does not excuse it either.
+  const beside = await withSandbox((sandbox) => {
+    sandbox.networkAllowList = slash8(1, 11);
+  });
+  assert.equal(beside.status, "incompatible");
+  assert.deepEqual(codes(beside), ["egress_allow_list_unsafe"]);
+});
+
+test("a network allow list of exactly the maximum number of ranges is accepted", async () => {
+  for (const count of [1, 9, 10]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.domainAllowList = null;
+      sandbox.networkAllowList = slash8(1, count);
+    });
+    assert.equal(result.status, "ready", `${count} ranges`);
+    assert.deepEqual(result.reasons, []);
+    assert.equal(result.observed?.exposure.egressAllowListEntries, count);
+  }
+});
+
+test("the network allow-list bounds are recorded as literal Castles policy", async () => {
+  // Literals on purpose: a widened constant must turn this red.
+  assert.deepEqual(SUPPORTED_PROFILE.network.networkAllowList, {
+    basis: "castles-decision",
+    maxEntries: 10,
+    minIpv4Prefix: 8,
+  });
+  const { result } = await runCase("ready");
+  assert.deepEqual(
+    JSON.parse(renderJson(result)).sourcePolicy.network.networkAllowList,
+    { basis: "castles-decision", maxEntries: 10, minIpv4Prefix: 8 }
+  );
+});
+
 // --- Gates that had no test (review N1) ------------------------------------
 
 async function withInspection(edit: (inspection: any) => void) {
