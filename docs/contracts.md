@@ -35,7 +35,7 @@ starts again as **proposed**.
 
 Snapshot of draft PR
 [#6](https://github.com/OpenCoven/coven-castles/pull/6) taken
-2026-11-12T04:30Z. **Its head is about to move.**
+2026-11-12T04:10Z. **Its head is about to move.**
 
 | | |
 | --- | --- |
@@ -213,7 +213,7 @@ fixtures, and upstream containment and reuse evidence for #5.
 **Proposed** in draft PR
 [#7](https://github.com/OpenCoven/coven-castles/pull/7) and not on this
 branch: the report-task fixture, expected-report properties and the
-negative-case catalogue. As of 2026-11-12T04:30Z its head is
+negative-case catalogue. As of 2026-11-12T04:10Z its head is
 `b4019094e1deacfbcfa42ac61d50354198064ba7`, which answers a review of
 `52cd317` that asked for changes and has not itself been reviewed. These are
 fixture file formats, not interface contracts.
