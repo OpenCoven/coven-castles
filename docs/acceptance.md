@@ -39,39 +39,36 @@ sandbox). A higher class is never inferred from a lower one.
 | Component | Revision | Standing |
 | --- | --- | --- |
 | Castles `main` | `96e19cea81624572b65149116b339ee39dbec61d` | README and secret scanning only |
-| #2 preflight | draft PR #6, head `7ead0d88fae8ff049a2ed0dedbb0a8221eaeb9fa` `[R6]` | Proposed. Not accepted by the maintainer. Referenced, not consumed. Second review at this head: changes needed. |
+| #2 preflight | draft PR #6, head `13ab3bc2c823fe12b482a6701ab4df2c28e6733c` | Proposed. Reviewed at this head by `rv6c-3db7f9d0` with no blocking findings and seven non-blocking ones; that review calls itself a second read, not the independent R4 review #1 requires. Not accepted by the maintainer. Referenced, not consumed. |
 | #3 runtime | none | Investigation comment only; no interface |
 | #4 recovery | none | Investigation comment only; no interface |
 | Canonical source | `OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180` | As pinned by #1; private |
 
-**`[R6]`: stale when PR #6 moves.** PR #6 is being revised after its second
-review and its head is about to move past `7ead0d8`. Every line tagged `[R6]`
-in this document cites that head or rests on a run at it. There are eleven:
-the #2 row above, the reproduction below (its sentence and its `test` row), G1,
-and #2-A1 to #2-A7. When the new head is published, one pass over those lines
-has to do three things: replace the hash, **re-run** the reproduction at the
-new head (a new hash alone is not evidence), and re-read #2-A2 to #2-A6
-against the changed tests, because the revision is expected to change how
-evidence fields are derived, which provider fields are echoed and the egress
-rule (as reported to this lane; not read by it). Until that pass, the six
-**fixture-only** rows (#2-A1 to #2-A6) are true of `7ead0d8` only and say
-nothing about the current head of PR #6. The catalogue cites no hash, but 19
-of its `dependsOn` strings read "proposed, not accepted: draft PR #6"; they
-change when #2's contract is accepted, not when the head moves.
+PR #6 can move after this is written. Check its current head and reviews
+before relying on this table. Every #2 line in this document was refreshed
+against `13ab3bc` on 2026-11-12; the earlier run at `7ead0d8` (58 of 58) is
+superseded and is no longer cited.
 
-The only check this lane ran on another lane's code: a fresh clone of the #2
-branch at `7ead0d8` `[R6]`, environment reduced to `HOME` and `PATH`:
+The only check this lane ran on another lane's code: a fresh clone of PR #6 at
+`13ab3bc`, environment reduced to `HOME` and `PATH`, Node 24.22.0, macOS arm64:
 
 | Command | Result | Class |
 | --- | --- | --- |
-| `corepack pnpm install --frozen-lockfile --offline` | pass (warm local store) | n/a |
-| `corepack pnpm test` | pass, 58 of 58, IP networking denied `[R6]` | fixture |
-| `corepack pnpm typecheck` | pass, IP networking denied | static |
+| `corepack pnpm install --frozen-lockfile --offline` | exit 0 (warm local store) | n/a |
+| `corepack pnpm test` | exit 0: 93 tests, 92 pass, 0 fail, 1 skipped; IP networking denied | fixture |
+| `corepack pnpm typecheck` | exit 0; IP networking denied | static |
+| `corepack pnpm check --fixture fixtures/preflight/cases/ready.json` | `status: ready`, `evidence: FIXTURE`, exit 3; IP networking denied | fixture |
 
-IP networking was denied for `test` and `typecheck` with a macOS
-`sandbox-exec` profile that refuses outbound and inbound IP traffic. The
-install step used a warm local package store. This is a reproduction, not the
-review or the maintainer acceptance #2 still needs.
+IP networking was denied for `test`, `typecheck` and `check` with a macOS
+`sandbox-exec` profile that refuses outbound and inbound IP traffic; a `curl`
+to a public registry under the same profile could not connect. The install
+step used a warm local package store. The working tree of the clone was
+unchanged after the runs. The one skipped test is #2's own control that a
+planted network connection fails: Node 24.22.0 has no network permission, so
+on this version "without network" rests on the profile above, not on #2's
+suite. Exit 3 is #2's code for a fixture result, which is never readiness.
+This is a reproduction, not the independent review or the maintainer
+acceptance #2 still needs.
 
 ## Qualification matrix
 
@@ -89,7 +86,7 @@ fields of `fixtures/report-task/negative-cases.json`. Eleven cases carry
 
 | ID | Promise | Status | Evidence or blocker |
 | --- | --- | --- | --- |
-| G1 | Exact owner/sandbox and familiar revision binding before task or credential effects | blocked | Sandbox half: #2 fixtures at `7ead0d8` `[R6]`, not accepted; binding a run to the supplied sandbox is OpenCoven/coven-agents#298 (open). Familiar-revision half: admission does not carry a familiar root/revision upstream (per the #3 investigation; no upstream issue found). Owner: canonical producer maintainers. |
+| G1 | Exact owner/sandbox and familiar revision binding before task or credential effects | blocked | Sandbox half: #2 fixtures at `13ab3bc`, reviewed with no blocking findings, not accepted; binding a run to the supplied sandbox is OpenCoven/coven-agents#298 (open). Familiar-revision half: admission does not carry a familiar root/revision upstream (per the #3 investigation; no upstream issue found). Owner: canonical producer maintainers. |
 | G2 | Duplicate submit/reconnect resolves one run; changed-payload reuse conflicts | unverified | No #3 interface. Cases ADM-08 to ADM-10, OUT-12, REC-01, REC-04, REC-06. |
 | G3 | Results and receipts retrievable after disconnect or sandbox stop | unverified | No #4 interface. Cases REC-01, REC-05, REC-07, CAN-06. |
 | G4 | Cancellation not complete without qualified containment; uncertainty visible and fenced | blocked | No qualified containment upstream; OpenCoven/coven-agents#262 (open). Owner: canonical producer maintainers. |
@@ -100,13 +97,13 @@ fields of `fixtures/report-task/negative-cases.json`. Eleven cases carry
 
 | ID | Promise | Status | Evidence or blocker |
 | --- | --- | --- | --- |
-| #2-A1 | Fresh checkout runs offline fixture tests without credentials or network | fixture-only | Reproduced at `7ead0d8` `[R6]` with IP networking denied (table above). |
-| #2-A2 | Missing ID, wrong owner, wrong generation, unknown profile, unsafe lifecycle, public exposure, unavailable provider, mismatched returned ID each fail closed | fixture-only | #2 tests at `7ead0d8` `[R6]`. Not shown live. |
-| #2-A3 | Missing sandbox causes zero create/start/update/delete; ambiguous lookup triggers no replacement or adoption | fixture-only | #2 tests at `7ead0d8` `[R6]`. Not shown live. |
-| #2-A4 | Read-only checks leave files, processes and provider configuration unchanged; no harness credentials acquired | fixture-only | #2 tests at `7ead0d8` `[R6]`. Provider-side state can only be shown live. |
-| #2-A5 | JSON output bounded, redacted, separates source policy from observed metadata | fixture-only | #2 tests at `7ead0d8` `[R6]`. |
-| #2-A6 | Contract pins and the owner of every mutation recorded; unknown upstream capability is an explicit blocker | fixture-only | The item asks for the record, and #2 tests at `7ead0d8` `[R6]` cover it: pins, mutation owners, and the missing seam reported as a blocker (OpenCoven/coven-agents#296, open). The capability being absent is what blocks live rows, not this one. |
-| #2-A7 | #3 and #5 receive a reviewed contract/test-command handoff at an exact SHA; fixture paths do not overlap and shared-file ownership is recorded | blocked | Handoff posted at `7ead0d8` `[R6]`; not accepted. Fixture paths do not overlap (`fixtures/preflight/`, `fixtures/report-task/`). Owner: epic maintainer. |
+| #2-A1 | Fresh checkout runs offline fixture tests without credentials or network | fixture-only | Reproduced at `13ab3bc`: offline install, then 92 pass, 0 fail, 1 skipped of 93 with `HOME` and `PATH` only and IP networking denied (table above). The skipped test is the network control, so the network half rests on this lane's profile. |
+| #2-A2 | Missing ID, wrong owner, wrong generation, unknown profile, unsafe lifecycle, public exposure, unavailable provider, mismatched returned ID each fail closed | fixture-only | At `13ab3bc` the eight tests `fail-closed fixture: missing-id`, `wrong-owner`, `wrong-generation`, `unknown-profile`, `unsafe-lifecycle`, `public-exposure`, `unavailable-provider` and `mismatched-returned-id` pass, one per named condition, with seven more fail-closed fixtures. Not shown live. |
+| #2-A3 | Missing sandbox causes zero create/start/update/delete; ambiguous lookup triggers no replacement or adoption | fixture-only | At `13ab3bc` the tests "a missing sandbox causes zero create/start/update/delete calls", "an ambiguous lookup triggers no replacement, adoption, or second lookup" and "a substituted sandbox is never adopted and its metadata is not disclosed" pass. Not shown live. |
+| #2-A4 | Read-only checks leave files, processes and provider configuration unchanged; no harness credentials acquired | fixture-only | At `13ab3bc` the tests "CLI check is read-only, credential-blind, and emits human and JSON output", "a stopped sandbox is reported as stopped and is never woken", the capability scan over `src/` and the run with writes, child processes and workers denied pass. #2's tests call the scan a tripwire, not a proof, and review `rv6c-3db7f9d0` (R2) shows it does not stop a read of another environment variable; that review confirms by reading `src/` that the code does none. Provider-side state can only be shown live. |
+| #2-A5 | JSON output bounded, redacted, separates source policy from observed metadata | fixture-only | At `13ab3bc` the tests "JSON output separates source policy from observed metadata", "output uses redacted aliases, never the configured private IDs", "JSON output stays bounded and clean under hostile provider metadata", "no echoed field can carry the configured IDs or free text into output" and "every string in observed output is drawn from a fixed vocabulary" pass. Open non-blocking finding R1 of `rv6c-3db7f9d0`: integer fields are echoed unbounded, so an all-digit configured ID returned in a numeric field would reach output. |
+| #2-A6 | Contract pins and the owner of every mutation recorded; unknown upstream capability is an explicit blocker | fixture-only | The item asks for the record, and at `13ab3bc` the tests "source pins are exact repo@sha:path references", "every provider mutation names its existing upstream owner, and none is Castles" and "the missing upstream binding seam is an explicit blocker with a link" pass (OpenCoven/coven-agents#296, open). The capability being absent is what blocks live rows, not this one. |
+| #2-A7 | #3 and #5 receive a reviewed contract/test-command handoff at an exact SHA; fixture paths do not overlap and shared-file ownership is recorded | blocked | PR #6 at `13ab3bc` has a second-read review with no blocking findings; it is not the independent R4 review and the contract is not accepted. Fixture paths do not overlap (`fixtures/preflight/`, `fixtures/report-task/`). Owner: epic maintainer. |
 
 ### #3 Bootstrap and run one authorized task
 
@@ -149,7 +146,7 @@ fields of `fixtures/report-task/negative-cases.json`. Eleven cases carry
 | #5-R9 | Handoff maps each promise to a revision and evidence class, names owners and next action; unimplemented or skipped live checks remain unverified, never silently green | unverified | This matrix is the draft of that mapping; it has no verified rows to map. Case REU-06. |
 
 **Count:** 38 promises. verified 0, fixture-only 6, unverified 20, blocked 12.
-All six fixture-only rows are `[R6]` rows.
+All six fixture-only rows are #2 rows, re-run at `13ab3bc`.
 
 ## Negative-case catalogue
 
@@ -162,6 +159,20 @@ Thirteen cases carry a `basis` field: part of their expectation goes beyond
 what #1 to #5 say and is #5's proposal to the lane that owns the contract
 (ADM-03, ADM-06, ADM-07, ADM-10, OUT-04, OUT-08, OUT-10 to OUT-13, REC-03,
 REC-05, RED-02). That lane's reviewed contract decides them.
+
+Nineteen cases name "#2 binding/preflight contract (proposed, not accepted:
+draft PR #6)" in `dependsOn`. That wording is still true at `13ab3bc`: the
+contract has been reviewed with no blocking findings and has not been
+accepted. The catalogue file is unchanged. CFG-07 and BND-06 were re-read
+against the rules of `13ab3bc` and their expectations are unchanged, because
+they still agree with it: CFG-07 expects a secret in the client environment
+not to be read or echoed, and BND-06 expects `incompatible`, which is what
+`13ab3bc` reports for public exposure, an unsafe lifecycle, unrestricted
+egress, an unsafe allow list and missing metadata (which includes an
+architecture outside the known set). Neither case has been executed by #5. The
+catalogue does not restate #2's finer rules (the ten-entry cap on a network
+allow list, the fixed vocabulary for echoed fields, client-derived evidence);
+#2's own tests carry those.
 
 | Area | Cases | Release gates | Acceptance items | Scope rules |
 | --- | --- | --- | --- | --- |
