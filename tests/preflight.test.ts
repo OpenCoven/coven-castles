@@ -783,6 +783,119 @@ test("JSON output stays bounded and clean under hostile provider metadata", asyn
   assert.notEqual(result.status, "ready");
 });
 
+// --- Provider free text is never echoed (review N1) ------------------------
+
+const ECHOED_FIELDS: readonly (readonly [
+  string,
+  (inspection: any, value: unknown) => void,
+])[] = [
+  ["sandbox.state", (i, v) => (i.sandbox.state = v)],
+  ["sandbox.target", (i, v) => (i.sandbox.target = v)],
+  ["sandbox.snapshot", (i, v) => (i.sandbox.snapshot = v)],
+  ["platform.os", (i, v) => (i.platform.os = v)],
+  ["platform.architecture", (i, v) => (i.platform.architecture = v)],
+  ["sdk.version", (i, v) => (i.sdk.version = v)],
+  ["binding.lifecycle", (i, v) => (i.binding.lifecycle = v)],
+  ["binding.attemptFence", (i, v) => (i.binding.attemptFence = v)],
+];
+
+test("no echoed field can carry the configured IDs or free text into output", async () => {
+  const hostile = [
+    "fixture-sandbox-0001",
+    "fixture-agent-0001",
+    CANARY,
+    "canary9f2c",
+    "x",
+    "1.2.3-canary9f2c",
+    "0.220.0.canary9f2c",
+    "Started",
+    " started",
+  ];
+  for (const [field, set] of ECHOED_FIELDS) {
+    for (const value of hostile) {
+      const result = await withInspection((inspection) => set(inspection, value));
+      for (const output of [renderJson(result), renderHuman(result)]) {
+        const where = `${field}=${JSON.stringify(value)}`;
+        assert.doesNotMatch(output, /fixture-sandbox-0001/u, where);
+        assert.doesNotMatch(output, /fixture-agent-0001/u, where);
+        assert.doesNotMatch(output, /canary/iu, where);
+        assert.ok(!output.includes(`"${value}"`), where);
+      }
+      assert.notEqual(result.status, "ready", `${field}=${value}`);
+      assert.notEqual(result.observed, null);
+    }
+  }
+});
+
+test("a value outside the known set is reported as unrecognised, an absent one as null", async () => {
+  const read: Record<string, (result: PreflightResult) => unknown> = {
+    "binding.attemptFence": (r) => r.observed?.binding.attemptFence,
+    "binding.lifecycle": (r) => r.observed?.binding.lifecycle,
+    "platform.architecture": (r) => r.observed?.platform.architecture,
+    "platform.os": (r) => r.observed?.platform.os,
+    "sandbox.snapshot": (r) => r.observed?.image.snapshot,
+    "sandbox.state": (r) => r.observed?.state,
+    "sandbox.target": (r) => r.observed?.target,
+    "sdk.version": (r) => r.observed?.sdk.version,
+  };
+  for (const [field, set] of ECHOED_FIELDS) {
+    const unknown = await withInspection((inspection) =>
+      set(inspection, "fixture-free-text")
+    );
+    assert.equal(read[field]?.(unknown), "unrecognised", field);
+    // The two binding fields are required strings; absence is a contract
+    // violation and discloses nothing.
+    if (field.startsWith("binding.")) {
+      continue;
+    }
+    const absent = await withInspection((inspection) => set(inspection, undefined));
+    assert.equal(read[field]?.(absent), null, field);
+    const wrongType = await withInspection((inspection) => set(inspection, 7));
+    assert.equal(read[field]?.(wrongType), null, field);
+  }
+});
+
+test("known values are echoed exactly", async () => {
+  const known: [string, unknown, (result: PreflightResult) => unknown][] = [
+    ["sandbox.state", "archiving", (r) => r.observed?.state],
+    ["sandbox.state", "build_failed", (r) => r.observed?.state],
+    ["sandbox.target", "eu", (r) => r.observed?.target],
+    ["sandbox.snapshot", "coven-agents-copilot-2", (r) => r.observed?.image.snapshot],
+    ["platform.os", "linux", (r) => r.observed?.platform.os],
+    ["platform.architecture", "x86_64", (r) => r.observed?.platform.architecture],
+    ["platform.architecture", "arm64", (r) => r.observed?.platform.architecture],
+    ["sdk.version", "0.221.0", (r) => r.observed?.sdk.version],
+    ["sdk.version", "10.0.999", (r) => r.observed?.sdk.version],
+    ["binding.lifecycle", "provisioning_ambiguous", (r) => r.observed?.binding.lifecycle],
+    ["binding.attemptFence", "cleanup_required", (r) => r.observed?.binding.attemptFence],
+  ];
+  const setters = new Map(ECHOED_FIELDS);
+  for (const [field, value, get] of known) {
+    const result = await withInspection((inspection) =>
+      setters.get(field)?.(inspection, value)
+    );
+    assert.equal(get(result), value, `${field}=${String(value)}`);
+  }
+  for (const version of ["0.220", "0.220.0.1", "v0.220.0", "0.220.0-rc1", "0000.1.1", "01.2.3"]) {
+    const result = await withInspection((inspection) => {
+      inspection.sdk.version = version;
+    });
+    assert.equal(result.observed?.sdk.version, "unrecognised", version);
+  }
+});
+
+test("an architecture outside the known set is missing metadata, not ready", async () => {
+  for (const architecture of ["fixture-arch", "riscv64", "X86_64", "", null, undefined, 64]) {
+    const result = await withInspection((inspection) => {
+      inspection.platform.architecture = architecture;
+    });
+    assert.equal(result.status, "incompatible", String(architecture));
+    assert.deepEqual(result.reasons, [
+      { code: "metadata_missing", field: "platform.architecture" },
+    ]);
+  }
+});
+
 test("reasons are capped", async () => {
   const fixture = loadFixtureCase(casePath("ready"));
   const inspection = structuredClone(fixture.inspection) as Record<
