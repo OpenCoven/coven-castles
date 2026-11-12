@@ -1147,6 +1147,56 @@ test("R1 limit: an ID that is itself an integer inside the echo range can coinci
   assert.equal(result.observed?.resources.cpu, 4);
 });
 
+test("N4: the volume count is echoed only as an integer from 0 to 999", async () => {
+  // The same leak class as R1, in a field that is not one of the nine
+  // (review rv11 N4). An array parsed from JSON always has a length that is
+  // an integer from 0 up, so the CLI cannot reach this. A response held in
+  // memory can: an array behind a proxy reports any length it likes, and the
+  // count was capped from above only.
+  const fixture = loadFixtureCase(casePath("ready"));
+  const digits = "900719925474";
+  const env = { ...fixture.env, CASTLES_SANDBOX_ID: digits };
+  const lengths: [string, unknown, number | null, string, string[]][] = [
+    ["minus the ID", -Number(digits), 0, "ready", []],
+    ["-1", -1, 0, "ready", []],
+    ["the ID as a fraction", Number(`0.${digits}`), null, "incompatible", ["volumes_present"]],
+    ["the ID as text", digits, null, "incompatible", ["volumes_present"]],
+    ["not a number", Number.NaN, null, "ready", []],
+    ["0", 0, 0, "ready", []],
+    ["5", 5, 5, "incompatible", ["volumes_present"]],
+    ["999", 999, 999, "incompatible", ["volumes_present"]],
+    ["the ID", Number(digits), 999, "incompatible", ["volumes_present"]],
+  ];
+  for (const [label, length, echoed, status, expected] of lengths) {
+    const inspection = structuredClone(fixture.inspection) as any;
+    inspection.binding.sandboxId = digits;
+    inspection.sandbox.id = digits;
+    inspection.sandbox.volumes = new Proxy([], {
+      get: (target, key, receiver) =>
+        key === "length" ? length : Reflect.get(target, key, receiver),
+    });
+    const result = await runPreflight(env, tripwireClient(() => inspection).client);
+    // Status and reasons are what they were at 13ab3bc; only the echo moves.
+    assert.equal(result.status, status, label);
+    assert.deepEqual(codes(result), expected, label);
+    assert.equal(result.observed?.attachments.volumes, echoed, label);
+    for (const output of [renderJson(result), renderHuman(result)]) {
+      assert.ok(!output.includes(digits), label);
+    }
+  }
+  // A real array is counted as before.
+  for (const [volumes, echoed] of [
+    [[], 0],
+    [["a"], 1],
+    [Array.from({ length: 1_500 }, () => "v"), 999],
+  ] as const) {
+    const inspection = structuredClone(fixture.inspection) as any;
+    inspection.sandbox.volumes = volumes;
+    const result = await runPreflight(fixture.env, tripwireClient(() => inspection).client);
+    assert.equal(result.observed?.attachments.volumes, echoed);
+  }
+});
+
 // --- Test gaps found by mutation (review N5, N6, N7) ------------------------
 // Behaviour was already correct for every case below; these pin it.
 
