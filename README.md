@@ -138,6 +138,17 @@ The hook blocks any commit whose staged changes contain a likely secret. CI runs
 
 ## Contributing
 
-See [`AGENTS.md`](AGENTS.md) for the rules, path ownership, the claim/handoff
-block and the PR checklist. Fixtures are described in
+Several contributors and agent sessions work here at once. Start with
+[`CONTRIBUTING.md`](CONTRIBUTING.md); agents read [`AGENTS.md`](AGENTS.md)
+first.
+
+| Document | What it covers |
+| --- | --- |
+| [`docs/coordination.md`](docs/coordination.md) | Claims, worker IDs, worktrees, the handoff block, gates and review rules |
+| [`docs/ownership.md`](docs/ownership.md) | Which issue owns each path, and who stewards shared files |
+| [`docs/contracts.md`](docs/contracts.md) | What each lane hands to the next, at which revision and standing |
+| [`docs/architecture.md`](docs/architecture.md) | What Castles is and is not, and the trust boundary |
+| [`docs/README.md`](docs/README.md) | Index of everything, including templates |
+
+Fixtures are described in
 [`fixtures/preflight/README.md`](fixtures/preflight/README.md).
