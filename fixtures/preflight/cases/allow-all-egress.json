@@ -1,0 +1,58 @@
+{
+  "fixture": "SYNTHETIC FIXTURE - invented values, not provider evidence",
+  "case": "allow-all-egress",
+  "env": {
+    "CASTLES_PROFILE": "castles.daytona-private-linux.v1",
+    "CASTLES_SANDBOX_ID": "fixture-sandbox-0001",
+    "CASTLES_OWNER_AGENT_ID": "fixture-agent-0001",
+    "CASTLES_SANDBOX_GENERATION": "3"
+  },
+  "inspection": {
+    "contract": "castles.fixture.sandbox-inspection.v1",
+    "outcome": "observed",
+    "sdk": {
+      "package": "@daytona/sdk",
+      "version": "0.220.0"
+    },
+    "binding": {
+      "agentId": "fixture-agent-0001",
+      "sandboxId": "fixture-sandbox-0001",
+      "generation": 3,
+      "lifecycle": "ready",
+      "attemptFence": "clear"
+    },
+    "platform": {
+      "os": "linux",
+      "architecture": "x86_64"
+    },
+    "sandbox": {
+      "id": "fixture-sandbox-0001",
+      "state": "started",
+      "target": "us",
+      "snapshot": "coven-agents-copilot-2",
+      "cpu": 2,
+      "memory": 4,
+      "disk": 10,
+      "gpu": 0,
+      "public": false,
+      "networkBlockAll": false,
+      "domainAllowList": null,
+      "autoStopInterval": 15,
+      "autoArchiveInterval": 10080,
+      "autoDeleteInterval": -1,
+      "autoPauseInterval": 0,
+      "volumes": [],
+      "labels": {
+        "credentialBoundaryVersion": "attempt-reset-v1"
+      },
+      "networkAllowList": "0.0.0.0/0"
+    }
+  },
+  "expect": {
+    "status": "incompatible",
+    "reasons": [
+      "egress_allow_list_unsafe"
+    ],
+    "inspectCalls": 1
+  }
+}

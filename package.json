@@ -1,0 +1,21 @@
+{
+  "name": "@opencoven/castles",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only preflight for one explicitly bound, existing Daytona sandbox.",
+  "scripts": {
+    "check": "tsx src/cli.ts check",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.32.1"
+}

@@ -1,0 +1,22 @@
+{
+  "fixture": "SYNTHETIC FIXTURE - invented values, not provider evidence",
+  "case": "unavailable-provider",
+  "env": {
+    "CASTLES_PROFILE": "castles.daytona-private-linux.v1",
+    "CASTLES_SANDBOX_ID": "fixture-sandbox-0001",
+    "CASTLES_OWNER_AGENT_ID": "fixture-agent-0001",
+    "CASTLES_SANDBOX_GENERATION": "3"
+  },
+  "inspection": {
+    "contract": "castles.fixture.sandbox-inspection.v1",
+    "outcome": "unavailable",
+    "source": "provider"
+  },
+  "expect": {
+    "status": "unavailable",
+    "reasons": [
+      "provider_unavailable"
+    ],
+    "inspectCalls": 1
+  }
+}
