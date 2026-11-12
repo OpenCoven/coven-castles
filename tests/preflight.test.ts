@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -1789,42 +1792,176 @@ function capabilityProblems(file: string, source: string): string[] {
   return problems;
 }
 
-test("source imports only allowlisted bindings and no network or process global", () => {
-  for (const file of ["cli.ts", "preflight.ts", "profile.ts"]) {
-    const source = readFileSync(join(root, "src", file), "utf8");
-    assert.deepEqual(capabilityProblems(file, source), []);
-  }
+/** At this commit: the old per-file scan over the three named files. */
+function scanSources(files: ReadonlyMap<string, string>): string[] {
+  return ["cli.ts", "preflight.ts", "profile.ts"].flatMap((file) =>
+    capabilityProblems(file, files.get(file) ?? "")
+  );
+}
+
+/** Every entry under src/, as posix paths relative to src/. */
+function readSourceTree(): Map<string, string> {
+  const files = new Map<string, string>();
+  const walk = (directory: string, prefix: string) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const relative = `${prefix}${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(join(directory, entry.name), `${relative}/`);
+      } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+        files.set(relative, readFileSync(join(directory, entry.name), "utf8"));
+      } else {
+        // Not a TypeScript source file: scanSources reports it by name.
+        files.set(relative, "");
+      }
+    }
+  };
+  walk(join(root, "src"), "");
+  return files;
+}
+
+test("every file under src/ passes the capability scan", () => {
+  const files = readSourceTree();
+  assert.deepEqual([...files.keys()].sort(), [
+    "cli.ts",
+    "preflight.ts",
+    "profile.ts",
+  ]);
+  assert.deepEqual(scanSources(files), []);
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   assert.deepEqual(manifest.dependencies ?? {}, {});
+  assert.deepEqual(manifest.optionalDependencies ?? {}, {});
+  assert.deepEqual(manifest.peerDependencies ?? {}, {});
 });
 
-test("the capability allowlist rejects the evasions the old blocklist missed", () => {
-  const evasions = [
-    'import { openSync, writeSync } from "node:fs";',
-    'import { readFileSync, writeFileSync } from "node:fs";',
-    'import * as fs from "node:fs";',
-    'import fs from "node:fs";',
-    'import { request } from "node:https";',
-    'import { spawn } from "node:child_process";',
-    'import { createRequire } from "node:module";',
-    "const f = globalThis.fetch;",
-    'const net = await import("node:net");',
-    'const fs = require("node:fs");',
-    'process.binding("fs");',
-    'process.getBuiltinModule("node:fs");',
-    'import("node:" + "http");',
-    'import {\n  readFileSync,\n  rmSync,\n} from "node:fs";',
-  ];
-  for (const line of evasions) {
-    assert.notDeepEqual(capabilityProblems("probe.ts", line), [], line);
+type Plant = (files: Map<string, string>) => void;
+const prepend =
+  (file: string, text: string): Plant =>
+  (files) => {
+    files.set(file, `${text}\n${files.get(file) ?? ""}`);
+  };
+const append =
+  (file: string, text: string): Plant =>
+  (files) => {
+    files.set(file, `${files.get(file) ?? ""}\n${text}\n`);
+  };
+const addFile =
+  (file: string, text: string): Plant =>
+  (files) => {
+    files.set(file, text);
+  };
+
+/** Each of these must be reported by the scan. */
+const SCAN_MUST_CATCH: readonly (readonly [string, ...Plant[]])[] = [
+  // Carried over from the first review.
+  ["fs write functions", prepend("cli.ts", 'import { openSync, writeSync } from "node:fs";')],
+  ["fs write beside read", prepend("cli.ts", 'import { readFileSync, writeFileSync } from "node:fs";')],
+  ["fs namespace", prepend("cli.ts", 'import * as fs from "node:fs";')],
+  ["fs default", prepend("cli.ts", 'import fs from "node:fs";')],
+  ["https", prepend("cli.ts", 'import { request } from "node:https";')],
+  ["child_process", prepend("cli.ts", 'import { spawn } from "node:child_process";')],
+  ["createRequire", prepend("cli.ts", 'import { createRequire } from "node:module";')],
+  ["globalThis", append("cli.ts", "const f = globalThis.fetch;")],
+  ["dynamic import", append("cli.ts", 'const net = await import("node:net");')],
+  ["require", append("cli.ts", 'const fs = require("node:fs");')],
+  ["process.binding", append("cli.ts", 'process.binding("fs");')],
+  ["getBuiltinModule", append("cli.ts", 'process.getBuiltinModule("node:fs");')],
+  ["computed dynamic import", append("cli.ts", 'import("node:" + "http");')],
+  ["multi-line named import", prepend("cli.ts", 'import {\n  readFileSync,\n  rmSync,\n} from "node:fs";')],
+  // The second review's seven (rv6b-0288e674, N2).
+  [
+    "named import beside the default from node:process",
+    (files) => {
+      files.set(
+        "cli.ts",
+        (files.get("cli.ts") ?? "").replace(
+          'import process from "node:process";',
+          'import process, { getBuiltinModule } from "node:process";'
+        )
+      );
+    },
+  ],
+  ["bracketed getBuiltinModule", append("cli.ts", 'process["getBuiltinModule"]("node:child_process").spawnSync("true");')],
+  ["concatenated global property", append("cli.ts", 'global["fe" + "tch"]("http://127.0.0.1:9");')],
+  ["process.report", append("cli.ts", 'process.report.writeReport("/tmp/castles-report.json");')],
+  ["import after another statement on the line", prepend("cli.ts", 'const a = 1; import { writeFileSync } from "node:fs";')],
+  [
+    "new sibling module with network and process imports",
+    addFile("net.ts", 'import { request } from "node:https";\nimport { spawn } from "node:child_process";\nexport const reach = [request, spawn];'),
+    prepend("preflight.ts", 'import { reach } from "./net.ts";'),
+  ],
+  ["sibling module nobody imports", addFile("lib/net.ts", 'import { connect } from "node:net";\nexport const reach = connect;')],
+  ["named re-export", append("preflight.ts", 'export { request } from "node:https";')],
+  ["star re-export", append("preflight.ts", 'export * from "node:child_process";')],
+  ["namespace re-export", append("preflight.ts", 'export * as cp from "node:child_process";')],
+  // Other evasions the second review listed.
+  ["optional-chained process member", append("cli.ts", 'process?.binding("fs");')],
+  ["destructuring from process", append("cli.ts", "const { env, report } = process;")],
+  ["aliasing process", append("cli.ts", "const p = process;\np.report.writeReport();")],
+  ["aliasing process without a semicolon", append("cli.ts", "const p = process\nconst q = p")],
+  ["passing process", append("cli.ts", "Object.keys(process);")],
+  ["spreading process.env", append("cli.ts", "const all = { ...process.env };")],
+  ["Unicode-escaped identifier", append("cli.ts", "const g = gl\\u006fbalThis;")],
+  ["hex-escaped string", append("cli.ts", 'const name = "\\x66etch";')],
+  ["function constructor", append("cli.ts", '(function () {}).constructor("return this")();')],
+  ["Function", append("cli.ts", 'new Function("return this")();')],
+  ["eval", append("cli.ts", '(0, eval)("this");')],
+  ["Reflect", append("cli.ts", 'Reflect.get(process, "report");')],
+  ["process member between string-borne comment markers", append("cli.ts", 'const a = "/*"; process.report.writeReport(); const b = "*/";')],
+  ["import between string-borne comment markers", append("cli.ts", 'const a = "/*"; import { writeFileSync } from "node:fs"; const b = "*/";')],
+  ["builtin name in a string", append("cli.ts", 'const name = "node:child_process";')],
+  ["unprefixed builtin name in a string", append("cli.ts", "const name = 'child_process';")],
+  // Reading a credential from the environment.
+  ["named environment variable", append("cli.ts", "const key = process.env.DAYTONA_API_KEY;")],
+  ["bracketed environment variable", append("cli.ts", 'const key = process.env["DAYTONA_API_KEY"];')],
+  ["whole environment", append("cli.ts", "const all = Object.entries(process.env);")],
+  ["a second env file", append("cli.ts", 'process.loadEnvFile(".env");')],
+  // Module graph and file kinds.
+  ["unprefixed builtin", prepend("cli.ts", 'import fs from "fs";')],
+  ["bare package", prepend("cli.ts", 'import { Daytona } from "@daytona/sdk";')],
+  ["parent-relative import", prepend("cli.ts", 'import { helper } from "../tests/helper.ts";')],
+  ["relative import of a missing file", prepend("cli.ts", 'import { helper } from "./missing.ts";')],
+  ["side-effect import", prepend("cli.ts", 'import "node:child_process";')],
+  ["import attributes", prepend("cli.ts", 'import data from "./data.json" with { type: "json" };')],
+  ["import.meta", append("cli.ts", "const here = import.meta.dirname;")],
+  ["native addon in src", addFile("addon.node", "")],
+  ["JavaScript file in src", addFile("helper.js", "")],
+  ["Worker", append("cli.ts", 'new Worker("./x.ts");')],
+  ["WebSocket", append("cli.ts", 'new WebSocket("wss://provider.invalid");')],
+];
+
+/**
+ * Evasions the scan is KNOWN not to catch. They are written down so the scan
+ * is not mistaken for a proof: it reads text, so a property name built at run
+ * time, or code hidden from the comment stripper and then aliased, gets
+ * through. The permission-model run below is what stops these at run time.
+ */
+const SCAN_KNOWN_GAPS: readonly (readonly [string, string])[] = [
+  [
+    "property name built at run time",
+    'const k = ["constr", "uctor"].join("");\nconst reach = ([] as any)[k][k]("return this");',
+  ],
+  [
+    "alias hidden between string-borne comment markers",
+    'const a = "/*"; const p = process\nconst b = "*/";\n(p as any).report.writeReport("/tmp/castles-report.json");',
+  ],
+];
+
+test("the capability scan reports each known way of reaching a capability", () => {
+  for (const [label, ...plants] of SCAN_MUST_CATCH) {
+    const files = readSourceTree();
+    for (const plant of plants) {
+      plant(files);
+    }
+    assert.notDeepEqual(scanSources(files), [], label);
   }
-  assert.deepEqual(
-    capabilityProblems(
-      "probe.ts",
-      'import { readFileSync } from "node:fs";\nimport { type Binding, parseBinding } from "./profile";'
-    ),
-    []
-  );
+});
+
+test("the capability scan is a tripwire, not a proof: these known evasions pass it", () => {
+  for (const [label, text] of SCAN_KNOWN_GAPS) {
+    const files = readSourceTree();
+    append("cli.ts", text)(files);
+    assert.deepEqual(scanSources(files), [], label);
+  }
 });
 
 // --- CLI: read-only command, human and JSON, no credentials ----------------
@@ -2065,3 +2202,262 @@ test("CLI loads the binding from .env.local, and exported variables win", async 
     rmSync(cwd, { force: true, recursive: true });
   }
 });
+
+// --- Runtime: the CLI under Node's permission model (review N2) -------------
+
+/**
+ * What this proves, where it runs: on the paths exercised below, the CLI
+ * produces its normal output with file-system writes, child processes,
+ * worker threads, native addons, WASI and code generation from strings all
+ * denied by the Node runtime, and with file-system reads limited to src/ and
+ * the one path each case names. The controls show the confinement is real:
+ * the same command fails when one such capability is planted in a copy.
+ *
+ * What it does not prove:
+ * - Network. Node denies network under the permission model only where the
+ *   `--allow-net` flag exists (not in Node 22 or 24). There, nothing in this
+ *   suite stops a network call at run time; only the scan looks for one.
+ * - Paths not exercised here.
+ * - An attempt wrapped in try/catch: it is denied, but nothing reports it.
+ * - Anything about a run without these flags. `pnpm check` runs through tsx
+ *   with no permission model; this test is not a sandbox for operators.
+ *
+ * Where it does not run: it needs `--permission` and built-in type stripping
+ * (Node 22.18 or later in the 22 line, and Node 24). On an older Node 22,
+ * including 22.0.0, these tests are skipped and only the scan applies.
+ */
+const allowedNodeFlags = process.allowedNodeEnvironmentFlags;
+const PERMISSION_SKIP: string | false =
+  allowedNodeFlags.has("--permission") &&
+  Boolean((process.features as { typescript?: unknown }).typescript)
+    ? false
+    : `Node ${process.version} lacks --permission or built-in type stripping; the permission-model run is skipped and only the static scan applies`;
+const NETWORK_SKIP: string | false =
+  PERMISSION_SKIP ||
+  (allowedNodeFlags.has("--allow-net")
+    ? false
+    : `Node ${process.version} has no network permission (--allow-net); network is NOT denied at run time on this version`);
+
+function confined(
+  sourceRoot: string,
+  args: readonly string[],
+  env: Record<string, string>,
+  cwd: string,
+  readable: readonly string[] = []
+) {
+  return spawnSync(
+    process.execPath,
+    [
+      "--permission",
+      "--disallow-code-generation-from-strings",
+      // No --allow-fs-write, --allow-child-process, --allow-worker,
+      // --allow-addons, --allow-wasi or --allow-net.
+      ...[sourceRoot, ...readable].map((path) => `--allow-fs-read=${path}`),
+      join(sourceRoot, "cli.ts"),
+      ...args,
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      env: { HOME: cwd, PATH: "", ...env },
+      timeout: 60_000,
+    }
+  );
+}
+
+const sourceRoot = join(root, "src");
+
+test(
+  "CLI runs unchanged with writes, child processes, workers, addons, WASI and string code generation denied",
+  { skip: PERMISSION_SKIP },
+  async () => {
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), "castles-confined-")));
+    try {
+      const expected = async (name: string) => {
+        const fixture = loadFixtureCase(casePath(name));
+        return runPreflight(
+          fixture.env,
+          createFixtureInspectionClient(fixture)
+        );
+      };
+
+      const ready = confined(
+        sourceRoot,
+        ["check", "--json", "--fixture", casePath("ready")],
+        HARNESS_CANARIES,
+        cwd,
+        [casePath("ready")]
+      );
+      assert.equal(ready.status, 3, ready.stderr);
+      assert.equal(ready.stdout, renderJson(await expected("ready")));
+
+      const exposed = confined(
+        sourceRoot,
+        ["check", "--fixture", casePath("public-exposure")],
+        HARNESS_CANARIES,
+        cwd,
+        [casePath("public-exposure")]
+      );
+      assert.equal(exposed.status, 1, exposed.stderr);
+      assert.equal(
+        exposed.stdout,
+        renderHuman(await expected("public-exposure"))
+      );
+
+      const binding = {
+        CASTLES_OWNER_AGENT_ID: "fixture-agent-0002",
+        CASTLES_PROFILE: SUPPORTED_PROFILE.id,
+        CASTLES_SANDBOX_GENERATION: "7",
+        CASTLES_SANDBOX_ID: "fixture-sandbox-0002",
+      };
+      writeFileSync(
+        join(cwd, ".env.local"),
+        `${Object.entries(binding)
+          .map(([key, value]) => `${key}=${value}`)
+          .join("\n")}\n`
+      );
+      const live = confined(
+        sourceRoot,
+        ["check", "--json"],
+        HARNESS_CANARIES,
+        cwd,
+        [join(cwd, ".env.local")]
+      );
+      assert.equal(live.status, 1, live.stderr);
+      assert.equal(live.stdout, renderJson(await runPreflight(binding, null)));
+
+      const usage = confined(sourceRoot, ["start"], {}, cwd);
+      assert.equal(usage.status, 2);
+      assert.equal(usage.stdout, "");
+
+      for (const run of [ready, exposed, live, usage]) {
+        assert.doesNotMatch(run.stderr, /ERR_ACCESS_DENIED|EvalError/u);
+        assert.doesNotMatch(run.stdout + run.stderr, /canary/iu);
+      }
+      assert.deepEqual(readdirSync(cwd), [".env.local"]);
+    } finally {
+      rmSync(cwd, { force: true, recursive: true });
+    }
+  }
+);
+
+/** A copy of src/ with one line planted at the top of cli.ts. */
+function plantedCopy(directory: string, name: string, plant: string): string {
+  const copy = join(directory, name);
+  mkdirSync(copy);
+  for (const [file, source] of readSourceTree()) {
+    writeFileSync(
+      join(copy, file),
+      file === "cli.ts" && plant !== ""
+        ? source.replace(
+            'import process from "node:process";',
+            `import process from "node:process";\n${plant}`
+          )
+        : source
+    );
+  }
+  return copy;
+}
+
+test(
+  "control: a planted write, spawn, worker, report or generated function fails under the same confinement",
+  { skip: PERMISSION_SKIP },
+  () => {
+    const directory = realpathSync(
+      mkdtempSync(join(tmpdir(), "castles-control-"))
+    );
+    try {
+      const target = join(directory, "written-by-plant");
+      const args = ["check", "--json", "--fixture", casePath("ready")];
+      const run = (name: string, plant: string) =>
+        confined(plantedCopy(directory, name, plant), args, {}, directory, [
+          casePath("ready"),
+        ]);
+
+      // The unmodified copy behaves like the original, so a failure below is
+      // caused by the plant and not by copying.
+      const clean = run("clean", "");
+      assert.equal(clean.status, 3, clean.stderr);
+
+      const controls: [string, string, RegExp][] = [
+        [
+          "file write",
+          `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(target)}, "x");`,
+          /ERR_ACCESS_DENIED/u,
+        ],
+        [
+          "child process",
+          `process["getBuiltinModule"]("node:child_process").spawnSync(process.execPath, ["--version"]);`,
+          /ERR_ACCESS_DENIED/u,
+        ],
+        [
+          "diagnostic report",
+          `process.report.writeReport(${JSON.stringify(target)});`,
+          /ERR_ACCESS_DENIED/u,
+        ],
+        [
+          "worker thread",
+          `new (process.getBuiltinModule("node:worker_threads").Worker)("1", { eval: true });`,
+          /ERR_ACCESS_DENIED/u,
+        ],
+        [
+          "function built from a string",
+          SCAN_KNOWN_GAPS[0]?.[1].replace(/ as any/gu, "") ?? "",
+          /EvalError/u,
+        ],
+        [
+          "hidden alias of process",
+          (SCAN_KNOWN_GAPS[1]?.[1] ?? "")
+            .replace(/ as any/gu, "")
+            .replace("/tmp/castles-report.json", target),
+          /ERR_ACCESS_DENIED/u,
+        ],
+      ];
+      for (const [label, plant, error] of controls) {
+        const planted = run(label.replaceAll(" ", "-"), plant);
+        assert.notEqual(planted.status, 3, label);
+        assert.notEqual(planted.status, 0, label);
+        assert.match(planted.stderr, error, label);
+        assert.equal(existsSync(target), false, label);
+      }
+
+      // The stated limit: a swallowed attempt is denied, and goes unreported.
+      const swallowed = run(
+        "swallowed",
+        `import { writeFileSync } from "node:fs";\ntry { writeFileSync(${JSON.stringify(target)}, "x"); } catch {}`
+      );
+      assert.equal(swallowed.status, 3);
+      assert.equal(existsSync(target), false);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  }
+);
+
+test(
+  "control: a planted network connection fails under the same confinement",
+  { skip: NETWORK_SKIP },
+  () => {
+    const directory = realpathSync(
+      mkdtempSync(join(tmpdir(), "castles-control-"))
+    );
+    try {
+      const planted = confined(
+        plantedCopy(
+          directory,
+          "network",
+          `process.getBuiltinModule("node:net").connect(9, "127.0.0.1");`
+        ),
+        ["check", "--json", "--fixture", casePath("ready")],
+        {},
+        directory,
+        [casePath("ready")]
+      );
+      assert.notEqual(planted.status, 3);
+      assert.notEqual(planted.status, 0);
+      assert.match(planted.stderr, /ERR_ACCESS_DENIED/u);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  }
+);
