@@ -2492,6 +2492,57 @@ test("R6: one inspection is counted exactly when the seam method was invoked", a
       "ready",
       [],
     ],
+    // Review rv11 B1. A callable need not carry the built-in `call`, and one
+    // that carries its own must not be reached through it: the method itself
+    // is what gets invoked, whatever its properties say.
+    [
+      "is a method with a null prototype",
+      (count) => ({
+        inspectBoundSandbox: Object.setPrototypeOf(
+          () => (count(), Promise.resolve(fixture.inspection)),
+          null
+        ),
+      }),
+      "ready",
+      [],
+    ],
+    [
+      "is a callable proxy answering undefined to every property",
+      (count) => ({
+        inspectBoundSandbox: new Proxy(
+          () => (count(), Promise.resolve(fixture.inspection)),
+          { get: () => undefined }
+        ),
+      }),
+      "ready",
+      [],
+    ],
+    [
+      "is a callable proxy answering a stub to every property",
+      (count) => ({
+        inspectBoundSandbox: new Proxy(
+          () => (count(), Promise.resolve(fixture.inspection)),
+          { get: () => () => CANARY }
+        ),
+      }),
+      "ready",
+      [],
+    ],
+    [
+      "carries its own call answering ready, and itself rejects",
+      (count) => ({
+        inspectBoundSandbox: Object.assign(
+          () => (count(), Promise.reject(new Error(CANARY))),
+          {
+            apply: () => Promise.resolve(fixture.inspection),
+            bind: () => () => Promise.resolve(fixture.inspection),
+            call: () => Promise.resolve(fixture.inspection),
+          }
+        ),
+      }),
+      "unavailable",
+      ["provider_unavailable"],
+    ],
   ];
   for (const [label, build, status, expected] of shapes) {
     let invoked = 0;
@@ -2506,6 +2557,29 @@ test("R6: one inspection is counted exactly when the seam method was invoked", a
     assert.deepEqual(codes(result), expected, label);
     assert.doesNotMatch(renderJson(result) + renderHuman(result), /canary/iu);
   }
+
+  // No property of the method is read on the way to invoking it.
+  const touched: PropertyKey[] = [];
+  let direct = 0;
+  const watched = new Proxy(
+    () => {
+      direct += 1;
+      return Promise.resolve(fixture.inspection);
+    },
+    {
+      get(target, key, receiver) {
+        touched.push(key);
+        return Reflect.get(target, key, receiver);
+      },
+    }
+  );
+  const untouched = await runPreflight(fixture.env, {
+    inspectBoundSandbox: watched,
+  } as SandboxInspectionClient);
+  assert.deepEqual(touched, []);
+  assert.equal(direct, 1);
+  assert.equal(untouched.status, "ready");
+  assert.equal(untouched.providerCalls.inspect, 1);
 
   // The method is read once: what was judged usable is what gets called.
   let reads = 0;
