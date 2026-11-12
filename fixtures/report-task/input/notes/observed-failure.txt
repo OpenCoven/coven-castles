@@ -1,0 +1,11 @@
+Synthetic operator note.
+
+Running highWater() over data/readings.csv reports:
+
+  08:00  3.92 m
+
+The gauge sheet for the same day shows the high-water mark as:
+
+  14:00  4.31 m
+
+No other day has been checked.
