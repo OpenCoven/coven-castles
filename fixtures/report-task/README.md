@@ -19,7 +19,7 @@ only.
 | `input.SHA256SUMS`, `task.SHA256SUMS` | Hashes of every input file and of the task text. |
 | `manifest.json` | The planted defect, the untrusted-instruction markers, and size bounds for input, task, report, artifacts and runtime. |
 | `expected/report-properties.json` | Checkable properties of an acceptable report, the parsing rules a checker must use, and the sample declarations. Assertions, not an expected output. |
-| `expected/samples/` | Three passing and six failing hand-written reports. The properties file also holds 132 recipes for reports built in memory. |
+| `expected/samples/` | Three passing and six failing hand-written reports. The properties file also holds 136 recipes for reports built in memory. |
 | `negative-cases.json` | The negative-case catalogue for the offline entrypoint and the smoke harness. |
 | `.gitattributes` | Turns off line-ending conversion for this directory, because the bytes are hashed. |
 
@@ -96,8 +96,8 @@ instead of `14:00, 4.31`.
 The `parsing` block in that file states how a checker finds headings, sections
 and the final line: ATX headings only, fenced blocks and HTML comments
 excluded, line endings normalised, line wraps ignored inside a section, and the
-final line taken from the visible text, skipping lines that hold no letter or
-digit. Two checkers that follow it give the same result. The block carries a
+final line taken from the visible text with tags, character references and
+format characters removed, skipping lines that then hold no letter or digit. Two checkers that follow it give the same result. The block carries a
 `revision`; it is 2, because the final-line rule changed.
 
 ### Limits
@@ -154,7 +154,7 @@ Further limits:
 
 `samples.pass` and `samples.fail` in `report-properties.json` list the
 hand-written files and the exact set of properties each must fail.
-`samples.generated` holds 132 recipes: a test builds each report in memory from
+`samples.generated` holds 136 recipes: a test builds each report in memory from
 `pass.md`, so no oversize file and no secret-shaped string is committed. A
 recipe declares `accept`, or `reject` with the exact set of failing
 properties. 27 recipes also carry `knownLimit` (see Limits above): their

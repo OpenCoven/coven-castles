@@ -224,8 +224,8 @@ test input, not acceptance evidence.
 The expected-report properties were exercised with a throwaway script that is
 not committed. It follows the `parsing` rules (revision 2) in
 `expected/report-properties.json`. Result at this revision: 18 text
-properties; the 3 passing files, the 6 failing files and the 132 generated
-recipes each gave exactly their declared result (141 of 141). That check
+properties; the 3 passing files, the 6 failing files and the 136 generated
+recipes each gave exactly their declared result (145 of 145). That check
 becomes part of `tests/mvp.test.ts` when the wiring gate opens; until then
 treat it as a contributor's note, not a receipt.
 
