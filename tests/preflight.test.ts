@@ -29,6 +29,7 @@ import {
   type SandboxInspectionClient,
 } from "../src/preflight";
 import {
+  BINDING_ENVIRONMENT_KEYS,
   MUTATION_OWNERS,
   OUTSIDE_LISTED_MUTATIONS,
   parseBinding,
@@ -2811,6 +2812,14 @@ const addFile =
   (files) => {
     files.set(file, text);
   };
+/** Replaces text that must be present, so a plant cannot silently miss. */
+const replaceIn =
+  (file: string, from: string, to: string): Plant =>
+  (files) => {
+    const source = files.get(file) ?? "";
+    assert.ok(source.includes(from), `plant target missing in ${file}`);
+    files.set(file, source.replace(from, to));
+  };
 
 /** Each of these must be reported by the scan. */
 const SCAN_MUST_CATCH: readonly (readonly [string, ...Plant[]])[] = [
@@ -2893,6 +2902,88 @@ const SCAN_MUST_CATCH: readonly (readonly [string, ...Plant[]])[] = [
   ["JavaScript file in src", addFile("helper.js", "")],
   ["Worker", append("cli.ts", 'new Worker("./x.ts");')],
   ["WebSocket", append("cli.ts", 'new WebSocket("wss://provider.invalid");')],
+  // The third review (rv6c-3db7f9d0, R2): any variable through `[key]`.
+  [
+    "environment read in a second loop over other keys",
+    append(
+      "cli.ts",
+      'const kept: string[] = [];\nfor (const key of ["DAYTONA_API_KEY", "GITHUB_TOKEN"]) {\n  kept.push(process.env[key] ?? "");\n}'
+    ),
+  ],
+  [
+    "environment read through a variable named key",
+    append("cli.ts", 'const key = "DAYTONA_API_KEY";\nconst value = process.env[key];'),
+  ],
+  [
+    "the binding loop doing more than copy the four values",
+    replaceIn(
+      "cli.ts",
+      "    environment[key] = process.env[key];\n",
+      '    environment[key] = process.env[key];\n    process.stderr.write(process.env[key] ?? "");\n'
+    ),
+  ],
+  [
+    "the binding loop over a shadowed key list",
+    replaceIn(
+      "cli.ts",
+      "  const environment: Record<string, string | undefined> = {};\n",
+      '  const environment: Record<string, string | undefined> = {};\n  const BINDING_ENVIRONMENT_KEYS = ["DAYTONA_API_KEY"];\n'
+    ),
+  ],
+  [
+    "the binding loop over a renamed import",
+    append("profile.ts", 'export const OTHER_KEYS = ["DAYTONA_API_KEY"] as const;'),
+    replaceIn(
+      "cli.ts",
+      'import { BINDING_ENVIRONMENT_KEYS } from "./profile.ts";',
+      'import { OTHER_KEYS as BINDING_ENVIRONMENT_KEYS } from "./profile.ts";'
+    ),
+  ],
+  [
+    "a fifth key in the binding key list",
+    replaceIn(
+      "profile.ts",
+      '  "CASTLES_SANDBOX_GENERATION",\n] as const;',
+      '  "CASTLES_SANDBOX_GENERATION",\n  "DAYTONA_API_KEY",\n] as const;'
+    ),
+  ],
+  [
+    "the binding key list widened at run time",
+    append(
+      "preflight.ts",
+      '(BINDING_ENVIRONMENT_KEYS as unknown as string[]).push("DAYTONA_API_KEY");'
+    ),
+  ],
+  [
+    "the binding key list aliased on import",
+    replaceIn(
+      "preflight.ts",
+      "  BINDING_ENVIRONMENT_KEYS,\n",
+      "  BINDING_ENVIRONMENT_KEYS,\n  BINDING_ENVIRONMENT_KEYS as keys,\n"
+    ),
+    append("preflight.ts", '(keys as unknown as string[]).push("DAYTONA_API_KEY");'),
+  ],
+  // The same review: an allowed import that can write through its flags.
+  [
+    "readFileSync with an append flag, swallowed",
+    append(
+      "preflight.ts",
+      'try {\n  readFileSync("/tmp/castles-planted", { flag: "a" });\n} catch {}'
+    ),
+  ],
+  [
+    "readFileSync with a write flag beside an encoding",
+    append("preflight.ts", 'readFileSync("x", { encoding: "utf8", flag: "w" });'),
+  ],
+  ["readFileSync under another name", append("preflight.ts", "const read = readFileSync;")],
+  [
+    "readFileSync with a flag between string-borne comment markers",
+    append("preflight.ts", 'const a = "/*"; readFileSync("x", { flag: "a" }); const b = "*/";'),
+  ],
+  [
+    "readFileSync of a named file",
+    append("preflight.ts", 'const local = readFileSync(".env", "utf8");'),
+  ],
 ];
 
 /**
@@ -2913,13 +3004,28 @@ const SCAN_KNOWN_GAPS: readonly (readonly [string, string])[] = [
 ];
 
 test("the capability scan reports each known way of reaching a capability", () => {
+  const missed: string[] = [];
   for (const [label, ...plants] of SCAN_MUST_CATCH) {
     const files = readSourceTree();
     for (const plant of plants) {
       plant(files);
     }
-    assert.notDeepEqual(scanSources(files), [], label);
+    if (scanSources(files).length === 0) {
+      missed.push(label);
+    }
   }
+  assert.deepEqual(missed, []);
+});
+
+test("the binding key list is exactly the four CASTLES_ keys", () => {
+  // Literal on purpose. The scan pins the declaration's text; this pins the
+  // value the CLI loop iterates.
+  assert.deepEqual(BINDING_ENVIRONMENT_KEYS, [
+    "CASTLES_PROFILE",
+    "CASTLES_SANDBOX_ID",
+    "CASTLES_OWNER_AGENT_ID",
+    "CASTLES_SANDBOX_GENERATION",
+  ]);
 });
 
 test("the capability scan is a tripwire, not a proof: these known evasions pass it", () => {
