@@ -2365,6 +2365,255 @@ test("R4 deadline: with no timeout option an unanswered inspection is abandoned 
   await assertDeadline(t, { timeoutMs: 60_000 }, 60_000, "timeoutMs 60000");
 });
 
+// --- Library edges for #3 and #5 callers (review rv6c-3db7f9d0, R6) ---------
+
+test("R6: a missing or unusable client is no client: no call is counted, no evidence is claimed", async () => {
+  const unusable: [string, unknown][] = [
+    ["undefined", undefined],
+    ["an empty object", {}],
+    ["a method that is a string", { inspectBoundSandbox: "live-provider" }],
+    ["a method that is null", { inspectBoundSandbox: null }],
+    ["a method that is an object", { inspectBoundSandbox: {} }],
+    ["a string", "client"],
+    ["a number", 7],
+    ["true", true],
+    ["an array", []],
+    [
+      "a method whose read throws",
+      Object.defineProperty({}, "inspectBoundSandbox", {
+        get() {
+          throw new Error(CANARY);
+        },
+      }),
+    ],
+    [
+      "a proxy answering live-provider to every property",
+      new Proxy({}, { get: () => "live-provider" }),
+    ],
+  ];
+  const absent = await runPreflight(VALID_ENV, null);
+  assert.equal(absent.status, "unavailable");
+  assert.deepEqual(absent.reasons, [{ code: "upstream_seam_missing" }]);
+  assert.equal(absent.evidence, "none");
+  assert.equal(absent.providerCalls.inspect, 0);
+  const unbound = await runPreflight({}, null);
+  assert.deepEqual(unbound.reasons, [{ code: "sandbox_id_missing" }]);
+  assert.equal(unbound.evidence, "none");
+  for (const [label, client] of unusable) {
+    const result = await runPreflight(
+      VALID_ENV,
+      client as SandboxInspectionClient
+    );
+    assert.equal(result.status, "unavailable", label);
+    assert.deepEqual(result.reasons, [{ code: "upstream_seam_missing" }], label);
+    assert.equal(result.evidence, "none", label);
+    assert.equal(result.providerCalls.inspect, 0, label);
+    assert.equal(result.observed, null, label);
+    assert.equal(isLiveReady(result), false, label);
+    // Exactly what `null` gives, with or without a valid binding.
+    assert.deepEqual(result, absent, label);
+    assert.deepEqual(
+      await runPreflight({}, client as SandboxInspectionClient),
+      unbound,
+      label
+    );
+    assert.doesNotMatch(renderJson(result) + renderHuman(result), /canary/iu);
+  }
+});
+
+test("R6: one inspection is counted exactly when the seam method was invoked", async () => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  type Shape = [string, (count: () => void) => unknown, string, string[]];
+  const shapes: Shape[] = [
+    ["answers", (count) => ({ inspectBoundSandbox: () => (count(), Promise.resolve(fixture.inspection)) }), "ready", []],
+    ["answers without a promise", (count) => ({ inspectBoundSandbox: () => (count(), fixture.inspection) }), "ready", []],
+    [
+      "throws synchronously",
+      (count) => ({
+        inspectBoundSandbox: () => {
+          count();
+          throw new Error(CANARY);
+        },
+      }),
+      "unavailable",
+      ["provider_unavailable"],
+    ],
+    ["rejects", (count) => ({ inspectBoundSandbox: () => (count(), Promise.reject(new Error(CANARY))) }), "unavailable", ["provider_unavailable"]],
+    ["never answers", (count) => ({ inspectBoundSandbox: () => (count(), new Promise(() => undefined)) }), "unavailable", ["provider_unavailable"]],
+    ["answers outside the contract", (count) => ({ inspectBoundSandbox: () => (count(), Promise.resolve(CANARY)) }), "unavailable", ["inspection_contract_violation"]],
+    [
+      "uses its own receiver",
+      (count) => ({
+        inspectBoundSandbox(this: { response: unknown }) {
+          count();
+          return Promise.resolve(this.response);
+        },
+        response: fixture.inspection,
+      }),
+      "ready",
+      [],
+    ],
+    [
+      "is a callable object carrying the method",
+      (count) =>
+        Object.assign(() => undefined, {
+          inspectBoundSandbox: () => (count(), Promise.resolve(fixture.inspection)),
+        }),
+      "ready",
+      [],
+    ],
+    [
+      "inherits the method",
+      (count) =>
+        Object.create({
+          inspectBoundSandbox: () => (count(), Promise.resolve(fixture.inspection)),
+        }),
+      "ready",
+      [],
+    ],
+  ];
+  for (const [label, build, status, expected] of shapes) {
+    let invoked = 0;
+    const client = build(() => {
+      invoked += 1;
+    }) as SandboxInspectionClient;
+    const result = await runPreflight(fixture.env, client, { timeoutMs: 25 });
+    assert.equal(invoked, 1, label);
+    assert.equal(result.providerCalls.inspect, 1, label);
+    assert.equal(result.evidence, "fixture", label);
+    assert.equal(result.status, status, label);
+    assert.deepEqual(codes(result), expected, label);
+    assert.doesNotMatch(renderJson(result) + renderHuman(result), /canary/iu);
+  }
+
+  // The method is read once: what was judged usable is what gets called.
+  let reads = 0;
+  const shifting = Object.defineProperty({}, "inspectBoundSandbox", {
+    get() {
+      reads += 1;
+      return reads === 1 ? () => Promise.resolve(fixture.inspection) : undefined;
+    },
+  }) as SandboxInspectionClient;
+  const read = await runPreflight(fixture.env, shifting);
+  assert.equal(reads, 1);
+  assert.equal(read.status, "ready");
+  assert.equal(read.providerCalls.inspect, 1);
+
+  // An invalid binding stops the check before the client is called.
+  let early = 0;
+  const counted: SandboxInspectionClient = {
+    inspectBoundSandbox: () => {
+      early += 1;
+      return Promise.resolve(fixture.inspection);
+    },
+  };
+  const invalid = await runPreflight({}, counted);
+  assert.equal(early, 0);
+  assert.equal(invalid.providerCalls.inspect, 0);
+  assert.equal(invalid.evidence, "fixture");
+});
+
+test("R6: options that are null or not an object are no options", async (t) => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const junk = [null, 7, "timeoutMs", true, [], [5], () => undefined];
+  for (const options of junk) {
+    const result = await runPreflight(
+      fixture.env,
+      createFixtureInspectionClient(fixture),
+      options as never
+    );
+    assert.equal(result.status, "ready", String(options));
+    assert.equal(result.evidence, "fixture", String(options));
+    assert.equal(result.providerCalls.inspect, 1, String(options));
+  }
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const options of junk) {
+    await assertDeadline(t, options as never, 30_000, `options ${String(options)}`);
+  }
+});
+
+test("R6: a null or non-object environment is an unconfigured binding, not an exception", async () => {
+  const unconfigured = { ok: false, partial: {}, problem: "sandbox_id_missing" };
+  for (const environment of [null, undefined, 7, "CASTLES_SANDBOX_ID", true, [], ["x"]]) {
+    const label = String(environment);
+    assert.deepEqual(parseBinding(environment as never), unconfigured, label);
+    const wire = tripwireClient(() => ({}));
+    const result = await runPreflight(environment as never, wire.client);
+    assert.equal(result.status, "unavailable", label);
+    assert.deepEqual(result.reasons, [{ code: "sandbox_id_missing" }], label);
+    assert.deepEqual(wire.calls, [], label);
+    assert.equal(result.providerCalls.inspect, 0, label);
+    assert.equal(result.evidence, "fixture", label);
+    assert.equal(result.observed, null, label);
+    assert.deepEqual(
+      result.target,
+      { expectedGeneration: null, ownerAlias: null, profile: null, sandboxAlias: null },
+      label
+    );
+    const none = await runPreflight(environment as never, null);
+    assert.equal(none.evidence, "none", label);
+    assert.deepEqual(none.reasons, [{ code: "sandbox_id_missing" }], label);
+  }
+});
+
+const UNUSABLE_TIMEOUTS: [string, unknown][] = [
+  ["2^31", 2 ** 31],
+  ["2^31 - 1 + 0.5", 2 ** 31 - 0.5],
+  ["Infinity", Number.POSITIVE_INFINITY],
+  ["-Infinity", Number.NEGATIVE_INFINITY],
+  ["NaN", Number.NaN],
+  ["MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER],
+  ["1e21", 1e21],
+  ["0", 0],
+  ["0.5", 0.5],
+  ["-1", -1],
+  ["null", null],
+  ['"20"', "20"],
+  ["true", true],
+  ["an object", {}],
+  ["an array", [20]],
+  ["a bigint", 20n],
+];
+
+test("R6: a timeout that is not a number from 1 to 2^31-1 falls back to the 30-second default", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const [label, timeoutMs] of UNUSABLE_TIMEOUTS) {
+    await assertDeadline(t, { timeoutMs } as never, 30_000, `timeoutMs ${label}`);
+  }
+  // Inside the range the stated deadline is used as stated.
+  for (const timeoutMs of [1, 20, 30_001, 2 ** 31 - 1]) {
+    await assertDeadline(t, { timeoutMs }, timeoutMs, `timeoutMs ${timeoutMs}`);
+  }
+});
+
+test("R6: an unusable timeout does not abandon a provider that answers, and Node is never handed it", async () => {
+  // Real timers. Node replaces a delay above 2^31-1, or one that is not a
+  // number, with 1 ms and emits a warning; a check must not inherit that.
+  const fixture = loadFixtureCase(casePath("ready"));
+  const slow: SandboxInspectionClient = {
+    inspectBoundSandbox: () =>
+      new Promise((resolve) => {
+        setTimeout(() => resolve(fixture.inspection), 40);
+      }),
+  };
+  const warnings: string[] = [];
+  const onWarning = (warning: Error) => {
+    warnings.push(warning.name);
+  };
+  process.on("warning", onWarning);
+  try {
+    for (const [label, timeoutMs] of UNUSABLE_TIMEOUTS) {
+      const result = await runPreflight(fixture.env, slow, { timeoutMs } as never);
+      assert.equal(result.status, "ready", `timeoutMs ${label}`);
+      assert.deepEqual(result.reasons, [], `timeoutMs ${label}`);
+    }
+    await afterMicrotasks();
+  } finally {
+    process.off("warning", onWarning);
+  }
+  assert.deepEqual(warnings, []);
+});
+
 // --- Structural: no second adapter, no network, no writes ------------------
 
 /**
