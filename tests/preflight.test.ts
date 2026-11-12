@@ -17,6 +17,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   createFixtureInspectionClient,
+  DEFAULT_INSPECTION_TIMEOUT_MS,
   FIXTURE_LABEL,
   isLiveReady,
   loadFixtureCase,
@@ -1752,6 +1753,489 @@ test("the missing upstream binding seam is an explicit blocker with a link", () 
     UPSTREAM_SEAM.issue,
     /^https:\/\/github\.com\/OpenCoven\/coven-agents\/issues\/\d+$/u
   );
+});
+
+// --- Test gaps found by mutation (review rv6c-3db7f9d0, R4) -----------------
+// Behaviour was already correct for every case below; these pin it. Each
+// test names the single-edit mutation of src/ that it exists to catch.
+
+test("R4 egress: the entry cap counts every entry, duplicates included, and nothing else", async () => {
+  const network = async (value: string) =>
+    withSandbox((sandbox) => {
+      sandbox.domainAllowList = null;
+      sandbox.networkAllowList = value;
+    });
+  // Mutation: counting distinct entries. Eleven copies of one range are
+  // eleven entries.
+  const repeated = (count: number) =>
+    Array.from({ length: count }, () => "10.0.0.0/8").join(",");
+  for (const [label, value] of [
+    ["11 x the same /8", repeated(11)],
+    ["10 distinct ranges and one repeat", `${slash8(1, 10)},1.0.0.0/8`],
+    ["12 entries, 2 distinct", `${repeated(6)},${Array.from({ length: 6 }, () => "11.0.0.0/8").join(",")}`],
+  ] as const) {
+    const result = await network(value);
+    assert.equal(result.status, "incompatible", label);
+    assert.deepEqual(
+      result.reasons,
+      [{ code: "egress_allow_list_unsafe", field: "networkAllowList" }],
+      label
+    );
+  }
+  const tenRepeats = await network(repeated(10));
+  assert.equal(tenRepeats.status, "ready");
+  assert.equal(tenRepeats.observed?.exposure.egressAllowListEntries, 10);
+
+  // Mutation: counting raw comma-separated pieces. An empty piece is not an
+  // entry, so ten ranges stay ten however the commas are padded.
+  for (const [label, value] of [
+    ["trailing commas", `${slash8(1, 10)},,`],
+    ["leading commas", `,,${slash8(1, 10)}`],
+    ["doubled commas", slash8(1, 10).replaceAll(",", ",,")],
+    ["blank pieces", slash8(1, 10).replaceAll(",", " , , ")],
+  ] as const) {
+    const result = await network(value);
+    assert.equal(result.status, "ready", label);
+    assert.deepEqual(result.reasons, [], label);
+    assert.equal(result.observed?.exposure.egressAllowListEntries, 10, label);
+  }
+});
+
+test("R4 egress: the comma is the only separator in either allow list", async () => {
+  // Mutation: accepting `;` (or anything else) as a second separator. Two
+  // good entries joined by another character are one bad entry.
+  const separators = [
+    ";",
+    "|",
+    " ",
+    "\t",
+    "\n",
+    "\r\n",
+    ":",
+    "+",
+    "&",
+    "\uFF0C", // full-width comma
+    "\u3001", // ideographic comma
+    "\u061B", // Arabic semicolon
+  ];
+  for (const separator of separators) {
+    for (const [field, value] of [
+      ["networkAllowList", `10.0.0.0/8${separator}11.0.0.0/8`],
+      ["domainAllowList", `a.fixture.invalid${separator}b.fixture.invalid`],
+    ] as const) {
+      const where = `${field} joined by ${JSON.stringify(separator)}`;
+      const result = await withSandbox((sandbox) => {
+        sandbox.domainAllowList = null;
+        sandbox[field] = value;
+      });
+      assert.equal(result.status, "incompatible", where);
+      assert.deepEqual(
+        result.reasons,
+        [{ code: "egress_allow_list_unsafe", field }],
+        where
+      );
+      assert.equal(result.observed?.exposure.egressAllowListEntries, 1, where);
+    }
+  }
+});
+
+test("R4 domain: no underscore in a label, and no label starts or ends with a hyphen", async () => {
+  // Mutations: `_` allowed inside a label; a final label ending in `-`.
+  const refused = [
+    "fix_ture.invalid",
+    "_fixture.invalid",
+    "fixture_.invalid",
+    "a.fix_ture.invalid",
+    "fixture.in_valid",
+    "fixture.invalid_",
+    "fixture._invalid",
+    "fixture.invalid-",
+    "fixture.i-",
+    "fixture.in-valid-",
+    "fixture.-invalid",
+    "fixture.-",
+    "-.invalid",
+    "a.fixture-.invalid",
+  ];
+  for (const value of refused) {
+    for (const list of [value, `fixture.invalid,${value}`]) {
+      const result = await withSandbox((sandbox) => {
+        sandbox.domainAllowList = list;
+      });
+      assert.equal(result.status, "incompatible", JSON.stringify(list));
+      assert.deepEqual(
+        result.reasons,
+        [{ code: "egress_allow_list_unsafe", field: "domainAllowList" }],
+        JSON.stringify(list)
+      );
+    }
+  }
+  for (const value of [
+    "fix-ture.invalid",
+    "fixture.in-valid",
+    "f--x.in--valid",
+    "f.i",
+    "0-0.i-0",
+  ]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.domainAllowList = value;
+    });
+    assert.equal(result.status, "ready", value);
+    assert.deepEqual(result.reasons, [], value);
+  }
+});
+
+test("R4 sdk version: each part has at most four digits and nothing follows the version", async () => {
+  const withVersion = (version: string) =>
+    withInspection((inspection) => {
+      inspection.sdk.version = version;
+    });
+  // Mutation: version parts of up to 31 digits.
+  for (const version of ["9999.9999.9999", "1000.0.0", "0.1000.0", "0.0.1000"]) {
+    const result = await withVersion(version);
+    assert.equal(result.observed?.sdk.version, version, version);
+  }
+  const pinned = await withVersion("0.220.0");
+  assert.equal(pinned.status, "ready");
+  assert.equal(pinned.observed?.sdk.version, "0.220.0");
+  const lines = renderHuman(pinned).split("\n").length;
+
+  // Mutation: a multi-line flag on the version pattern, which would echo a
+  // valid version followed by a newline and any text.
+  const refused = [
+    "10000.0.0",
+    "0.10000.0",
+    "0.0.10000",
+    "12345678901234567890.0.0",
+    "0.220.1234567890123456789012345678901",
+    "0.220.0\n",
+    "\n0.220.0",
+    "0.220.0\nfixture-free-text",
+    "fixture-free-text\n0.220.0",
+    "0.220.0\r\nfixture-free-text",
+    "0.220.0\rfixture-free-text",
+    "0.220.0\u2028fixture-free-text",
+    "0.220.0\u2029fixture-free-text",
+    "0.220.0 ",
+    " 0.220.0",
+    "0.220.0\t",
+    "0.220.0\u0000",
+  ];
+  for (const version of refused) {
+    const where = JSON.stringify(version);
+    const result = await withVersion(version);
+    assert.equal(result.observed?.sdk.version, "unrecognised", where);
+    assert.equal(result.status, "incompatible", where);
+    assert.deepEqual(
+      result.reasons,
+      [{ code: "sdk_generation_mismatch", field: "sdk" }],
+      where
+    );
+    const human = renderHuman(result);
+    const json = renderJson(result);
+    assert.match(human, /; sdk unrecognised\n/u, where);
+    assert.equal(JSON.parse(json).observed.sdk.version, "unrecognised", where);
+    // One reason heading and one reason line more than the ready output,
+    // and no line supplied by the response.
+    assert.equal(human.split("\n").length, lines + 2, where);
+    for (const output of [human, json]) {
+      assert.doesNotMatch(output, /free-text/u, where);
+      assert.doesNotMatch(output, /[\r\u2028\u2029\u0000\t]/u, where);
+    }
+  }
+});
+
+// Written out, not derived from src/: removing a member from a set in
+// src/preflight.ts, or accepting a value from another set, must turn the two
+// tests below red. `x64` is left out on purpose: whether it should join the
+// architecture set is an open maintainer decision, and nothing here pins it.
+const ECHO_VOCABULARY: Readonly<Record<string, readonly string[]>> = {
+  "binding.attemptFence": ["clear", "cleanup_required"],
+  "binding.lifecycle": [
+    "unprovisioned",
+    "provisioning",
+    "provisioning_ambiguous",
+    "ready",
+    "resizing",
+    "resetting",
+    "decommissioning",
+    "decommission_failed",
+  ],
+  "platform.architecture": ["x86_64", "amd64", "aarch64", "arm64"],
+  "platform.os": ["linux"],
+  "sandbox.snapshot": ["coven-agents-copilot-2"],
+  "sandbox.state": [
+    "creating",
+    "restoring",
+    "destroyed",
+    "destroying",
+    "started",
+    "stopped",
+    "starting",
+    "stopping",
+    "error",
+    "build_failed",
+    "pending_build",
+    "building_snapshot",
+    "unknown",
+    "pulling_snapshot",
+    "archived",
+    "archiving",
+    "resizing",
+    "snapshotting",
+    "forking",
+    "pausing",
+    "paused",
+    "resuming",
+  ],
+  "sandbox.target": ["us", "eu"],
+};
+const ECHO_READERS: Readonly<
+  Record<string, (result: PreflightResult) => unknown>
+> = {
+  "binding.attemptFence": (r) => r.observed?.binding.attemptFence,
+  "binding.lifecycle": (r) => r.observed?.binding.lifecycle,
+  "platform.architecture": (r) => r.observed?.platform.architecture,
+  "platform.os": (r) => r.observed?.platform.os,
+  "sandbox.snapshot": (r) => r.observed?.image.snapshot,
+  "sandbox.state": (r) => r.observed?.state,
+  "sandbox.target": (r) => r.observed?.target,
+};
+// Plausible names that are in no set. An added member that is not listed
+// here, and belongs to no other field's set, is not caught: the sets are not
+// exported, so this test cannot compare them whole.
+const ECHO_NEAR_MISSES = [
+  "running",
+  "active",
+  "deleted",
+  "deleting",
+  "terminated",
+  "suspended",
+  "failed",
+  "pending",
+  "created",
+  "queued",
+  "held",
+  "locked",
+  "released",
+  "fenced",
+  "none",
+  "open",
+  "busy",
+  "i386",
+  "arm",
+  "armv7",
+  "riscv64",
+  "ppc64le",
+  "s390x",
+  "darwin",
+  "windows",
+  "win32",
+  "freebsd",
+  "ap",
+  "asia",
+  "local",
+  "default",
+  "coven-agents-copilot-1",
+  "coven-agents-copilot-3",
+  "coven-agents-copilot",
+  "coven-agents-copilot-20",
+];
+
+test("R4 vocabulary: every member of every fixed set is echoed exactly", async () => {
+  // Mutation: removing `amd64`, a sandbox state or a binding lifecycle.
+  const setters = new Map(ECHOED_FIELDS);
+  let checked = 0;
+  for (const [field, members] of Object.entries(ECHO_VOCABULARY)) {
+    for (const member of members) {
+      const result = await withInspection((inspection) =>
+        setters.get(field)?.(inspection, member)
+      );
+      assert.equal(ECHO_READERS[field]?.(result), member, `${field}=${member}`);
+      checked += 1;
+    }
+  }
+  assert.equal(checked, 2 + 8 + 4 + 1 + 1 + 22 + 2);
+  // Each stated architecture is also accepted, not only echoed.
+  for (const architecture of ECHO_VOCABULARY["platform.architecture"] ?? []) {
+    const result = await withInspection((inspection) => {
+      inspection.platform.architecture = architecture;
+    });
+    assert.equal(result.status, "ready", architecture);
+    assert.deepEqual(result.reasons, [], architecture);
+  }
+});
+
+test("R4 vocabulary: a member of another field's set, a near miss or a variant spelling is unrecognised", async () => {
+  // Mutation: adding a sandbox state or an attempt-fence value.
+  const setters = new Map(ECHOED_FIELDS);
+  const everyMember = Object.values(ECHO_VOCABULARY).flat();
+  for (const [field, members] of Object.entries(ECHO_VOCABULARY)) {
+    const variants = members.flatMap((member) => [
+      member.toUpperCase(),
+      `${member[0]?.toUpperCase()}${member.slice(1)}`,
+      ` ${member}`,
+      `${member} `,
+      `${member}\n`,
+      `${member}s`,
+      `${member}_`,
+      member.slice(0, -1),
+    ]);
+    const outside = new Set(
+      [...everyMember, ...ECHO_NEAR_MISSES, ...variants, ""].filter(
+        (value) => !members.includes(value)
+      )
+    );
+    assert.ok(outside.size >= 60, field);
+    for (const value of outside) {
+      const where = `${field}=${JSON.stringify(value)}`;
+      const result = await withInspection((inspection) =>
+        setters.get(field)?.(inspection, value)
+      );
+      assert.equal(ECHO_READERS[field]?.(result), "unrecognised", where);
+      assert.notEqual(result.status, "ready", where);
+    }
+  }
+});
+
+test("R4 evidence: every replayed outcome is fixture evidence, identity failures included", async () => {
+  // Mutation: an identity failure reported as `none` instead of `fixture`.
+  for (const name of [...FAIL_CLOSED_CASES, "ready", "stopped"]) {
+    const { fixture, result } = await runCase(name);
+    assert.equal(result.evidence, "fixture", name);
+    assert.equal(result.providerCalls.inspect, fixture.expect.inspectCalls, name);
+    assert.equal(isLiveReady(result), false, name);
+  }
+  const identity: [string, string, (inspection: any) => void][] = [
+    ["owner_mismatch", "unauthorized", (i) => (i.binding.agentId = "fixture-agent-9999")],
+    ["binding_mismatch", "unauthorized", (i) => (i.binding.sandboxId = "fixture-sandbox-9999")],
+    ["returned_id_mismatch", "reconciliation-required", (i) => (i.sandbox.id = "fixture-sandbox-9999")],
+  ];
+  for (const [code, status, edit] of identity) {
+    const result = await withInspection(edit);
+    assert.equal(result.status, status, code);
+    assert.deepEqual(codes(result), [code]);
+    assert.equal(result.evidence, "fixture", code);
+    assert.equal(result.providerCalls.inspect, 1, code);
+    assert.equal(result.observed, null, code);
+    assert.match(renderHuman(result), /^evidence: FIXTURE /mu, code);
+    assert.equal(JSON.parse(renderJson(result)).evidence, "fixture", code);
+  }
+});
+
+test("R4 owners: the whole mutation-owner table is these literal rows, `via` included", () => {
+  // Mutation: the `via` text of a row. Written out, not derived.
+  const at = (path: string) =>
+    `OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180:${path}`;
+  const sandbox = at("lib/runner/daytona/sandbox.ts");
+  const row = (mutation: string, owner: string, via: string) => ({
+    castles: "never",
+    mutation,
+    owner,
+    via,
+  });
+  assert.deepEqual(MUTATION_OWNERS, [
+    row("create", sandbox, "ensureDaytonaSandbox / ensureDaytonaSandboxForDispatch"),
+    row("start", sandbox, "ensureDaytonaSandbox* (start or recover on attach)"),
+    row(
+      "stop",
+      sandbox,
+      "provider auto-stop policy set at create; no application stop call at this pin"
+    ),
+    row(
+      "archive",
+      sandbox,
+      "provider auto-archive policy set at create; no application archive call at this pin"
+    ),
+    row(
+      "resize",
+      at("lib/runner/daytona/resource-repair.ts"),
+      "RunnerPersistentResourceLifecycle.repair"
+    ),
+    row(
+      "delete",
+      sandbox,
+      "RunnerPersistentResourceLifecycle.decommission / recover (also resource-recovery.ts)"
+    ),
+    row("reset", sandbox, "RunnerPersistentResourceLifecycle.reset"),
+    row(
+      "adopt-policy",
+      sandbox,
+      "adoptDaytonaSandboxPolicy (labels, auto-stop, auto-archive)"
+    ),
+    row(
+      "diagnostic-create",
+      at("lib/runner/diagnostics.ts"),
+      "diagnoseDaytonaSandbox (its own ephemeral diagnostic sandbox, 5 minute TTL)"
+    ),
+    row(
+      "diagnostic-delete",
+      at("lib/runner/diagnostics.ts"),
+      "diagnoseDaytonaSandbox / runEphemeralDiagnostic (deletes the sandbox it created)"
+    ),
+  ]);
+  assert.deepEqual(OUTSIDE_LISTED_MUTATIONS, [
+    {
+      at: at("lib/runner/daytona/process.ts"),
+      castles: "never",
+      operation: "command execution inside a sandbox",
+    },
+    {
+      at: at("lib/runner/daytona/image.ts"),
+      castles: "never",
+      operation: "snapshot creation",
+    },
+  ]);
+});
+
+const afterMicrotasks = () =>
+  new Promise<void>((resolve) => setImmediate(resolve));
+
+/**
+ * Asserts that a check against a client that never answers is abandoned at
+ * exactly `expectedMs` on a mocked clock: still pending one millisecond
+ * earlier, `provider_unavailable` at the deadline.
+ */
+async function assertDeadline(
+  context: { mock: { timers: { tick: (ms: number) => void } } },
+  options: Parameters<typeof runPreflight>[2] | undefined,
+  expectedMs: number,
+  label: string
+) {
+  const client: SandboxInspectionClient = {
+    inspectBoundSandbox: () => new Promise(() => undefined),
+  };
+  const seen: PreflightResult[] = [];
+  const pending =
+    options === undefined
+      ? runPreflight(VALID_ENV, client)
+      : runPreflight(VALID_ENV, client, options);
+  void pending.then((result) => {
+    seen.push(result);
+  });
+  await afterMicrotasks();
+  context.mock.timers.tick(expectedMs - 1);
+  await afterMicrotasks();
+  assert.equal(seen.length, 0, `${label}: settled before ${expectedMs} ms`);
+  context.mock.timers.tick(1);
+  await afterMicrotasks();
+  assert.equal(seen.length, 1, `${label}: not settled at ${expectedMs} ms`);
+  const [settled] = seen;
+  assert.equal(settled?.status, "unavailable", label);
+  assert.deepEqual(settled?.reasons, [{ code: "provider_unavailable" }], label);
+  assert.equal(settled?.providerCalls.inspect, 1, label);
+}
+
+test("R4 deadline: with no timeout option an unanswered inspection is abandoned at 30 seconds", async (t) => {
+  // Mutation: the 30-second default.
+  assert.equal(DEFAULT_INSPECTION_TIMEOUT_MS, 30_000);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await assertDeadline(t, undefined, 30_000, "no options");
+  await assertDeadline(t, {}, 30_000, "empty options");
+  await assertDeadline(t, { timeoutMs: undefined }, 30_000, "timeoutMs undefined");
+  // A stated deadline is used as stated.
+  await assertDeadline(t, { timeoutMs: 1234 }, 1234, "timeoutMs 1234");
+  await assertDeadline(t, { timeoutMs: 60_000 }, 60_000, "timeoutMs 60000");
 });
 
 // --- Structural: no second adapter, no network, no writes ------------------
