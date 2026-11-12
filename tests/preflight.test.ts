@@ -2597,9 +2597,13 @@ test("R6: an unusable timeout does not abandon a provider that answers, and Node
         setTimeout(() => resolve(fixture.inspection), 40);
       }),
   };
+  // Only timer warnings count: an unrelated one (Node 22.0.0 warns once that
+  // mocked timers are experimental) must not fail this test.
   const warnings: string[] = [];
   const onWarning = (warning: Error) => {
-    warnings.push(warning.name);
+    if (warning.name.startsWith("Timeout")) {
+      warnings.push(warning.name);
+    }
   };
   process.on("warning", onWarning);
   try {
