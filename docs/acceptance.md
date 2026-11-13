@@ -81,7 +81,7 @@ Each original promise remains in the matrix. `verified` requires independently r
 | #5-R6 | Failure/unknown states visible; no test bypasses identity, credential, authorization, budget or cleanup enforcement | unverified | Cases CFG-04, CFG-06, REU-04. |
 | #5-R7 | Existing user data unchanged; any start/stop specifically authorized; no provision, resize, delete, reset, payment, release or deployment | unverified | No live work performed or authorized. Trivially true so far; not evidence. Cases CFG-10, BST-04, REC-07, REU-05, REU-08. |
 | #5-R8 | README uses only verified claims; a fixture pass does not mean live acceptance, and a one-shot live result does not mean the repeatable MVP is ready | unverified | README is #2's file; no #5 quickstart text exists. Case ADM-11 covers labelling only. |
-| #5-R9 | Handoff maps each promise to a revision and evidence class, names owners and next action; unimplemented or skipped live checks remain unverified, never silently green | unverified | This matrix and all 76 case mappings are executable consistency checks; final exact-SHA handoff and independent acceptance remain separate process evidence. |
+| #5-R9 | Handoff maps each promise to a revision and evidence class, names owners and next action; unimplemented or skipped live checks remain unverified, never silently green | unverified | This matrix is documentation. Catalogue ID completeness and nonempty coverage/dependency descriptions are checked by the suite; the claims themselves require review. Final exact-SHA handoff and independent acceptance remain separate process evidence. |
 
 ## Catalogue coverage
 
