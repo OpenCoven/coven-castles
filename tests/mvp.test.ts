@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { smokeRefusal, type SmokeRefusal } from "../scripts/smoke.ts";
+import { runsAsProgram, smokeRefusal, type SmokeRefusal } from "../scripts/smoke.ts";
 import { createFixtureInspectionClient, isLiveReady, loadFixtureCase, renderHuman, renderJson,
   runPreflight, type SandboxInspectionClient } from "../src/preflight.ts";
 
@@ -317,6 +317,10 @@ test("B1 smoke refuses however it is invoked as the program", () => {
       assert.equal(smokeRun([...command, ...liveArgs]).reason, "canonical_capabilities_unavailable", `${label}, --live`);
     }
   } finally { rmSync(directory, {recursive: true, force: true}); }
+});
+test("B1 only Node's explicit false skips the refusal, so a Node without import.meta.main fails closed", () => {
+  assert.equal(runsAsProgram(false), false);
+  for (const main of [true, undefined, null, 0, "", "false", {}]) assert.equal(runsAsProgram(main), true, String(main));
 });
 test("B1 importing the smoke module is side-effect free", () => {
   const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval",
