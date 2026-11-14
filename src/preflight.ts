@@ -842,6 +842,11 @@ type Inspect = SandboxInspectionClient["inspectBoundSandbox"];
  * owns and bound to that same operation. Writing `method.call(...)` would
  * read `call` from the method, so a method without the built-in one could
  * not be invoked, and a method carrying its own would be bypassed.
+ *
+ * Taken at module load, so it is whatever the built-in `call` and `bind`
+ * of functions were then. "No property of the method is read" and "one
+ * inspection is counted exactly when the method was invoked" hold in a
+ * realm whose built-ins were intact when this module was imported.
  */
 const builtInCall = seamOf.call as (
   this: unknown,

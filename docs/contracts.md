@@ -201,7 +201,12 @@ read from the client or from the method.
 These hold for plain values. A property whose read throws, on the
 `environment`, the `options` or a response held in memory, still makes
 `runPreflight` reject with the caller's own error; only a throwing read of
-the client's property is caught.
+the client's property is caught. They also assume the realm's built-ins were
+intact when `src/preflight.ts` was loaded: the module takes
+`Function.prototype.call` and `bind` once, at load, to invoke the seam
+method, so code that replaced them before the import decides how the method
+is invoked. Code that runs first in the same realm could already decide the
+outcome at `13ab3bc` (by replacing `Promise.race`, for example).
 
 **Consumers must gate on this, never on `status` alone.** A fixture replay can
 report `status: "ready"`; it is not readiness.
