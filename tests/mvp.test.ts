@@ -265,8 +265,12 @@ const liveArgs = ["--live", "--sandbox-id", syntheticBinding.CASTLES_SANDBOX_ID,
   "--max-spend-usd", "0.01", "--max-seconds", "900"];
 
 function smoke(args: string[], binding: Record<string, string> = syntheticBinding) {
-  const child = spawnSync(process.execPath, ["--import", "tsx", "scripts/smoke.ts", ...args], {
-    cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
+  return smokeRun([process.execPath, "--import", "tsx", "scripts/smoke.ts", ...args], binding);
+}
+/** Runs one smoke invocation, given as a full command line, and requires the refusal contract. */
+function smokeRun(command: string[], binding: Record<string, string> = syntheticBinding, cwd = root) {
+  const child = spawnSync(command[0], command.slice(1), {
+    cwd, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
     env: { PATH: process.env.PATH, TSX_DISABLE_CACHE: "1", ...binding },
   });
   assert.equal(child.error, undefined, "smoke subprocess must finish before its deadline");
@@ -286,6 +290,44 @@ function smoke(args: string[], binding: Record<string, string> = syntheticBindin
 
 test("CFG-03 smoke without explicit opt-in refuses", () => {
   assert.equal(smoke([]).reason, "explicit_opt_in_required");
+});
+test("B1 smoke refuses however it is invoked as the program", () => {
+  // Second reads rv5-aa741628 and rv5b-7a31c9e4, B1: at df7597b every spelling
+  // but the exact relative path exited 0 with no output.
+  const tsxBin = resolve(root, "node_modules/.bin/tsx");
+  const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-entry-"));
+  try {
+    symlinkSync(resolve(root, "scripts/smoke.ts"), resolve(directory, "link.ts"));
+    symlinkSync(resolve(root, "scripts/smoke.ts"), resolve(directory, "smoke-link"));
+    symlinkSync(resolve(root, "scripts"), resolve(directory, "aliased-scripts"));
+    const node = [process.execPath, "--import", "tsx"];
+    const spellings: [string, string[]][] = [
+      ["exact relative path", [...node, "scripts/smoke.ts"]],
+      ["no extension", [...node, "scripts/smoke"]],
+      ["dot segments", [...node, "./scripts/../scripts/smoke.ts"]],
+      ["absolute path", [...node, resolve(root, "scripts/smoke.ts")]],
+      ["the tsx binary, no extension", [tsxBin, "scripts/smoke"]],
+      ["the tsx binary", [tsxBin, "scripts/smoke.ts"]],
+      ["a symlink to the script", [...node, resolve(directory, "link.ts")]],
+      ["an extensionless symlink", [...node, resolve(directory, "smoke-link")]],
+      ["a path through a symlinked directory", [...node, resolve(directory, "aliased-scripts/smoke.ts")]],
+    ];
+    for (const [label, command] of spellings) {
+      assert.equal(smokeRun(command).reason, "explicit_opt_in_required", label);
+      assert.equal(smokeRun([...command, ...liveArgs]).reason, "canonical_capabilities_unavailable", `${label}, --live`);
+    }
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
+test("B1 importing the smoke module is side-effect free", () => {
+  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval",
+    "const m = await import('./scripts/smoke.ts'); process.stdout.write(typeof m.smokeRefusal);"], {
+    cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
+    env: {PATH: process.env.PATH, TSX_DISABLE_CACHE: "1", ...syntheticBinding},
+  });
+  assert.equal(child.error, undefined);
+  assert.equal(child.status, 0);
+  assert.equal(child.stdout, "function");
+  assert.equal(child.stderr, "");
 });
 test("CFG-04 smoke rejects missing and malformed budgets", () => {
   assert.equal(smoke(["--live"]).reason, "budget_required");
