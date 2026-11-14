@@ -5061,3 +5061,51 @@ test("absent key: an explicit null still reads as not set, as at 13ab3bc", async
   });
   assert.deepEqual(open.reasons, [{ code: "egress_unrestricted", field: "egress" }]);
 });
+
+// --- The deadline timer --------------------------------------------------------
+//
+// Single-edit mutation at this revision: deleting `clearTimeout(timer)` in
+// `inspectOnce` left every result unchanged and was noticed only because the
+// suite then never finished (a stated deadline up to 2^31-1 ms kept the
+// process alive). This pins it directly.
+
+test("the deadline timer is cleared once the inspection settles, whatever the outcome", async () => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const realSet = globalThis.setTimeout;
+  const realClear = globalThis.clearTimeout;
+  const created: unknown[] = [];
+  const cleared = new Set<unknown>();
+  globalThis.setTimeout = ((handler: () => void, ms?: number) => {
+    const id = realSet(handler, ms);
+    created.push(id);
+    return id;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((id?: Parameters<typeof clearTimeout>[0]) => {
+    cleared.add(id);
+    realClear(id);
+  }) as typeof clearTimeout;
+  try {
+    for (const inspect of [
+      async () => fixture.inspection,
+      async () => {
+        throw new Error("synthetic refusal");
+      },
+      async () => ({ synthetic: "not an inspection" }),
+    ]) {
+      await runPreflight(
+        fixture.env,
+        { inspectBoundSandbox: inspect } as unknown as SandboxInspectionClient,
+        { timeoutMs: 60_000 }
+      );
+    }
+  } finally {
+    globalThis.setTimeout = realSet;
+    globalThis.clearTimeout = realClear;
+  }
+  assert.equal(created.length, 3, "one deadline timer per inspection");
+  assert.deepEqual(
+    created.filter((id) => !cleared.has(id)),
+    [],
+    "every deadline timer is cleared"
+  );
+});
