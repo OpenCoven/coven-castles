@@ -279,6 +279,56 @@ test("fixture filesystem inventory refuses a symlinked root and never reads a sy
     assert.throws(() => inputFiles(resolve(directory, "root-link")), "root symlink must be refused");
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
+/**
+ * N1 and N4 of rv5b-7a31c9e4, N1 of rv5-aa741628. The checksum files prove
+ * only that the inputs agree with them: an input changed together with its
+ * line in input.SHA256SUMS passed, and so did an empty directory, an
+ * executable bit, an unlisted sample, a deleted rule block and moved
+ * known-limit labels. This pins every entry of fixtures/report-task (type,
+ * path, executable bit, SHA-256) to the corpus merged at
+ * 302bb4533aaccde8165d8efe596502da286891b0, so any fixture change must change
+ * this digest in the same reviewed commit.
+ */
+const REPORT_TASK_TREE = "6ab2be1f0c4e5945740c2c816c99c74e66343acdeb7fd9a75bf22cee508e8e1d";
+function treeEntries(directory: string, prefix = ""): string[] {
+  return readdirSync(directory).sort().flatMap(name => {
+    const path = prefix + name;
+    const absolute = resolve(directory, name);
+    const stat = lstatSync(absolute);
+    if (stat.isSymbolicLink()) return [`link ${path}`];
+    if (stat.isDirectory()) return [`dir ${path}`, ...treeEntries(absolute, path + "/")];
+    return [`file ${path} ${stat.mode & 0o111 ? "x" : "-"} ${sha(readFileSync(absolute))}`];
+  });
+}
+test("N1 N4 fixtures/report-task is entry for entry the corpus merged at 302bb45", () => {
+  const entries = treeEntries(fixtureRoot);
+  assert.equal(entries.length, 28);
+  assert.equal(sha(Buffer.from(entries.join("\n"))), REPORT_TASK_TREE);
+});
+test("N4 inventory: no empty directory or executable input, exactly the declared samples, all six run-evidence rules", () => {
+  const walk = (directory: string): void => {
+    const names = readdirSync(directory);
+    assert.ok(names.length > 0, "an empty directory is outside the checksum inventory");
+    for (const name of names) {
+      const stat = lstatSync(resolve(directory, name));
+      if (stat.isDirectory()) walk(resolve(directory, name));
+      else assert.equal(stat.mode & 0o111, 0, `${name}: input files are data, never executable`);
+    }
+  };
+  walk(resolve(fixtureRoot, "input"));
+  const declared = [...properties.samples.pass, ...properties.samples.fail.map(sample => sample.path)];
+  assert.deepEqual(readdirSync(resolve(fixtureRoot, "expected/samples")).map(name => `expected/samples/${name}`).sort(),
+    [...declared].sort());
+  const evidence = (properties as unknown as {onRunEvidence: {items: {id: string}[]}}).onRunEvidence;
+  assert.deepEqual(evidence.items.map(item => item.id), ["RE-01", "RE-02", "RE-03", "RE-04", "RE-05", "RE-06"]);
+});
+test("N1 every known-limit label agrees with its recipe's expectation", () => {
+  for (const recipe of recipes) {
+    if (recipe.knownLimit === "false accept") assert.equal(recipe.expect, "accept", recipe.id);
+    else if (recipe.knownLimit === "false reject") assert.equal(recipe.expect, "reject", recipe.id);
+    else assert.equal(recipe.knownLimit, undefined, recipe.id);
+  }
+});
 test("OUT-01 OUT-02 fixture audit enforces full path matches, UTF-8 and every inclusive input bound", () => {
   const rehash = (files: InputFile[]) => files.map(file => `${sha(file.bytes)}  ${file.path}\n`).join("");
   const audit = (files: InputFile[], task = Buffer.from("task")) =>
