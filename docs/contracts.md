@@ -33,20 +33,46 @@ starts again as **proposed**.
 
 ## Produced by #2
 
-Snapshot of draft PR
-[#6](https://github.com/OpenCoven/coven-castles/pull/6) taken
-2026-11-12T05:40Z. Everything below describes the source at this revision.
+Snapshot of draft PR [#12](https://github.com/OpenCoven/coven-castles/pull/12)
+(branch `castles/2-revision-cc2f-4dfe81ab`), taken 2026-11-14. Everything
+below describes the source at that PR's head, which is a **proposed**
+revision. A commit cannot name its own SHA: the exact head is in the PR and
+in the handoff on #2. What the maintainer accepted is still
+`13ab3bc2c823fe12b482a6701ab4df2c28e6733c`; the differences are listed under
+[Changes against the accepted revision](#changes-against-the-accepted-revision).
 
 | | |
 | --- | --- |
-| Revision | `13ab3bc2c823fe12b482a6701ab4df2c28e6733c` |
-| Standing | A second-read review found no blocking findings at this revision. It is not yet **reviewed** in this page's sense, because #2's Review row names maintainer review. **Not accepted**; acceptance is the maintainer's. |
-| Reviews | [At this revision](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5869660940), reviewer `rv6c-3db7f9d0`: no blocking findings, seven non-blocking. The reviewer was started by the coordinating session that also started the author, and says the review is a second read, not independent review, and that it opens no gate. #2 is labelled `risk:r3`. Earlier heads, both changes needed: [`799488f`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5856050364), [`7ead0d8`](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5868851188). |
-| Gates | #3's gate is closed: it needs the accepted #2 artifact under #1 and under the proposed rule. #5's harness-wiring gate needs #2's reviewed package and test command; the review #2 names is the maintainer's and has not happened, so that gate is closed too. |
+| Revision | The head of draft PR #12. It carries draft PR [#11](https://github.com/OpenCoven/coven-castles/pull/11) at `fa95bbc44c03a015f2b7c16b722cfe25c319885e` unchanged, on `main` at `b5d7fc14add09fa94a7103031d7d625f710e519c`. |
+| Standing | **Proposed.** Not reviewed in this page's sense and not accepted. #11 at `fa95bbc` is proposed as well; this revision supersedes it. |
+| Accepted revision | `13ab3bc2c823fe12b482a6701ab4df2c28e6733c`, accepted by the maintainer on 2026-11-12 in [this comment on #2](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865): "the profile/binding result shape, client seam, source pins and offline test command as they stand at" that revision. Basis: the [review at that revision](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5869660940) by `rv6c-3db7f9d0`, a second read and not independent review, on which the maintainer accepted. Evidence fixture and static only; the acceptance authorizes no live call, spending or sandbox mutation, and decides none of the proposed additions. It named three follow-ups not fixed at that revision: R1 (integer fields can echo an all-digit ID) and R2 (the capability scan) are answered by #11, carried here; R3 (five provider fields not examined) is still open. Merged into `main` as `978a2465df8d3af5b8e693fa9d228a9055aa1db8`. |
+| Reviews | Of this revision: a second read by a reviewer started from the author's session, linked from the PR. Of #11: two second reads by `rv11-c26f825a`, at [`7e5cf12`](https://github.com/OpenCoven/coven-castles/pull/11#pullrequestreview-5883103571) (changes needed) and [`fa95bbc`](https://github.com/OpenCoven/coven-castles/pull/11#pullrequestreview-5883649824) (no blocking findings). None is independent review. #2 is labelled `risk:r3`. |
+| Gates | Unchanged by this revision: it opens and closes no gate. What the acceptance of `13ab3bc` means for #3 and #5, and the open question of whether it supplies "reviewed", are as the maintainer left them; read #3 and #5 for their current blockers. |
 | Evidence | **fixture** only. No live provider call has been made through this code. |
 
-If PR #6's head is no longer this revision, this section is stale until it is
-refreshed.
+### Changes against the accepted revision
+
+Each is pinned by a test. Status precedence, reason-code list, schema name,
+function signatures, exports, source pins and dependencies are unchanged.
+**No reason code is added**: every change below uses an existing code.
+
+| # | What | At `13ab3bc` | At this revision | From |
+| --- | --- | --- | --- | --- |
+| 1 | An absent `autoDestroyAt`, `warmPoolId` or `linkedSandboxId` in an `observed` response | Read as "not set": no reason | `incompatible`, `metadata_missing` with the key as `field`. `null` still means "not set" | Second read on #3, fail-open item 2 |
+| 2 | An absent `domainAllowList` or `networkAllowList` | Not examined. With block-all set, `ready`; with block-all off and both absent, `egress_unrestricted` | `incompatible`, `metadata_missing` with the list as `field`, block-all or not; egress is then not also called unrestricted. `null` still means "no list" | the same |
+| 3 | A volume array whose `length` is not an integer from 0 up (only an array behind a proxy, in memory, can report one) | Read as "no volume" when not greater than 0; a bigint or symbol length made `runPreflight` reject | `volumes_present`; echoed as `null` | #11 question 11, review N9 |
+| 4 | The nine observed integers | Any safe integer echoed | Echoed only from -1 to 99,999, otherwise `null`; `binding.generation` can be `null`. Status and reasons unchanged | #11, R1 |
+| 5 | `attachments.volumes` echo | The capped length, any sign or fraction | An integer from 0 to 999, or `null` when the value is not a count; 0 when the field is absent | #11 N4; this revision |
+| 6 | A client with no callable `inspectBoundSandbox` | `provider_unavailable`, `fixture`, one inspection counted | No client: `upstream_seam_missing`, `evidence: "none"`, no inspection | #11, R6 |
+| 7 | When the client's method is read, and what is counted | Read at call time, valid binding only; counted whenever the client was not `null` | Read once, before the binding is checked; counted exactly when invoked | #11, R6 |
+| 8 | A `null` or function `environment`; `null`, array or function `options` | `TypeError`, or read as given | Unconfigured binding (`sandbox_id_missing`); no options | #11, R6 |
+| 9 | `timeoutMs` above 2,147,483,647, `Infinity` included | Node's 1 ms | The 30,000 ms default | #11, R6 |
+
+Fixture inputs: twelve of the thirteen observed cases now state the keys of
+rows 1 and 2 as `null`, and render as before; `metadata-missing.json` still
+omits them and now expects seven `metadata_missing` reasons instead of three.
+
+PR #11's body has the full input-by-input list for rows 4 to 9.
 
 ### Binding
 
