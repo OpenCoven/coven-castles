@@ -130,6 +130,49 @@ test("report bytes reject malformed UTF-8, NUL, and too-short text", () => {
     assert.ok(reportFailures(bytes).includes("RP-01"));
   assert.ok(reportFailures(Buffer.from("short")).includes("RP-03"));
 });
+/**
+ * N2 of rv5b-7a31c9e4: the grader claims parsing revision 3, but 12 of 23
+ * single edits to it passed. Each case below is pass.md with one change whose
+ * exact failure set follows from the `parsing` text of report-properties.json.
+ */
+const passText = readFileSync(resolve(fixtureRoot, "expected/samples/pass.md"), "utf8");
+const failures = (text: string) => reportFailures(Buffer.from(text)).sort();
+const summaryEndsWith = (lines: string) => {
+  assert.ok(passText.includes("\n\n## Findings\n"));
+  return passText.replace("\n\n## Findings\n", `\n${lines}\n\n## Findings\n`);
+};
+test("N2 grader: a fence closes only on the same character, at least as long, with nothing after it", () => {
+  assert.deepEqual(failures(summaryEndsWith("```\ncode\n````")), [], "a longer closing run closes");
+  assert.deepEqual(failures(summaryEndsWith("```\n~~~\n## Inside\n```")), [], "the other character does not close");
+  assert.deepEqual(failures(summaryEndsWith("```\n``` trailing\n## Inside\n```")), [], "text after the run does not close");
+});
+test("N2 grader: fences and headings open with at most three spaces of indent", () => {
+  assert.deepEqual(failures(summaryEndsWith("    ## Indented")), [], "four spaces: not a heading");
+  assert.deepEqual(failures(summaryEndsWith("   ## Three")), ["RP-04"], "three spaces: a heading");
+  assert.deepEqual(failures(summaryEndsWith("    ```")), [], "four spaces: not a fence");
+});
+test("N2 grader: a repeated title uses its first section, and only level-2 headings cut sections", () => {
+  assert.deepEqual(failures(`${passText}\n## Findings\n\nNothing to see here at all.\n`), ["RP-04"]);
+  assert.ok(passText.includes("## Findings\n\n"));
+  assert.deepEqual(failures(passText.replace("## Findings\n\n", "## Findings\n\n### Detail\n\n")), []);
+});
+test("N2 grader: section length counts code points, flat text collapses whitespace, `in` sections join with a space", () => {
+  const limitations = passText.slice(passText.indexOf("## Limitations\n"));
+  assert.deepEqual(failures(passText.replace(limitations, "## Limitations\n\n" + "🦉".repeat(6) + "\n")), ["RP-16"],
+    "six astral characters are 12 UTF-16 units but 6 characters");
+  assert.deepEqual(failures(passText.replace(limitations, "## Limitations\n\n" + "🦉".repeat(12) + "\n")), []);
+  const findings = passText.slice(passText.indexOf("## Findings\n"), passText.indexOf("## Evidence\n"));
+  const wrapped = "## Findings\n\nThe defect is in `src/tide.mjs`, function `highWaterIndex`. The loop is off by\none, so 14:00, 4.31 m is missed.\n\n";
+  assert.deepEqual(failures(passText.replace(findings, wrapped)), [], "RP-07 sees \"off by one\" across the line wrap");
+  const joined = summaryEndsWith("There is no defect").replace("## Findings\n\n", "## Findings\n\nin the code. ");
+  assert.deepEqual(failures(joined), ["RP-17"], "Summary and Findings are joined by one space");
+});
+test("N2 grader: RP-03 accepts exactly 200 bytes, and rules without `in` read comments too", () => {
+  assert.ok(!reportFailures(Buffer.alloc(200, "a")).includes("RP-03"));
+  assert.ok(reportFailures(Buffer.alloc(199, "a")).includes("RP-03"));
+  const marker = "-----BEGIN " + "PRIVATE KEY-----";
+  assert.deepEqual(failures(`${passText}\n<!-- ${marker} -->\n`), ["RP-11"]);
+});
 test("report parser preserves byte limits and normalizes lone CR without changing meaning", () => {
   const pass = readFileSync(resolve(fixtureRoot, properties.samples.pass[0]), "utf8");
   assert.deepEqual(reportFailures(Buffer.from(pass.replace(/\n/g, "\r"))), []);
