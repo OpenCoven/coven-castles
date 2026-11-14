@@ -4011,3 +4011,912 @@ test(
     }
   }
 );
+
+// --- Boundaries found by single-edit mutation of src/ (worker mut2-0cb24bd4) --
+//
+// Each test below exists because one edit to src/preflight.ts or
+// src/profile.ts (a flipped comparison, a changed literal, a removed
+// statement) left the suite at b5d7fc1 green. Tests only: every one passes
+// against unmodified source. Edits that draft PR #11 (fa95bbc) already turns
+// red have no test here.
+
+const READY_TARGET = Object.freeze({
+  expectedGeneration: 3,
+  ownerAlias: "own_76a2176ac79a",
+  profile: "castles.daytona-private-linux.v1",
+  sandboxAlias: "sbx_08d40473afdf",
+});
+
+const HUMAN_TARGET_LINE =
+  "target: sandbox sbx_08d40473afdf, owner own_76a2176ac79a, generation 3, profile castles.daytona-private-linux.v1";
+const HUMAN_POLICY_LINES = [
+  "source policy (pinned; not an observation):",
+  "  profile castles.daytona-private-linux.v1; target 2 vCPU / 4 GiB / 10 GiB; @daytona/sdk@0.220.0; 18 source pins (see --json)",
+];
+const HUMAN_SEAM_LINE =
+  "upstream seam: missing - https://github.com/OpenCoven/coven-agents/issues/296";
+
+test("human output: a ready result is exactly these lines", async () => {
+  const { result } = await runCase("ready");
+  assert.equal(
+    renderHuman(result),
+    [
+      "castles preflight - status: ready",
+      "evidence: FIXTURE (synthetic input; not provider evidence)",
+      HUMAN_TARGET_LINE,
+      "observed (as reported through the seam):",
+      "  state started; 2 vCPU / 4 GiB RAM / 10 GiB disk; snapshot coven-agents-copilot-2; linux/x86_64; sdk 0.220.0",
+      "  public false; egress allow-list entries 1; auto-stop 15 min; auto-archive 10080 min; auto-delete -1; ttl absent",
+      "  binding generation 3, lifecycle ready, attempt fence clear",
+      ...HUMAN_POLICY_LINES,
+      "provider calls: inspect 1; mutations 0 (the client seam has none)",
+      HUMAN_SEAM_LINE,
+      "",
+    ].join("\n")
+  );
+});
+
+test("human output: a refusal lists its reason without a field and discloses nothing", async () => {
+  const { result } = await runCase("missing-sandbox");
+  assert.equal(
+    renderHuman(result),
+    [
+      "castles preflight - status: unavailable",
+      "evidence: FIXTURE (synthetic input; not provider evidence)",
+      HUMAN_TARGET_LINE,
+      "reasons:",
+      "  - sandbox_not_found",
+      "observed: nothing disclosed",
+      ...HUMAN_POLICY_LINES,
+      "provider calls: inspect 1; mutations 0 (the client seam has none)",
+      HUMAN_SEAM_LINE,
+      "",
+    ].join("\n")
+  );
+});
+
+test("human output: an unconfigured binding with no client names each missing value", async () => {
+  const result = await runPreflight({}, null);
+  assert.equal(
+    renderHuman(result),
+    [
+      "castles preflight - status: unavailable",
+      "evidence: none (no inspection was made)",
+      "target: sandbox (not configured), owner (not configured), generation (not configured), profile (not configured)",
+      "reasons:",
+      "  - sandbox_id_missing",
+      "observed: nothing disclosed",
+      ...HUMAN_POLICY_LINES,
+      "provider calls: inspect 0; mutations 0 (the client seam has none)",
+      HUMAN_SEAM_LINE,
+      "",
+    ].join("\n")
+  );
+});
+
+test("human output: every unstated observed value is a question mark, and each reason carries its field", async () => {
+  const result = await withInspection((inspection) => {
+    const { sandbox } = inspection;
+    delete sandbox.state;
+    sandbox.cpu = "2";
+    sandbox.memory = 1.5;
+    sandbox.disk = null;
+    sandbox.snapshot = 7;
+    delete inspection.platform;
+    inspection.sdk.version = 220;
+    sandbox.public = "no";
+    sandbox.autoStopInterval = "15";
+    sandbox.autoArchiveInterval = null;
+    delete sandbox.autoDeleteInterval;
+    sandbox.autoPauseInterval = 0.5;
+    sandbox.gpu = "0";
+    sandbox.target = 1;
+    sandbox.networkBlockAll = 1;
+  });
+  assert.equal(
+    renderHuman(result),
+    [
+      "castles preflight - status: incompatible",
+      "evidence: FIXTURE (synthetic input; not provider evidence)",
+      HUMAN_TARGET_LINE,
+      "reasons:",
+      "  - sdk_generation_mismatch (sdk)",
+      "  - metadata_missing (state)",
+      "  - metadata_missing (public)",
+      "  - metadata_missing (networkBlockAll)",
+      "  - metadata_missing (autoStopInterval)",
+      "  - metadata_missing (autoArchiveInterval)",
+      "  - metadata_missing (autoDeleteInterval)",
+      "  - metadata_missing (autoPauseInterval)",
+      "  - metadata_missing (snapshot)",
+      "  - metadata_missing (target)",
+      "  - metadata_missing (cpu)",
+      "  - metadata_missing (memory)",
+      "  - metadata_missing (disk)",
+      "  - metadata_missing (gpu)",
+      "  - metadata_missing (platform.os)",
+      "  - metadata_missing (platform.architecture)",
+      "observed (as reported through the seam):",
+      "  state ?; ? vCPU / ? GiB RAM / ? GiB disk; snapshot ?; ?/?; sdk ?",
+      "  public ?; egress allow-list entries 1; auto-stop ? min; auto-archive ? min; auto-delete ?; ttl absent",
+      "  binding generation 3, lifecycle ready, attempt fence clear",
+      ...HUMAN_POLICY_LINES,
+      "provider calls: inspect 1; mutations 0 (the client seam has none)",
+      HUMAN_SEAM_LINE,
+      "",
+    ].join("\n")
+  );
+});
+
+test("human output: a stated zero or false is printed, never read as unstated", async () => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const inspection = structuredClone(fixture.inspection) as any;
+  inspection.binding.generation = 0;
+  Object.assign(inspection.sandbox, {
+    autoArchiveInterval: 0,
+    autoDeleteInterval: 0,
+    autoDestroyAt: "2030-01-01T00:00:00Z",
+    autoStopInterval: 0,
+    cpu: 0,
+    disk: 0,
+    memory: 0,
+  });
+  const result = await runPreflight(
+    { ...fixture.env, CASTLES_SANDBOX_GENERATION: "0" },
+    tripwireClient(() => inspection).client
+  );
+  assert.equal(result.target.expectedGeneration, 0);
+  assert.equal(
+    renderHuman(result),
+    [
+      "castles preflight - status: incompatible",
+      "evidence: FIXTURE (synthetic input; not provider evidence)",
+      "target: sandbox sbx_08d40473afdf, owner own_76a2176ac79a, generation 0, profile castles.daytona-private-linux.v1",
+      "reasons:",
+      "  - lifecycle_auto_stop (autoStopInterval)",
+      "  - lifecycle_auto_archive (autoArchiveInterval)",
+      "  - lifecycle_auto_delete (autoDeleteInterval)",
+      "  - lifecycle_ttl (autoDestroyAt)",
+      "  - resources_out_of_policy (resources)",
+      "observed (as reported through the seam):",
+      "  state started; 0 vCPU / 0 GiB RAM / 0 GiB disk; snapshot coven-agents-copilot-2; linux/x86_64; sdk 0.220.0",
+      "  public false; egress allow-list entries 1; auto-stop 0 min; auto-archive 0 min; auto-delete 0; ttl present",
+      "  binding generation 0, lifecycle ready, attempt fence clear",
+      ...HUMAN_POLICY_LINES,
+      "provider calls: inspect 1; mutations 0 (the client seam has none)",
+      HUMAN_SEAM_LINE,
+      "",
+    ].join("\n")
+  );
+});
+
+test("human output: the live-provider evidence line is this literal", async () => {
+  // No client yields live evidence at this head, so the line is reachable
+  // only through the renderer. Altering a result by hand is exactly what
+  // `isLiveReady` cannot detect; this pins the wording, not readiness.
+  const { result } = await runCase("ready");
+  const lines = renderHuman({ ...result, evidence: "live-provider" }).split(
+    "\n"
+  );
+  assert.equal(
+    lines[1],
+    "evidence: live provider read through the owning service"
+  );
+});
+
+test("JSON output is the result itself, indented by two spaces, with one final newline", async () => {
+  for (const name of ["ready", "missing-id", "wrong-owner"]) {
+    const { result } = await runCase(name);
+    assert.equal(
+      renderJson(result),
+      `${JSON.stringify(result, null, 2)}\n`,
+      name
+    );
+  }
+});
+
+test("target: the aliases, generation and profile are these exact values on every path that has them", async () => {
+  // The aliases are the first 12 hex digits of SHA-256 over
+  // "castles.<prefix>\0<configured value>"; written out, not derived.
+  const ready = await runCase("ready");
+  assert.deepEqual(ready.result.target, READY_TARGET);
+
+  // A refusal and an identity failure disclose nothing observed, and still
+  // name the configured target by alias.
+  for (const name of [
+    "missing-sandbox",
+    "ambiguous-lookup",
+    "unavailable-provider",
+    "wrong-owner",
+    "binding-mismatch",
+    "mismatched-returned-id",
+  ]) {
+    const { result } = await runCase(name);
+    assert.equal(result.observed, null, name);
+    assert.deepEqual(result.target, READY_TARGET, name);
+  }
+  const otherAgent = await withInspection((inspection) => {
+    inspection.binding.agentId = "fixture-agent-0002";
+  });
+  assert.deepEqual(otherAgent.target, READY_TARGET);
+
+  // A generation of zero is a configured value, not an absent one.
+  const zero = await runPreflight(
+    { ...VALID_ENV, CASTLES_SANDBOX_GENERATION: "0" },
+    null
+  );
+  assert.deepEqual(zero.target, { ...READY_TARGET, expectedGeneration: 0 });
+});
+
+test("target: a binding that fails part-way keeps exactly the values parsed before the failure", async () => {
+  const cases: [Record<string, string | undefined>, string, object][] = [
+    [
+      { ...VALID_ENV, CASTLES_PROFILE: undefined },
+      "profile_missing",
+      {
+        expectedGeneration: null,
+        ownerAlias: null,
+        profile: null,
+        sandboxAlias: READY_TARGET.sandboxAlias,
+      },
+    ],
+    [
+      { ...VALID_ENV, CASTLES_OWNER_AGENT_ID: undefined },
+      "owner_binding_missing",
+      {
+        expectedGeneration: null,
+        ownerAlias: null,
+        profile: READY_TARGET.profile,
+        sandboxAlias: READY_TARGET.sandboxAlias,
+      },
+    ],
+    [
+      { ...VALID_ENV, CASTLES_OWNER_AGENT_ID: "not valid" },
+      "owner_binding_invalid",
+      {
+        expectedGeneration: null,
+        ownerAlias: null,
+        profile: READY_TARGET.profile,
+        sandboxAlias: READY_TARGET.sandboxAlias,
+      },
+    ],
+    [
+      { ...VALID_ENV, CASTLES_SANDBOX_GENERATION: undefined },
+      "generation_missing",
+      { ...READY_TARGET, expectedGeneration: null },
+    ],
+    [
+      { ...VALID_ENV, CASTLES_SANDBOX_GENERATION: "03" },
+      "generation_invalid",
+      { ...READY_TARGET, expectedGeneration: null },
+    ],
+  ];
+  for (const [environment, problem, target] of cases) {
+    const result = await runPreflight(environment, null);
+    assert.deepEqual(codes(result), [problem]);
+    // deepEqual in strict mode tells an absent key from a null one.
+    assert.deepEqual(result.target, target, problem);
+  }
+});
+
+test("source policy in a result is exactly the pinned profile, block by block", async () => {
+  const { result } = await runCase("ready");
+  const { pins, ...blocks } = result.sourcePolicy;
+  assert.deepEqual(blocks, {
+    image: {
+      base: "node:22-bookworm-slim",
+      qualifiedSnapshot: "coven-agents-copilot-2",
+    },
+    lifecycle: {
+      autoArchiveMinutes: { max: 43_200, min: 60 },
+      autoDeleteInterval: -1,
+      autoPauseInterval: 0,
+      autoStopMinutes: { max: 60, min: 5 },
+      ttl: "disabled",
+    },
+    network: {
+      egress: "restricted",
+      networkAllowList: {
+        basis: "castles-decision",
+        maxEntries: 10,
+        minIpv4Prefix: 8,
+      },
+      public: false,
+    },
+    platform: { architecture: "reported-not-pinned", os: "linux" },
+    profile: "castles.daytona-private-linux.v1",
+    resources: {
+      caps: { cpu: 4, diskGiB: 10, memoryGiB: 8 },
+      floor: { cpu: 1, diskGiB: 10, memoryGiB: 1 },
+      target: { cpu: 2, diskGiB: 10, memoryGiB: 4 },
+    },
+    sdk: { package: "@daytona/sdk", version: "0.220.0" },
+  });
+  assert.equal(pins.length, 18);
+});
+
+test("source policy cannot be altered through a result: every pinned block is frozen", async () => {
+  // `sourcePolicy` hands out the profile's own objects. If one were not
+  // frozen, a consumer writing to a result would change the policy the next
+  // check is held to.
+  const unfrozen: string[] = [];
+  const walk = (value: unknown, path: string) => {
+    if (typeof value !== "object" || value === null) {
+      return;
+    }
+    if (!Object.isFrozen(value)) {
+      unfrozen.push(path);
+    }
+    for (const [key, child] of Object.entries(value)) {
+      walk(child, `${path}.${key}`);
+    }
+  };
+  walk(SUPPORTED_PROFILE, "SUPPORTED_PROFILE");
+  assert.deepEqual(unfrozen, []);
+  for (const [name, table] of Object.entries({
+    MUTATION_OWNERS,
+    OUTSIDE_LISTED_MUTATIONS,
+    SOURCE_PINS,
+    UPSTREAM_SEAM,
+  })) {
+    assert.ok(Object.isFrozen(table), name);
+  }
+  const { result } = await runCase("ready");
+  assert.throws(() => {
+    (result.sourcePolicy.resources.caps as { cpu: number }).cpu = 64;
+  }, TypeError);
+  assert.equal(SUPPORTED_PROFILE.resources.caps.cpu, 4);
+});
+
+test("pins: what each source pin covers is these literal descriptions", () => {
+  assert.deepEqual(
+    SOURCE_PINS.map((entry) => entry.covers),
+    [
+      "toolchain (pnpm 10.32.1, tsx, TypeScript) and @daytona/sdk 0.220.0",
+      "resolved @daytona/sdk 0.220.0 and its API clients",
+      "the tsx --test and tsc --noEmit scripts",
+      "resource defaults (2 vCPU / 4 GiB / 10 GiB) and caps",
+      "auto-stop and auto-archive bounds; TTL 0; auto-delete -1",
+      "create parameters (private, non-ephemeral), credential-boundary marker, lifecycle mutations",
+      "observed sandbox field set used for drift (inventory item)",
+      "versioned snapshot naming",
+      "snapshot image base (Linux); snapshot creation (outside the listed mutations)",
+      "persistent resource lifecycle contract and sandbox lifecycle states",
+      "canonical agent record: sandbox ID, generation, lifecycle",
+      "resize owner",
+      "recovery delete owner",
+      "diagnostic sandbox create and delete owner",
+      "command execution inside a sandbox (outside the listed mutations)",
+      "execution boundary, authority, cleanup fences",
+      "ownership table, qualified snapshot, repeat-run gaps",
+      "secret references held by the owning service",
+    ]
+  );
+});
+
+test("each single fault is reported as exactly one reason with exactly this field", async () => {
+  const faults: [
+    string,
+    string,
+    string,
+    (inspection: any) => void,
+  ][] = [
+    ["incompatible", "public_exposure", "public", (i) => (i.sandbox.public = true)],
+    ["incompatible", "lifecycle_auto_stop", "autoStopInterval", (i) => (i.sandbox.autoStopInterval = 4)],
+    ["incompatible", "lifecycle_auto_archive", "autoArchiveInterval", (i) => (i.sandbox.autoArchiveInterval = 59)],
+    ["incompatible", "lifecycle_auto_delete", "autoDeleteInterval", (i) => (i.sandbox.autoDeleteInterval = 0)],
+    ["incompatible", "lifecycle_auto_pause", "autoPauseInterval", (i) => (i.sandbox.autoPauseInterval = 1)],
+    ["incompatible", "lifecycle_ttl", "autoDestroyAt", (i) => (i.sandbox.autoDestroyAt = "2030-01-01T00:00:00Z")],
+    ["incompatible", "image_unqualified", "snapshot", (i) => (i.sandbox.snapshot = "another-snapshot")],
+    ["incompatible", "target_unsupported", "target", (i) => (i.sandbox.target = "ap")],
+    ["incompatible", "resources_out_of_policy", "resources", (i) => (i.sandbox.cpu = 5)],
+    ["incompatible", "gpu_present", "gpu", (i) => (i.sandbox.gpu = 1)],
+    ["incompatible", "volumes_present", "volumes", (i) => (i.sandbox.volumes = ["fixture-volume"])],
+    ["incompatible", "warm_pool_member", "warmPoolId", (i) => (i.sandbox.warmPoolId = "fixture-pool")],
+    ["incompatible", "linked_sandbox_present", "linkedSandboxId", (i) => (i.sandbox.linkedSandboxId = "fixture-linked")],
+    ["incompatible", "platform_unsupported", "platform.os", (i) => (i.platform.os = "windows")],
+    ["stopped", "sandbox_stopped", "state", (i) => (i.sandbox.state = "stopped")],
+    ["stopped", "sandbox_stopped", "state", (i) => (i.sandbox.state = "archived")],
+    ["unavailable", "sandbox_destroyed", "state", (i) => (i.sandbox.state = "destroyed")],
+    ["unavailable", "sandbox_destroyed", "state", (i) => (i.sandbox.state = "destroying")],
+    ["unavailable", "lifecycle_not_settled", "state", (i) => (i.sandbox.state = "starting")],
+    ["unauthorized", "owner_mismatch", "binding.agentId", (i) => (i.binding.agentId = "fixture-agent-0002")],
+    ["unauthorized", "binding_mismatch", "binding.sandboxId", (i) => (i.binding.sandboxId = "fixture-sandbox-0002")],
+    ["reconciliation-required", "returned_id_mismatch", "sandbox.id", (i) => (i.sandbox.id = "fixture-sandbox-0002")],
+    ["reconciliation-required", "binding_lifecycle_pending", "binding.lifecycle", (i) => (i.binding.lifecycle = "resizing")],
+    ["reconciliation-required", "credential_boundary_unverified", "labels.credentialBoundaryVersion", (i) => delete i.sandbox.labels],
+  ];
+  for (const [status, code, field, edit] of faults) {
+    const result = await withInspection(edit);
+    assert.equal(result.status, status, code);
+    assert.deepEqual(result.reasons, [{ code, field }], code);
+  }
+});
+
+test("egress: an unreadable allow list is not also called unrestricted, and a block-all that is not a boolean restricts nothing", async () => {
+  for (const value of [5, true, {}, ["fixture.invalid"]]) {
+    const unreadable = await withSandbox((sandbox) => {
+      sandbox.networkBlockAll = false;
+      sandbox.domainAllowList = value;
+      delete sandbox.networkAllowList;
+    });
+    assert.deepEqual(unreadable.reasons, [
+      { code: "metadata_missing", field: "domainAllowList" },
+    ]);
+  }
+  for (const value of ["yes", "true", 1, {}]) {
+    const notBoolean = await withSandbox((sandbox) => {
+      sandbox.networkBlockAll = value;
+      sandbox.domainAllowList = null;
+      sandbox.networkAllowList = null;
+    });
+    assert.deepEqual(
+      notBoolean.reasons,
+      [
+        { code: "metadata_missing", field: "networkBlockAll" },
+        { code: "egress_unrestricted", field: "egress" },
+      ],
+      String(value)
+    );
+    assert.equal(notBoolean.observed?.exposure.networkBlockAll, null);
+  }
+});
+
+test("egress: an IPv4 range needs real dots and four octets no greater than 255", async () => {
+  for (const entry of [
+    "10x0.0.0/8",
+    "10.0x0.0/8",
+    "10.0.0x0/8",
+    "10.0.256.0/24",
+    "10.256.0.0/24",
+    "256.0.0.0/24",
+    "10.0.0.256/24",
+  ]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.domainAllowList = null;
+      sandbox.networkAllowList = entry;
+    });
+    assert.deepEqual(
+      result.reasons,
+      [{ code: "egress_allow_list_unsafe", field: "networkAllowList" }],
+      entry
+    );
+  }
+  const widest = await withSandbox((sandbox) => {
+    sandbox.domainAllowList = null;
+    sandbox.networkAllowList = "255.255.255.255/32,0.0.0.0/8";
+  });
+  assert.equal(widest.status, "ready");
+});
+
+test("sdk version echo: a leading zero in any part, or a separator that is not a dot, is unrecognised", async () => {
+  for (const version of [
+    "00.220.0",
+    "0.0220.0",
+    "0.220.00",
+    "0x220.0",
+    "0.220x0",
+    "0-220-0",
+  ]) {
+    const result = await withInspection((inspection) => {
+      inspection.sdk.version = version;
+    });
+    assert.equal(result.observed?.sdk.version, "unrecognised", version);
+    assert.deepEqual(result.reasons, [
+      { code: "sdk_generation_mismatch", field: "sdk" },
+    ]);
+  }
+});
+
+test("volumes: anything present that is not an empty array is an attachment, and the count is echoed", async () => {
+  for (const value of [{}, { length: 0 }, "", "fixture-volume", 0, 1, false, true]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.volumes = value;
+    });
+    assert.deepEqual(
+      result.reasons,
+      [{ code: "volumes_present", field: "volumes" }],
+      JSON.stringify(value)
+    );
+    assert.equal(result.observed?.attachments.volumes, null);
+  }
+  const two = await withSandbox((sandbox) => {
+    sandbox.volumes = ["fixture-volume-a", "fixture-volume-b"];
+  });
+  assert.deepEqual(two.reasons, [{ code: "volumes_present", field: "volumes" }]);
+  assert.equal(two.observed?.attachments.volumes, 2);
+
+  const empty = await withSandbox((sandbox) => {
+    sandbox.volumes = [];
+  });
+  assert.equal(empty.status, "ready");
+  assert.equal(empty.observed?.attachments.volumes, 0);
+
+  // Absent reads as none; an explicit null passes too but is echoed as
+  // null, so the two stay distinguishable in output.
+  const absent = await withSandbox((sandbox) => {
+    delete sandbox.volumes;
+  });
+  assert.equal(absent.status, "ready");
+  assert.equal(absent.observed?.attachments.volumes, 0);
+  const stated = await withSandbox((sandbox) => {
+    sandbox.volumes = null;
+  });
+  assert.equal(stated.status, "ready");
+  assert.equal(stated.observed?.attachments.volumes, null);
+});
+
+test("observed attachments, TTL and exposure report what the seam stated, field by field", async () => {
+  const attachments = async (edit: (sandbox: Record<string, unknown>) => void) =>
+    (await withSandbox(edit)).observed?.attachments;
+  assert.deepEqual(
+    await attachments((sandbox) => {
+      sandbox.linkedSandboxId = "fixture-linked";
+    }),
+    { linkedSandbox: true, volumes: 0, warmPool: false }
+  );
+  assert.deepEqual(
+    await attachments((sandbox) => {
+      sandbox.warmPoolId = "fixture-pool";
+    }),
+    { linkedSandbox: false, volumes: 0, warmPool: true }
+  );
+  // A present value of any type counts, an empty string and zero included.
+  for (const value of ["", 0, false]) {
+    assert.deepEqual(
+      await attachments((sandbox) => {
+        sandbox.linkedSandboxId = value;
+        sandbox.warmPoolId = value;
+      }),
+      { linkedSandbox: true, volumes: 0, warmPool: true }
+    );
+  }
+  for (const value of [undefined, null]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.linkedSandboxId = value;
+      sandbox.warmPoolId = value;
+      sandbox.autoDestroyAt = value;
+    });
+    assert.deepEqual(result.observed?.attachments, {
+      linkedSandbox: false,
+      volumes: 0,
+      warmPool: false,
+    });
+    assert.equal(result.observed?.lifecycle.autoDestroyAt, "absent");
+  }
+  for (const value of ["2030-01-01T00:00:00Z", "", 0, false]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.autoDestroyAt = value;
+    });
+    assert.equal(result.observed?.lifecycle.autoDestroyAt, "present");
+    assert.deepEqual(codes(result), ["lifecycle_ttl"]);
+  }
+
+  // `public` and `networkBlockAll` are separate readings.
+  const blocked = await withSandbox((sandbox) => {
+    sandbox.public = false;
+    sandbox.networkBlockAll = true;
+  });
+  assert.deepEqual(blocked.observed?.exposure, {
+    egressAllowListEntries: 1,
+    networkBlockAll: true,
+    public: false,
+  });
+  const exposed = await withSandbox((sandbox) => {
+    sandbox.public = true;
+    sandbox.networkBlockAll = false;
+  });
+  assert.deepEqual(exposed.observed?.exposure, {
+    egressAllowListEntries: 1,
+    networkBlockAll: false,
+    public: true,
+  });
+  for (const value of ["false", 0, null, undefined]) {
+    const unstated = await withSandbox((sandbox) => {
+      sandbox.public = value;
+    });
+    assert.equal(unstated.observed?.exposure.public, null);
+    assert.deepEqual(unstated.reasons, [
+      { code: "metadata_missing", field: "public" },
+    ]);
+  }
+});
+
+test("a credential-boundary marker on labels that are not a plain record is not a marker", async () => {
+  for (const labels of [
+    Object.assign([], { credentialBoundaryVersion: "attempt-reset-v1" }),
+    "attempt-reset-v1",
+    null,
+  ]) {
+    const result = await withInspection((inspection) => {
+      inspection.sandbox.labels = labels;
+    });
+    assert.deepEqual(result.reasons, [
+      {
+        code: "credential_boundary_unverified",
+        field: "labels.credentialBoundaryVersion",
+      },
+    ]);
+  }
+});
+
+test("binding: a profile is compared exactly, with no trimming and no case folding", async () => {
+  const id = "castles.daytona-private-linux.v1";
+  for (const profile of [
+    ` ${id}`,
+    `${id} `,
+    `${id}\n`,
+    `\t${id}`,
+    id.toUpperCase(),
+    "Castles.daytona-private-linux.v1",
+    " ",
+    "\n",
+  ]) {
+    const environment = { ...VALID_ENV, CASTLES_PROFILE: profile };
+    const parsed = parseBinding(environment);
+    assert.equal(parsed.ok, false, JSON.stringify(profile));
+    assert.equal(
+      parsed.ok ? null : parsed.problem,
+      "unknown_profile",
+      JSON.stringify(profile)
+    );
+    const result = await runPreflight(environment, null);
+    assert.equal(result.status, "incompatible");
+    assert.deepEqual(result.reasons, [{ code: "unknown_profile" }]);
+    assert.equal(result.target.profile, null);
+  }
+});
+
+function withFixtureFile<T>(content: unknown, use: (path: string) => T): T {
+  const directory = mkdtempSync(join(tmpdir(), "castles-fixture-"));
+  try {
+    const path = join(directory, "case.json");
+    writeFileSync(
+      path,
+      typeof content === "string" ? content : JSON.stringify(content)
+    );
+    return use(path);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+}
+
+test("fixture loader: each refusal is an Error with exactly this message", () => {
+  const original = JSON.parse(readFileSync(casePath("ready"), "utf8"));
+  const unlabelled = {
+    message: "Refusing a fixture file without the synthetic label.",
+    name: "Error",
+  };
+  const incomplete = {
+    message: "Synthetic fixture is missing its env or expect block.",
+    name: "Error",
+  };
+  const { fixture: _label, ...withoutLabel } = original;
+  for (const content of ["null", "7", '"text"', "[]", withoutLabel]) {
+    withFixtureFile(content, (path) => {
+      assert.throws(() => loadFixtureCase(path), unlabelled);
+    });
+  }
+  const { env: _env, ...withoutEnv } = original;
+  const { expect: _expect, ...withoutExpect } = original;
+  for (const content of [
+    withoutEnv,
+    withoutExpect,
+    { ...original, env: null },
+    { ...original, env: "CASTLES_SANDBOX_ID=x" },
+    { ...original, expect: null },
+    { ...original, expect: 3 },
+  ]) {
+    withFixtureFile(content, (path) => {
+      assert.throws(() => loadFixtureCase(path), incomplete);
+    });
+  }
+});
+
+test("fixture loader: only string binding values are taken, and the case name is a string or \"unnamed\"", () => {
+  const original = JSON.parse(readFileSync(casePath("ready"), "utf8"));
+  withFixtureFile(
+    {
+      ...original,
+      env: {
+        ...original.env,
+        CASTLES_OWNER_AGENT_ID: null,
+        CASTLES_PROFILE: ["castles.daytona-private-linux.v1"],
+        CASTLES_SANDBOX_GENERATION: 3,
+      },
+    },
+    (path) => {
+      assert.deepEqual(loadFixtureCase(path).env, {
+        CASTLES_SANDBOX_ID: "fixture-sandbox-0001",
+      });
+    }
+  );
+  assert.equal(loadFixtureCase(casePath("ready")).case, "ready");
+  withFixtureFile({ ...original, case: "synthetic-é-名" }, (path) => {
+    assert.equal(loadFixtureCase(path).case, "synthetic-é-名");
+  });
+  const { case: _case, ...withoutCase } = original;
+  for (const content of [
+    withoutCase,
+    { ...original, case: 7 },
+    { ...original, case: null },
+    { ...original, case: ["ready"] },
+  ]) {
+    withFixtureFile(content, (path) => {
+      assert.equal(loadFixtureCase(path).case, "unnamed");
+    });
+  }
+});
+
+test("the fixture client answers with a promise for the case's own inspection object", async () => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const client = createFixtureInspectionClient(fixture);
+  const answer = client.inspectBoundSandbox({
+    agentId: "fixture-agent-0001",
+    expectedGeneration: 3,
+    sandboxId: "fixture-sandbox-0001",
+  });
+  assert.ok(answer instanceof Promise);
+  assert.equal(await answer, fixture.inspection);
+});
+
+test("the abort signal handed to the seam is live during the call and aborted once the check settles", async () => {
+  const fixture = loadFixtureCase(casePath("ready"));
+  const outcomes: [string, () => Promise<unknown>, string, number?][] = [
+    ["answer", () => Promise.resolve(fixture.inspection), "ready"],
+    ["throw", () => Promise.reject(new Error("fixture failure")), "unavailable"],
+    ["silence", () => new Promise(() => undefined), "unavailable", 20],
+  ];
+  for (const [name, respond, status, timeoutMs] of outcomes) {
+    const seen: { signal: unknown; abortedAtCall: unknown }[] = [];
+    const client: SandboxInspectionClient = {
+      inspectBoundSandbox: (_request, options) => {
+        seen.push({
+          abortedAtCall: options?.signal.aborted,
+          signal: options?.signal,
+        });
+        return respond();
+      },
+    };
+    const result = await runPreflight(
+      fixture.env,
+      client,
+      timeoutMs === undefined ? {} : { timeoutMs }
+    );
+    assert.equal(result.status, status, name);
+    assert.equal(seen.length, 1, name);
+    const [{ signal, abortedAtCall }] = seen as [(typeof seen)[number]];
+    assert.ok(signal instanceof AbortSignal, name);
+    assert.equal(abortedAtCall, false, name);
+    assert.equal(signal.aborted, true, name);
+  }
+});
+
+function runScript(source: string, args: readonly string[] = []) {
+  const directory = realpathSync(
+    mkdtempSync(join(tmpdir(), "castles-script-"))
+  );
+  try {
+    const script = join(directory, "script.mts");
+    writeFileSync(script, source);
+    return spawnSync(
+      process.execPath,
+      ["--import", import.meta.resolve("tsx"), script, ...args],
+      {
+        cwd: directory,
+        encoding: "utf8",
+        env: { HOME: directory, PATH: process.env.PATH ?? "" },
+        timeout: 15_000,
+      }
+    );
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+}
+
+const PREFLIGHT_MODULE = JSON.stringify(
+  new URL("../src/preflight.ts", import.meta.url).href
+);
+
+test("an answered check leaves no deadline timer behind: the process ends at once", () => {
+  // With the default 30-second deadline still armed, this process would
+  // stay alive until the timer fired and the run would be killed at 15 s.
+  const run = runScript(
+    `import { createFixtureInspectionClient, loadFixtureCase, runPreflight } from ${PREFLIGHT_MODULE};
+const fixture = loadFixtureCase(process.argv[2]);
+const result = await runPreflight(fixture.env, createFixtureInspectionClient(fixture));
+process.stdout.write(result.status + "\\n");
+`,
+    [casePath("ready")]
+  );
+  assert.equal(run.signal, null, run.stderr);
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, "ready\n");
+});
+
+test("the deadline keeps the process alive: a silent provider still yields a result, not an empty exit", () => {
+  // If the deadline timer did not hold the event loop open, Node would end
+  // this process with nothing pending, no result and a non-zero status.
+  const run = runScript(
+    `import { loadFixtureCase, runPreflight } from ${PREFLIGHT_MODULE};
+const fixture = loadFixtureCase(process.argv[2]);
+const result = await runPreflight(
+  fixture.env,
+  { inspectBoundSandbox: () => new Promise(() => undefined) },
+  { timeoutMs: 200 }
+);
+process.stdout.write(result.status + " " + result.reasons.map((reason) => reason.code).join(",") + "\\n");
+`,
+    [casePath("ready")]
+  );
+  assert.equal(run.signal, null, run.stderr);
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, "unavailable provider_unavailable\n");
+});
+
+// --- Open contract decision: four checks that pass on an absent key ---------
+//
+// Second read on #3 by rv3-d0dc225b, "Fail-open paths" item 2: a client that
+// carries over only the upstream fields that fit leaves these four keys
+// absent, and each check then passes. Whether an absent key should keep
+// passing or be refused is a contract decision for the maintainer and the #2
+// steward. It is not made here: each body states what the accepted contract
+// does today, and `todo` marks the decision as outstanding. Whoever decides
+// replaces the body with the decided outcome and removes the mark.
+
+const ABSENT_KEY_DECISION =
+  "contract decision outstanding (#3 second read rv3-d0dc225b, fail-open paths item 2)";
+
+test(
+  "todo: an absent autoDestroyAt passes the TTL check — keep, or refuse as missing metadata?",
+  { todo: ABSENT_KEY_DECISION },
+  async () => {
+    const result = await withSandbox((sandbox) => {
+      delete sandbox.autoDestroyAt;
+    });
+    assert.equal(result.status, "ready");
+    assert.deepEqual(result.reasons, []);
+    assert.equal(result.observed?.lifecycle.autoDestroyAt, "absent");
+  }
+);
+
+test(
+  "todo: an absent warmPoolId passes the warm-pool check — keep, or refuse as missing metadata?",
+  { todo: ABSENT_KEY_DECISION },
+  async () => {
+    const result = await withSandbox((sandbox) => {
+      delete sandbox.warmPoolId;
+    });
+    assert.equal(result.status, "ready");
+    assert.deepEqual(result.reasons, []);
+    assert.equal(result.observed?.attachments.warmPool, false);
+  }
+);
+
+test(
+  "todo: an absent linkedSandboxId passes the linked-sandbox check — keep, or refuse as missing metadata?",
+  { todo: ABSENT_KEY_DECISION },
+  async () => {
+    const result = await withSandbox((sandbox) => {
+      delete sandbox.linkedSandboxId;
+    });
+    assert.equal(result.status, "ready");
+    assert.deepEqual(result.reasons, []);
+    assert.equal(result.observed?.attachments.linkedSandbox, false);
+  }
+);
+
+test(
+  "todo: absent allow lists are not examined, and block-all then skips the unrestricted-egress check — keep, or require the lists to be stated?",
+  { todo: ABSENT_KEY_DECISION },
+  async () => {
+    const result = await withSandbox((sandbox) => {
+      sandbox.networkBlockAll = true;
+      delete sandbox.domainAllowList;
+      delete sandbox.networkAllowList;
+    });
+    assert.equal(result.status, "ready");
+    assert.deepEqual(result.reasons, []);
+    assert.equal(result.observed?.exposure.egressAllowListEntries, 0);
+  }
+);
