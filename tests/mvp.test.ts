@@ -18,6 +18,23 @@ function test(name: string, fn: () => void | Promise<void>) {
   titles.push(name);
   return nodeTest(name, fn);
 }
+/**
+ * scripts/smoke.ts is also imported into this process: smokeRefusal is called
+ * directly. A planted process.exit(0) there ends this file early with exit
+ * code 0, and the runner then reports only the tests it saw, as a pass. That
+ * is how edit S6 of rv5b-7a31c9e4 escaped once smokeRefusal ran here with a
+ * large budget. Any exit before the last test has finished fails the file.
+ */
+function guardEarlyExit(registerAfter: (fn: () => void) => void) {
+  let finished = false;
+  registerAfter(() => { finished = true; });
+  process.on("exit", code => {
+    if (finished || code !== 0) return;
+    process.stderr.write("the test process exited before its tests finished\n");
+    process.exitCode = 1;
+  });
+}
+guardEarlyExit(after);
 const fixtureRoot = resolve(root, "fixtures/report-task");
 const readJson = (path: string) => JSON.parse(readFileSync(path, "utf8"));
 type ReportRule = { id: string; kind: string; value?: number | string[]; level?: number;
@@ -711,6 +728,21 @@ test("B2 tripwire controls: each planted effect S1 to S6 is reported, and an unc
       } else assert.match(child.stderr, /^TRIPWIRE /m, id);
       assert.ok(!(child.stdout + child.stderr).includes("synthetic-canary"), id);
     }
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
+test("S6 an exit inside the test process before its tests finish fails the file instead of passing it", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-exit-"));
+  try {
+    const run = (guarded: boolean) => {
+      const file = resolve(directory, `${guarded ? "guarded" : "unguarded"}.test.mjs`);
+      writeFileSync(file, 'import test, { after } from "node:test";\n' +
+        (guarded ? `(${guardEarlyExit.toString()})(after);\n` : "") +
+        'test("first", () => {});\ntest("exits", () => process.exit(0));\ntest("never reached", () => {});\n');
+      return spawnSync(process.execPath, ["--test", file], {cwd: directory, encoding: "utf8", timeout: 10_000,
+        env: {PATH: process.env.PATH}});
+    };
+    assert.equal(run(false).status, 0, "control: without the guard an early exit passes");
+    assert.equal(run(true).status, 1, "with the guard it fails");
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
 test("B2 the largest valid budget with complete inputs still refuses: there is no success branch", () => {
