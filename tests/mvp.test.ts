@@ -2,11 +2,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync, mkdtempSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-import test from "node:test";
-import { fileURLToPath } from "node:url";
+import test, { after } from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runsAsProgram, smokeRefusal, type SmokeRefusal } from "../scripts/smoke.ts";
 import { createFixtureInspectionClient, isLiveReady, loadFixtureCase, renderHuman, renderJson,
   runPreflight, type SandboxInspectionClient } from "../src/preflight.ts";
@@ -264,8 +264,92 @@ const syntheticBinding = {
 const liveArgs = ["--live", "--sandbox-id", syntheticBinding.CASTLES_SANDBOX_ID,
   "--max-spend-usd", "0.01", "--max-seconds", "900"];
 
+/**
+ * B2: a preload for every smoke subprocess. It reports on stderr, and refuses,
+ * any effect started from a file under scripts/: a file read or write, a
+ * child process, a socket, DNS, HTTP, fetch, a worker, an env-file load, a
+ * process exit or signal, and any environment read other than the four
+ * binding keys. Effects of the loader and of Node itself pass. Every smoke
+ * run requires empty stderr, so any report fails the test. It does not rely
+ * on the script's own providerCalls literal.
+ */
+const TRIPWIRE_SOURCE = String.raw`
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import cp from "node:child_process";
+import net from "node:net";
+import tls from "node:tls";
+import http from "node:http";
+import https from "node:https";
+import http2 from "node:http2";
+import dns from "node:dns";
+import dnsp from "node:dns/promises";
+import dgram from "node:dgram";
+import workers from "node:worker_threads";
+import { syncBuiltinESMExports } from "node:module";
+
+const write = process.stderr.write.bind(process.stderr);
+const fromScript = () => /[\\/]scripts[\\/][^\\/()]+\.[cm]?[jt]s:\d+:\d+/.test(new Error().stack ?? "");
+const tripped = (what) => {
+  if (!fromScript()) return false;
+  write("TRIPWIRE " + what + "\n");
+  return true;
+};
+const refuse = () => { throw new Error("synthetic tripwire: effect refused"); };
+const modules = [[fs, "fs"], [fsp, "fs.promises"], [cp, "child_process"], [net, "net"], [tls, "tls"],
+  [http, "http"], [https, "https"], [http2, "http2"], [dns, "dns"], [dnsp, "dns.promises"],
+  [dgram, "dgram"], [workers, "worker_threads"]];
+for (const [target, label] of modules) {
+  for (const name of Object.keys(target)) {
+    const original = target[name];
+    if (typeof original !== "function" || !/^[a-z]/.test(name)) continue;
+    target[name] = function (...args) {
+      if (tripped(label + "." + name)) refuse();
+      return original.apply(this, args);
+    };
+  }
+}
+const connect = net.Socket.prototype.connect;
+net.Socket.prototype.connect = function (...args) {
+  if (tripped("net.Socket.connect")) refuse();
+  return connect.apply(this, args);
+};
+for (const name of ["fetch", "WebSocket", "EventSource"]) {
+  const original = globalThis[name];
+  if (typeof original !== "function") continue;
+  globalThis[name] = new Proxy(original, {
+    apply(target, self, args) { if (tripped(name)) refuse(); return Reflect.apply(target, self, args); },
+    construct(target, args, next) { if (tripped(name)) refuse(); return Reflect.construct(target, args, next); },
+  });
+}
+for (const name of ["loadEnvFile", "exit", "kill", "chdir", "dlopen", "binding", "abort", "getBuiltinModule"]) {
+  const original = process[name];
+  if (typeof original !== "function") continue;
+  process[name] = function (...args) {
+    if (tripped("process." + name)) refuse();
+    return original.apply(this, args);
+  };
+}
+const binding = new Set(["CASTLES_PROFILE", "CASTLES_SANDBOX_ID", "CASTLES_OWNER_AGENT_ID", "CASTLES_SANDBOX_GENERATION"]);
+const named = (key) => typeof key === "string" && !binding.has(key);
+process.env = new Proxy(process.env, {
+  get(target, key) { if (named(key)) tripped("env read " + key); return Reflect.get(target, key); },
+  has(target, key) { if (named(key)) tripped("env probe " + key); return Reflect.has(target, key); },
+  ownKeys(target) { tripped("env enumeration"); return Reflect.ownKeys(target); },
+  set(target, key, value) { if (tripped("env write " + String(key))) refuse(); return Reflect.set(target, key, value); },
+  deleteProperty(target, key) { if (tripped("env delete " + String(key))) refuse(); return Reflect.deleteProperty(target, key); },
+});
+syncBuiltinESMExports();
+`;
+const tripwireDirectory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-tripwire-"));
+const tripwire = resolve(tripwireDirectory, "tripwire.mjs");
+writeFileSync(tripwire, TRIPWIRE_SOURCE);
+after(() => rmSync(tripwireDirectory, {recursive: true, force: true}));
+// Absolute, so a smoke run can start in any working directory.
+const guarded = ["--import", import.meta.resolve("tsx"), "--import", pathToFileURL(tripwire).href];
+
 function smoke(args: string[], binding: Record<string, string> = syntheticBinding) {
-  return smokeRun([process.execPath, "--import", "tsx", "scripts/smoke.ts", ...args], binding);
+  return smokeRun([process.execPath, ...guarded, "scripts/smoke.ts", ...args], binding);
 }
 /** Runs one smoke invocation, given as a full command line, and requires the refusal contract. */
 function smokeRun(command: string[], binding: Record<string, string> = syntheticBinding, cwd = root) {
@@ -367,7 +451,7 @@ test("CFG-07 smoke consumes only binding keys and never echoes credential canari
   assert.equal(result.reason, "canonical_capabilities_unavailable");
   assert.ok(read.length > 0);
   const canary = `synthetic-canary-${randomBytes(16).toString("hex")}`;
-  const child = spawnSync(process.execPath, ["--import", "tsx", "scripts/smoke.ts", ...liveArgs], {
+  const child = spawnSync(process.execPath, [...guarded, "scripts/smoke.ts", ...liveArgs], {
     cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
     env: {PATH: process.env.PATH, TSX_DISABLE_CACHE: "1", ...syntheticBinding,
       DAYTONA_API_KEY: canary, DATABASE_URL: canary, OPENAI_API_KEY: canary},
@@ -376,6 +460,7 @@ test("CFG-07 smoke consumes only binding keys and never echoes credential canari
   assert.equal(child.status, 1);
   assert.equal(JSON.parse(child.stdout).reason, "canonical_capabilities_unavailable");
   assert.ok(!(child.stdout + child.stderr).includes(canary));
+  assert.equal(child.stderr, "");
 });
 test("CFG-10 smoke refuses arbitrary directory arguments and preserves existing files", () => {
   const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-smoke-"));
@@ -383,6 +468,114 @@ test("CFG-10 smoke refuses arbitrary directory arguments and preserves existing 
     writeFileSync(resolve(directory, "existing.txt"), "synthetic existing data\n");
     const before = inputFiles(directory);
     assert.equal(smoke([...liveArgs, "--test-directory", directory]).reason, "unsupported_arguments");
+    assert.deepEqual(inputFiles(directory), before);
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
+
+/**
+ * B2: what a file under scripts/ may use. Imports from this list only; no
+ * dynamic import, network global, reflection, process control, env-file name
+ * or second output channel; one environment read, of the binding keys; one
+ * output; exit code 1. A script that needs more changes this test on purpose.
+ */
+const SCRIPT_IMPORTS = new Set(["node:util", "../src/profile.ts"]);
+function scriptProblems(source: string): string[] {
+  const problems: string[] = [];
+  for (const match of source.matchAll(/\b(?:import|export)\s+(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/g))
+    if (!SCRIPT_IMPORTS.has(match[1])) problems.push("import " + match[1]);
+  const forbidden: [string, RegExp][] = [
+    ["dynamic import or require", /\bimport\s*\(|\brequire\s*\(|\bcreateRequire\b/],
+    ["network global", /\b(?:fetch|WebSocket|EventSource|XMLHttpRequest)\b/],
+    ["reflection", /\b(?:globalThis|Function|eval|Reflect|Proxy)\b/],
+    ["process control or env-file load", /\bprocess\s*\.\s*(?:binding|dlopen|loadEnvFile|exit(?!Code)|kill|chdir|abort|getBuiltinModule)\b/],
+    ["env-file name", /["'`][^"'`\n]*\.env\b[^"'`\n]*["'`]/],
+    ["second output channel", /\bprocess\s*\.\s*stderr\b|\bconsole\s*\./],
+    ["success state", /["'`][^"'`\n]*\bready\b/i],
+  ];
+  for (const [label, pattern] of forbidden) if (pattern.test(source)) problems.push(label);
+  if ((source.match(/\bprocess\s*\.\s*env\b/g) ?? []).length !== 1 ||
+      !source.includes("for (const key of BINDING_ENVIRONMENT_KEYS) environment[key] = process.env[key];"))
+    problems.push("environment read beyond the binding keys");
+  const exitCodes = [...source.matchAll(/\bprocess\s*\.\s*exitCode\s*=\s*([^;\n]+)/g)].map(match => match[1].trim());
+  if (exitCodes.length !== 1 || exitCodes[0] !== "1") problems.push("exit code other than 1");
+  if ((source.match(/\bprocess\s*\.\s*stdout\s*\.\s*write\b/g) ?? []).length !== 1) problems.push("more than one output");
+  return problems;
+}
+function scriptFiles(directory: string, prefix = ""): string[] {
+  return readdirSync(directory, {withFileTypes: true}).flatMap(entry => entry.isDirectory()
+    ? scriptFiles(resolve(directory, entry.name), prefix + entry.name + "/") : [prefix + entry.name]);
+}
+const smokeSource = () => readFileSync(resolve(root, "scripts/smoke.ts"), "utf8");
+const MAIN_LINE = "  process.stdout.write(`${JSON.stringify(smokeRefusal(process.argv.slice(2), environment))}\\n`);";
+const UTIL_IMPORT = 'import { parseArgs } from "node:util";';
+/** Edits S1 to S6 of the second read by rv5b-7a31c9e4 (issuecomment-6849185944), anchored on this script. */
+const PLANTED: [string, [string, string][]][] = [
+  ["S1 credential variable read", [["  const parsed = parseBinding(environment);",
+    "  const credential = process.env.DAYTONA_API_KEY ?? process.env.DATABASE_URL; void credential;\n  const parsed = parseBinding(environment);"]]],
+  ["S2 env-file load", [["  const environment: Record<string, string | undefined> = {};",
+    "  try { process.loadEnvFile(\".env.local\"); } catch {}\n  const environment: Record<string, string | undefined> = {};"]]],
+  ["S3 network call", [[MAIN_LINE, "  await fetch(\"http://127.0.0.1:9/synthetic-provider\", {headers: {authorization: `Bearer ${process.env.DAYTONA_API_KEY}`}}).catch(() => {});\n" + MAIN_LINE]]],
+  ["S4 file write", [[UTIL_IMPORT, UTIL_IMPORT + "\nimport { appendFileSync } from \"node:fs\";"],
+    [MAIN_LINE, "  appendFileSync(\"synthetic-smoke-wrote-this.log\", \"x\\n\");\n" + MAIN_LINE]]],
+  ["S5 child process", [[UTIL_IMPORT, UTIL_IMPORT + "\nimport { spawnSync } from \"node:child_process\";"],
+    [MAIN_LINE, "  spawnSync(process.execPath, [\"-e\", \"0\"]);\n" + MAIN_LINE]]],
+  ["S6 success branch", [["  return refuse(\"canonical_capabilities_unavailable\");",
+    "  if (Number(dollars) >= 1) { process.stdout.write(\"{\\\"status\\\":\\\"ready\\\"}\\n\"); process.exit(0); }\n  return refuse(\"canonical_capabilities_unavailable\");"]]],
+];
+const plant = (source: string, edits: [string, string][]) => edits.reduce((text, [find, to]) => {
+  assert.ok(text.includes(find), "planted edit anchor must exist: " + find.slice(0, 40));
+  return text.replace(find, () => to);
+}, source);
+const largestBudget = ["--live", "--sandbox-id", syntheticBinding.CASTLES_SANDBOX_ID,
+  "--max-spend-usd", "999999.99", "--max-seconds", "900"];
+
+test("B2 scan: every file under scripts/ imports, reads and prints nothing beyond the refusal", () => {
+  const files = scriptFiles(resolve(root, "scripts"));
+  assert.ok(files.includes("smoke.ts"));
+  for (const file of files) {
+    assert.match(file, /\.ts$/, "only TypeScript is scanned");
+    assert.deepEqual(scriptProblems(readFileSync(resolve(root, "scripts", file), "utf8")), [], file);
+  }
+});
+test("B2 scan controls: each planted effect S1 to S6 is found", () => {
+  for (const [id, edits] of PLANTED) assert.notDeepEqual(scriptProblems(plant(smokeSource(), edits)), [], id);
+});
+test("B2 tripwire controls: each planted effect S1 to S6 is reported, and an unchanged copy runs clean", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-planted-"));
+  try {
+    const base = smokeSource().replace('"../src/profile.ts"', JSON.stringify(pathToFileURL(resolve(root, "src/profile.ts")).href));
+    for (const [id, edits] of [["unchanged copy", []], ...PLANTED] as [string, [string, string][]][]) {
+      const copy = resolve(directory, String(id.split(" ")[0]));
+      mkdirSync(resolve(copy, "scripts"), {recursive: true});
+      writeFileSync(resolve(copy, "package.json"), "{\"type\": \"module\"}\n");
+      writeFileSync(resolve(copy, "scripts/smoke.ts"), plant(base, edits));
+      const child = spawnSync(process.execPath, [...guarded, resolve(copy, "scripts/smoke.ts"), ...largestBudget], {
+        cwd: copy, encoding: "utf8", timeout: 5_000, maxBuffer: 65_536,
+        env: {PATH: process.env.PATH, TSX_DISABLE_CACHE: "1", ...syntheticBinding, DAYTONA_API_KEY: "synthetic-canary"},
+      });
+      assert.equal(child.error, undefined, id);
+      if (edits.length === 0) {
+        assert.equal(child.stderr, "", id);
+        assert.equal(child.status, 1, id);
+        assert.equal(JSON.parse(child.stdout).reason, "canonical_capabilities_unavailable", id);
+      } else assert.match(child.stderr, /^TRIPWIRE /m, id);
+      assert.ok(!(child.stdout + child.stderr).includes("synthetic-canary"), id);
+    }
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
+test("B2 the largest valid budget with complete inputs still refuses: there is no success branch", () => {
+  assert.equal(smoke(largestBudget).reason, "canonical_capabilities_unavailable");
+});
+test("B2 a smoke run loads no env file from its working directory and leaves it unchanged", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-cwd-"));
+  try {
+    const lines = Object.entries(syntheticBinding).map(([key, value]) => key + "=" + value + "\n").join("");
+    for (const name of [".env", ".env.local"]) writeFileSync(resolve(directory, name), lines);
+    const before = inputFiles(directory);
+    const script = [process.execPath, ...guarded, resolve(root, "scripts/smoke.ts")];
+    assert.equal(smokeRun([...script, ...liveArgs], {}, directory).reason, "binding_invalid");
+    assert.equal(smokeRun([...script, ...liveArgs], syntheticBinding, directory).reason, "canonical_capabilities_unavailable");
+    assert.equal(smokeRun([...script, ...largestBudget], syntheticBinding, directory).reason, "canonical_capabilities_unavailable");
     assert.deepEqual(inputFiles(directory), before);
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
