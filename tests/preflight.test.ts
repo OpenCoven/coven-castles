@@ -1157,11 +1157,11 @@ test("N4: the volume count is echoed only as an integer from 0 to 999", async ()
   const digits = "900719925474";
   const env = { ...fixture.env, CASTLES_SANDBOX_ID: digits };
   const lengths: [string, unknown, number | null, string, string[]][] = [
-    ["minus the ID", -Number(digits), 0, "ready", []],
-    ["-1", -1, 0, "ready", []],
+    ["minus the ID", -Number(digits), null, "incompatible", ["volumes_present"]],
+    ["-1", -1, null, "incompatible", ["volumes_present"]],
     ["the ID as a fraction", Number(`0.${digits}`), null, "incompatible", ["volumes_present"]],
     ["the ID as text", digits, null, "incompatible", ["volumes_present"]],
-    ["not a number", Number.NaN, null, "ready", []],
+    ["not a number", Number.NaN, null, "incompatible", ["volumes_present"]],
     ["0", 0, 0, "ready", []],
     ["5", 5, 5, "incompatible", ["volumes_present"]],
     ["999", 999, 999, "incompatible", ["volumes_present"]],
@@ -1176,7 +1176,8 @@ test("N4: the volume count is echoed only as an integer from 0 to 999", async ()
         key === "length" ? length : Reflect.get(target, key, receiver),
     });
     const result = await runPreflight(env, tripwireClient(() => inspection).client);
-    // Status and reasons are what they were at 13ab3bc; only the echo moves.
+    // A length that is not an integer from 0 up is refused, not read as "no
+    // volume", and is not echoed as a count (PR #11 question 11, review N9).
     assert.equal(result.status, status, label);
     assert.deepEqual(codes(result), expected, label);
     assert.equal(result.observed?.attachments.volumes, echoed, label);
@@ -1194,6 +1195,64 @@ test("N4: the volume count is echoed only as an integer from 0 to 999", async ()
     inspection.sandbox.volumes = volumes;
     const result = await runPreflight(fixture.env, tripwireClient(() => inspection).client);
     assert.equal(result.observed?.attachments.volumes, echoed);
+  }
+});
+
+test("Q11: an array whose length is not an integer from 0 up is an attachment, never \"no volume\"", async () => {
+  // PR #11 question 11 and review rv11 N9. The policy used to read every
+  // length not greater than 0 as "no volume": a negative number, NaN, and a
+  // zero or negative bigint (which made the check reject at 13ab3bc and
+  // return ready at fa95bbc). Only an array behind a proxy, in a response
+  // held in memory, can report such a length; no JSON response can. Each is
+  // now refused as an attachment, and none is echoed as a count.
+  const lengths: [string, unknown][] = [
+    ["0n", 0n],
+    ["-5n", -5n],
+    ["5n", 5n],
+    ["-1", -1],
+    ["-0.5", -0.5],
+    ["0.5", 0.5],
+    ["NaN", Number.NaN],
+    ["-Infinity", Number.NEGATIVE_INFINITY],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["-2^53", -(2 ** 53)],
+    ["2^53", 2 ** 53],
+    ['"0"', "0"],
+    ['""', ""],
+    ['"abc"', "abc"],
+    ["null", null],
+    ["undefined", undefined],
+    ["false", false],
+    ["true", true],
+    ["an object", {}],
+    ["a boxed 0", Object(0)],
+    ["a symbol", Symbol("length")],
+  ];
+  for (const [label, length] of lengths) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.volumes = new Proxy([], {
+        get: (target, key, receiver) =>
+          key === "length" ? length : Reflect.get(target, key, receiver),
+      });
+    });
+    assert.equal(result.status, "incompatible", label);
+    assert.deepEqual(result.reasons, [{ code: "volumes_present", field: "volumes" }], label);
+    assert.equal(result.observed?.attachments.volumes, null, label);
+  }
+  // An integer from 0 up is read as before: 0 is no volume, more is one.
+  for (const [length, status, echoed] of [
+    [0, "ready", 0],
+    [1, "incompatible", 1],
+    [1_500, "incompatible", 999],
+  ] as const) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.volumes = new Proxy([], {
+        get: (target, key, receiver) =>
+          key === "length" ? length : Reflect.get(target, key, receiver),
+      });
+    });
+    assert.equal(result.status, status, String(length));
+    assert.equal(result.observed?.attachments.volumes, echoed, String(length));
   }
 });
 
