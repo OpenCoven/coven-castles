@@ -348,6 +348,28 @@ test("OUT-01 OUT-02 fixture audit enforces full path matches, UTF-8 and every in
     assert.throws(() => audit([{path: "x", bytes}]));
   assert.throws(() => auditInput(fixtureTask, fixtureFiles, inputHashes + inputHashes, taskHashes));
 });
+test("OUT-02 OUT-03 the catalogue's own examples: its refused paths are refused, its shell-character content is audited as bytes (review N9)", () => {
+  const catalogue = readJson(resolve(fixtureRoot, "negative-cases.json")) as
+    {cases: {id: string, examples?: {refusedPaths?: string[], stagedPaths?: string[], content?: string}}[]};
+  const example = (id: string) => catalogue.cases.find(entry => entry.id === id)?.examples;
+  const audit = (files: InputFile[]) => auditInput(fixtureTask, files,
+    files.map(file => `${sha(file.bytes)}  ${file.path}\n`).join(""), taskHashes);
+  const refused = example("OUT-02")?.refusedPaths ?? [];
+  assert.deepEqual(refused, ["a;b.txt", "$x.txt", "a b.txt", "notes/../x.txt", "/abs.txt", ".hidden"]);
+  for (const path of refused)
+    assert.throws(() => audit([...fixtureFiles, {path, bytes: Buffer.from("synthetic\n")}]), path);
+  const staged = example("OUT-03");
+  assert.deepEqual(staged?.stagedPaths, ["notes/shell-chars.txt"]);
+  const content = Buffer.from(staged?.content ?? "");
+  assert.ok(/[;$`|&>*]/.test(content.toString()) && content.includes("castles-injection-marker.txt"));
+  // The fixture audit is the only consumer here: it accepts the file and hashes the bytes it was given.
+  // Staging and launch are #3; this pins that the audit needs no escaping and runs nothing.
+  const before = readdirSync(root).sort();
+  const files = [...fixtureFiles, {path: "notes/shell-chars.txt", bytes: Buffer.from(content)}];
+  assert.doesNotThrow(() => audit(files));
+  assert.ok(files.at(-1)?.bytes.equals(content));
+  assert.deepEqual(readdirSync(root).sort(), before);
+});
 const syntheticBinding = {
   CASTLES_PROFILE: "castles.daytona-private-linux.v1",
   CASTLES_SANDBOX_ID: "synthetic-sandbox-qualification",
