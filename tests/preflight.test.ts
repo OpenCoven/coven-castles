@@ -4940,69 +4940,115 @@ process.stdout.write(result.status + " " + result.reasons.map((reason) => reason
   assert.equal(run.stdout, "unavailable provider_unavailable\n");
 });
 
-// --- Open contract decision: four checks that pass on an absent key ---------
+// --- Absent keys: four checks that passed when the key was missing ----------
 //
-// Second read on #3 by rv3-d0dc225b, "Fail-open paths" item 2: a client that
-// carries over only the upstream fields that fit leaves these four keys
-// absent, and each check then passes. Whether an absent key should keep
-// passing or be refused is a contract decision for the maintainer and the #2
-// steward. It is not made here: each body states what the accepted contract
-// does today, and `todo` marks the decision as outstanding. Whoever decides
-// replaces the body with the decided outcome and removes the mark.
+// Second read on #3 by rv3-d0dc225b, "Fail-open paths" item 2, executed in
+// the checks posted on #3 (issuecomment-6848457839): a client that carries
+// over only the upstream fields that fit leaves these keys absent, and each
+// check used to pass. They were `todo` tests (mut2-0cb24bd4) while the
+// decision was open. This revision decides: an ABSENT key is missing
+// metadata (`metadata_missing` with the key as its field, so `incompatible`),
+// because a response that omits a key says nothing about it. An explicit
+// `null` still reads as "not set", as at 13ab3bc. Proposed until accepted.
 
-const ABSENT_KEY_DECISION =
-  "contract decision outstanding (#3 second read rv3-d0dc225b, fail-open paths item 2)";
+test("absent key: an absent autoDestroyAt is missing metadata, not \"no TTL\"", async () => {
+  const result = await withSandbox((sandbox) => {
+    delete sandbox.autoDestroyAt;
+  });
+  assert.equal(result.status, "incompatible");
+  assert.deepEqual(result.reasons, [{ code: "metadata_missing", field: "autoDestroyAt" }]);
+  assert.equal(result.observed?.lifecycle.autoDestroyAt, "absent");
+});
 
-test(
-  "todo: an absent autoDestroyAt passes the TTL check — keep, or refuse as missing metadata?",
-  { todo: ABSENT_KEY_DECISION },
-  async () => {
-    const result = await withSandbox((sandbox) => {
-      delete sandbox.autoDestroyAt;
-    });
-    assert.equal(result.status, "ready");
-    assert.deepEqual(result.reasons, []);
-    assert.equal(result.observed?.lifecycle.autoDestroyAt, "absent");
+test("absent key: an absent warmPoolId is missing metadata, not \"no warm pool\"", async () => {
+  const result = await withSandbox((sandbox) => {
+    delete sandbox.warmPoolId;
+  });
+  assert.equal(result.status, "incompatible");
+  assert.deepEqual(result.reasons, [{ code: "metadata_missing", field: "warmPoolId" }]);
+  assert.equal(result.observed?.attachments.warmPool, false);
+});
+
+test("absent key: an absent linkedSandboxId is missing metadata, not \"no linked sandbox\"", async () => {
+  const result = await withSandbox((sandbox) => {
+    delete sandbox.linkedSandboxId;
+  });
+  assert.equal(result.status, "incompatible");
+  assert.deepEqual(result.reasons, [{ code: "metadata_missing", field: "linkedSandboxId" }]);
+  assert.equal(result.observed?.attachments.linkedSandbox, false);
+});
+
+test("absent key: with block-all set, absent allow lists are missing metadata, not \"no list\"", async () => {
+  // The case the second read executed: block-all set and both lists dropped
+  // by the client. Block-all does not excuse a list nobody stated, since a
+  // list can open what block-all closes.
+  const result = await withSandbox((sandbox) => {
+    sandbox.networkBlockAll = true;
+    delete sandbox.domainAllowList;
+    delete sandbox.networkAllowList;
+  });
+  assert.equal(result.status, "incompatible");
+  assert.deepEqual(result.reasons, [
+    { code: "metadata_missing", field: "domainAllowList" },
+    { code: "metadata_missing", field: "networkAllowList" },
+  ]);
+  assert.equal(result.observed?.exposure.egressAllowListEntries, 0);
+});
+
+test("absent key: each allow list is judged on its own, and an unstated list is not called unrestricted", async () => {
+  const cases: [string, (sandbox: Record<string, unknown>) => void, unknown[]][] = [
+    [
+      "domain list absent, network list stated as null",
+      (sandbox) => {
+        delete sandbox.domainAllowList;
+        sandbox.networkAllowList = null;
+        sandbox.networkBlockAll = true;
+      },
+      [{ code: "metadata_missing", field: "domainAllowList" }],
+    ],
+    [
+      "network list absent beside a safe domain list",
+      (sandbox) => {
+        delete sandbox.networkAllowList;
+      },
+      [{ code: "metadata_missing", field: "networkAllowList" }],
+    ],
+    [
+      "both absent and block-all off: unknown, so not called unrestricted",
+      (sandbox) => {
+        sandbox.networkBlockAll = false;
+        delete sandbox.domainAllowList;
+        delete sandbox.networkAllowList;
+      },
+      [
+        { code: "metadata_missing", field: "domainAllowList" },
+        { code: "metadata_missing", field: "networkAllowList" },
+      ],
+    ],
+  ];
+  for (const [label, edit, reasons] of cases) {
+    const result = await withSandbox(edit);
+    assert.equal(result.status, "incompatible", label);
+    assert.deepEqual(result.reasons, reasons, label);
   }
-);
+});
 
-test(
-  "todo: an absent warmPoolId passes the warm-pool check — keep, or refuse as missing metadata?",
-  { todo: ABSENT_KEY_DECISION },
-  async () => {
-    const result = await withSandbox((sandbox) => {
-      delete sandbox.warmPoolId;
-    });
-    assert.equal(result.status, "ready");
-    assert.deepEqual(result.reasons, []);
-    assert.equal(result.observed?.attachments.warmPool, false);
-  }
-);
-
-test(
-  "todo: an absent linkedSandboxId passes the linked-sandbox check — keep, or refuse as missing metadata?",
-  { todo: ABSENT_KEY_DECISION },
-  async () => {
-    const result = await withSandbox((sandbox) => {
-      delete sandbox.linkedSandboxId;
-    });
-    assert.equal(result.status, "ready");
-    assert.deepEqual(result.reasons, []);
-    assert.equal(result.observed?.attachments.linkedSandbox, false);
-  }
-);
-
-test(
-  "todo: absent allow lists are not examined, and block-all then skips the unrestricted-egress check — keep, or require the lists to be stated?",
-  { todo: ABSENT_KEY_DECISION },
-  async () => {
-    const result = await withSandbox((sandbox) => {
-      sandbox.networkBlockAll = true;
-      delete sandbox.domainAllowList;
-      delete sandbox.networkAllowList;
-    });
-    assert.equal(result.status, "ready");
-    assert.deepEqual(result.reasons, []);
-    assert.equal(result.observed?.exposure.egressAllowListEntries, 0);
-  }
-);
+test("absent key: an explicit null still reads as not set, as at 13ab3bc", async () => {
+  const stated = await withSandbox((sandbox) => {
+    sandbox.autoDestroyAt = null;
+    sandbox.warmPoolId = null;
+    sandbox.linkedSandboxId = null;
+    sandbox.networkBlockAll = true;
+    sandbox.domainAllowList = null;
+    sandbox.networkAllowList = null;
+  });
+  assert.equal(stated.status, "ready");
+  assert.deepEqual(stated.reasons, []);
+  // With block-all off and both lists null, egress is unrestricted, as before.
+  const open = await withSandbox((sandbox) => {
+    sandbox.networkBlockAll = false;
+    sandbox.domainAllowList = null;
+    sandbox.networkAllowList = null;
+  });
+  assert.deepEqual(open.reasons, [{ code: "egress_unrestricted", field: "egress" }]);
+});
