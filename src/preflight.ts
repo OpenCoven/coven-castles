@@ -618,13 +618,17 @@ function evaluateCompatibility(
   // bounded. Block-all or a second, safe list does not excuse an unsafe one.
   // The domain rule is stricter than the owning service; the network-list
   // and block-all rules are Castles decisions with no upstream pin.
+  // Each list must be stated: `null` is "no list", a string is examined, and
+  // an absent key is missing metadata, since a list nobody stated can open
+  // what block-all closes. An unstated list also keeps egress from being
+  // called unrestricted: it is unknown, not empty.
   let allowListsUsable = true;
   for (const [field, accepts, maxEntries] of [
     ["domainAllowList", isAllowedDomain, Number.POSITIVE_INFINITY],
     ["networkAllowList", isBoundedIpv4Range, NETWORK_ALLOW_LIST.maxEntries],
   ] as const) {
     const value = sandbox[field];
-    if (value === undefined || value === null) {
+    if (value === null) {
       continue;
     }
     if (typeof value !== "string") {
@@ -671,15 +675,19 @@ function evaluateCompatibility(
   } else if (autoPause !== policy.lifecycle.autoPauseInterval) {
     fail("lifecycle_auto_pause", "autoPauseInterval");
   }
-  // Stated decision: `autoDestroyAt`, `volumes`, `warmPoolId` and
-  // `linkedSandboxId` are optional in the provider model. For an ABSENT key
-  // this matches the owning service, whose drift inventory (pinned
-  // resource-inventory.ts) compares `autoDestroyAt`, `warmPoolId` and
-  // `linkedSandboxId` with `undefined`. For an explicit `null` it does not:
-  // the owner's comparison would report drift, while Castles reads null as
-  // "not set" as well. That is a Castles choice, looser than the owner for
-  // null only. Any other present value fails.
-  if (sandbox.autoDestroyAt !== undefined && sandbox.autoDestroyAt !== null) {
+  // Stated decision: `autoDestroyAt`, `warmPoolId` and `linkedSandboxId`
+  // are optional in the provider model, where an absent key means "not set"
+  // (the owning service's drift inventory, pinned resource-inventory.ts,
+  // compares them with `undefined`). The inspection response must still
+  // state them: `null` is "not set", and an ABSENT key is missing metadata,
+  // because a client that drops a key it cannot map would otherwise pass
+  // the check (second read on #3, fail-open paths item 2). Reading `null` as
+  // "not set" is a Castles choice; the owner's comparison would report drift
+  // for it. Any other value fails. `volumes` is not part of this rule: an
+  // absent `volumes` still reads as none.
+  if (sandbox.autoDestroyAt === undefined) {
+    missing("autoDestroyAt");
+  } else if (sandbox.autoDestroyAt !== null) {
     fail("lifecycle_ttl", "autoDestroyAt");
   }
 
@@ -734,13 +742,14 @@ function evaluateCompatibility(
       fail("volumes_present", "volumes");
     }
   }
-  if (sandbox.warmPoolId !== undefined && sandbox.warmPoolId !== null) {
+  if (sandbox.warmPoolId === undefined) {
+    missing("warmPoolId");
+  } else if (sandbox.warmPoolId !== null) {
     fail("warm_pool_member", "warmPoolId");
   }
-  if (
-    sandbox.linkedSandboxId !== undefined &&
-    sandbox.linkedSandboxId !== null
-  ) {
+  if (sandbox.linkedSandboxId === undefined) {
+    missing("linkedSandboxId");
+  } else if (sandbox.linkedSandboxId !== null) {
     fail("linked_sandbox_present", "linkedSandboxId");
   }
 

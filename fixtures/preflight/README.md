@@ -14,6 +14,10 @@ Each `cases/*.json` file carries:
 - `inspection` — what the client seam returns for that case
 - `expect` — status, reason codes and the number of inspection calls
 
+Every observed case states `autoDestroyAt`, `warmPoolId`, `linkedSandboxId`
+and both allow lists, as `null` when not set: an absent key is missing
+metadata. `metadata-missing.json` omits them on purpose.
+
 The `inspection` shape is `castles.fixture.sandbox-inspection.v1`: the result
 Castles needs from the read-only seam requested in
 [OpenCoven/coven-agents#296](https://github.com/OpenCoven/coven-agents/issues/296).

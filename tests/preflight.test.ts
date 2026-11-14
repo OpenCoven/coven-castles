@@ -690,25 +690,33 @@ test("a stale generation is reported with the observed metadata, by decision", a
   assert.equal(result.observed?.binding.generation, 9);
 });
 
-test("absent or null TTL and attachment keys read as not set, by decision", async () => {
-  for (const value of [undefined, null]) {
-    const result = await withInspection((inspection) => {
-      for (const key of [
-        "autoDestroyAt",
-        "volumes",
-        "warmPoolId",
-        "linkedSandboxId",
-      ]) {
-        if (value === undefined) {
-          delete inspection.sandbox[key];
-        } else {
-          inspection.sandbox[key] = value;
-        }
-      }
-    });
-    assert.equal(result.status, "ready");
-    assert.deepEqual(result.reasons, []);
-  }
+test("null TTL and attachment keys read as not set; absent ones are missing metadata, except volumes", async () => {
+  // At 13ab3bc an absent key read as not set as well. This revision makes an
+  // absent autoDestroyAt, warmPoolId or linkedSandboxId missing metadata
+  // (see "absent key: ..." at the end of this file); volumes is unchanged.
+  const keys = ["autoDestroyAt", "volumes", "warmPoolId", "linkedSandboxId"];
+  const stated = await withInspection((inspection) => {
+    for (const key of keys) {
+      inspection.sandbox[key] = null;
+    }
+  });
+  assert.equal(stated.status, "ready");
+  assert.deepEqual(stated.reasons, []);
+  const absent = await withInspection((inspection) => {
+    for (const key of keys) {
+      delete inspection.sandbox[key];
+    }
+  });
+  assert.equal(absent.status, "incompatible");
+  assert.deepEqual(absent.reasons, [
+    { code: "metadata_missing", field: "autoDestroyAt" },
+    { code: "metadata_missing", field: "warmPoolId" },
+    { code: "metadata_missing", field: "linkedSandboxId" },
+  ]);
+  const noVolumes = await withInspection((inspection) => {
+    delete inspection.sandbox.volumes;
+  });
+  assert.equal(noVolumes.status, "ready");
 });
 
 // --- Fixture readiness is never live readiness (review N3) -----------------
@@ -1804,9 +1812,10 @@ test("egress pattern edges", async () => {
 });
 
 test("egress: no usable restriction at all is unrestricted; block-all alone is restricted", async () => {
+  // Absent lists are missing metadata, not "no list": see the "absent key"
+  // tests at the end of this file. Every row here states both lists.
   for (const [domains, networks] of [
     [null, null],
-    [undefined, undefined],
     ["", ""],
     [" , ,", null],
     [null, ","],
@@ -4497,7 +4506,7 @@ test("egress: an unreadable allow list is not also called unrestricted, and a bl
     const unreadable = await withSandbox((sandbox) => {
       sandbox.networkBlockAll = false;
       sandbox.domainAllowList = value;
-      delete sandbox.networkAllowList;
+      sandbox.networkAllowList = null;
     });
     assert.deepEqual(unreadable.reasons, [
       { code: "metadata_missing", field: "domainAllowList" },

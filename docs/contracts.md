@@ -140,7 +140,7 @@ it holds anything else that is not an array, or an array whose length is not
 an integer from 0 up. Only an empty array is "no volume": any other present
 value, such an array included, is `incompatible` with `volumes_present`.
 
-Two rules behind existing reason codes, both Castles decisions:
+Three rules behind existing reason codes, all Castles decisions:
 
 - An architecture other than `x86_64`, `amd64`, `aarch64` or `arm64` is
   `incompatible` with `metadata_missing`. No architecture is pinned upstream.
@@ -148,6 +148,13 @@ Two rules behind existing reason codes, both Castles decisions:
   `egress_allow_list_unsafe`, as is any entry wider than `/8`. The figure 10
   comes from public Daytona documentation and is unverified against the
   provider. Domains must be ASCII, and an IP literal is not a domain.
+- `autoDestroyAt`, `warmPoolId`, `linkedSandboxId`, `domainAllowList` and
+  `networkAllowList` must be present in an `observed` response. An absent
+  key is `incompatible` with `metadata_missing` and the key as its field;
+  `null` means "not set". An unstated allow list is not also reported as
+  `egress_unrestricted`, and block-all does not excuse it. `volumes` may be
+  absent and then reads as none. At `13ab3bc` an absent key read as "not set"
+  for all six.
 
 JSON output is at most 16,384 bytes.
 
