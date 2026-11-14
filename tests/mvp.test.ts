@@ -5,13 +5,19 @@ import { createHash, randomBytes } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-import test, { after } from "node:test";
+import nodeTest, { after } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runsAsProgram, smokeRefusal, type SmokeRefusal } from "../scripts/smoke.ts";
 import { createFixtureInspectionClient, isLiveReady, loadFixtureCase, renderHuman, renderJson,
   runPreflight, type SandboxInspectionClient } from "../src/preflight.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+/** Every title registered in this file, so docs/acceptance.md can cite only tests that exist (review N3). */
+const titles: string[] = [];
+function test(name: string, fn: () => void | Promise<void>) {
+  titles.push(name);
+  return nodeTest(name, fn);
+}
 const fixtureRoot = resolve(root, "fixtures/report-task");
 const readJson = (path: string) => JSON.parse(readFileSync(path, "utf8"));
 type ReportRule = { id: string; kind: string; value?: number | string[]; level?: number;
@@ -790,7 +796,7 @@ test("BND-09 RED-02 RED-03 preflight errors, timeouts and hostile metadata stay 
   }
 });
 
-test("catalogue coverage maps every case to executable evidence or a precise dependency", () => {
+test("catalogue coverage lists each of the 76 cases once, each with evidence and a remaining limit", () => {
   const catalogue = readJson(resolve(fixtureRoot, "negative-cases.json"));
   assert.equal(catalogue.synthetic, true);
   assert.equal(catalogue.cases.length, 76);
@@ -804,4 +810,79 @@ test("catalogue coverage maps every case to executable evidence or a precise dep
     const [, id, evidence, remaining] = row.split("|");
     assert.ok(evidence.trim().length > 10 && remaining.trim().length > 10, `${id.trim()}: explicit coverage and limits`);
   }
+});
+
+/**
+ * N3 and N6 to N8 of rv5b-7a31c9e4, N2 of rv5-aa741628, and its edits D1 to
+ * D3: a row set to verified, the matrix deleted and a row citing a missing
+ * test all passed. A status change, a citation or a dropped rule now has to
+ * change this file in the same reviewed commit. Prose is still read, not
+ * tested: these check what the document claims, not that the claims are true.
+ */
+const acceptance = () => readFileSync(resolve(root, "docs/acceptance.md"), "utf8");
+const STANDING: Record<string, string> = {
+  G1: "blocked", G2: "unverified", G3: "unverified", G4: "blocked", G5: "blocked", G6: "blocked",
+  "#2-A1": "fixture-only", "#2-A2": "fixture-only", "#2-A3": "fixture-only", "#2-A4": "fixture-only",
+  "#2-A5": "fixture-only", "#2-A6": "fixture-only", "#2-A7": "blocked",
+  "#3-A1": "blocked", "#3-A2": "unverified", "#3-A3": "unverified", "#3-A4": "unverified",
+  "#3-A5": "unverified", "#3-A6": "unverified", "#3-A7": "unverified", "#3-A8": "blocked",
+  "#4-A1": "unverified", "#4-A2": "blocked", "#4-A3": "unverified", "#4-A4": "unverified",
+  "#4-A5": "blocked", "#4-A6": "unverified", "#4-A7": "unverified", "#4-A8": "blocked",
+  "#5-R1": "unverified", "#5-R2": "unverified", "#5-R3": "blocked", "#5-R4": "blocked", "#5-R5": "unverified",
+  "#5-R6": "unverified", "#5-R7": "unverified", "#5-R8": "unverified", "#5-R9": "unverified",
+};
+const cells = (row: string) => row.split("|").slice(1, -1).map(cell => cell.trim());
+const matrixRows = (text: string) => text.split("\n").filter(line => /^\| (?:G\d|#\d-[AR]\d) \|/.test(line)).map(cells);
+const coverageRows = (text: string) => (text.split("## Catalogue coverage\n")[1]?.split("\n## ")[0] ?? "")
+  .split("\n").filter(line => /^\| [A-Z]{3}-\d\d \|/.test(line)).map(cells);
+const citations = (text: string) => [...text.matchAll(/\b(mvp|preflight) `([^`]+)`/g)].map(match => [match[1], match[2]]);
+function preflightTitles(): string[] {
+  const source = readFileSync(resolve(root, "tests/preflight.test.ts"), "utf8");
+  const failClosed = [...(source.split("const FAIL_CLOSED_CASES = [")[1]?.split("] as const;")[0] ?? "")
+    .matchAll(/"([^"]+)"/g)].map(match => match[1]);
+  return [...source.matchAll(/\btest\(\s*("(?:[^"\\]|\\.)*"|`[^`]*`)/g)].flatMap(([, literal]) =>
+    literal.startsWith("`") ? (literal === "`fail-closed fixture: $" + "{name}`"
+      ? failClosed.map(name => "fail-closed fixture: " + name) : [literal]) : [JSON.parse(literal) as string]);
+}
+test("N7 D1 D2 the matrix keeps the 38 promises at their standing, none verified, and the count line agrees", () => {
+  const rows = matrixRows(acceptance());
+  assert.deepEqual(rows.map(row => row[0]), Object.keys(STANDING), "each promise once, in issue order");
+  for (const row of rows) assert.ok(["verified", "fixture-only", "unverified", "blocked"].includes(row[2]), row[0]);
+  assert.deepEqual(rows.filter(row => row[2] === "verified").map(row => row[0]), [],
+    "verified needs independently reviewed real-daemon or live-provider evidence; none exists");
+  assert.deepEqual(Object.fromEntries(rows.map(row => [row[0], row[2]])), STANDING);
+  const count = (status: string) => rows.filter(row => row[2] === status).length;
+  assert.ok(acceptance().includes("**Count:** 38 promises. verified " + count("verified") + ", fixture-only " +
+    count("fixture-only") + ", unverified " + count("unverified") + ", blocked " + count("blocked") + "."));
+});
+test("N3 D3 every test the notes cite exists by its exact title, and every row with partial evidence cites one", () => {
+  const known = {mvp: new Set(titles), preflight: new Set(preflightTitles())};
+  const cited = citations(acceptance());
+  assert.ok(cited.length >= 40);
+  for (const [file, title] of cited) assert.ok(known[file as "mvp" | "preflight"].has(title), file + " test not found: " + title);
+  for (const [id, evidence] of coverageRows(acceptance()))
+    assert.ok(evidence.startsWith("Blocked:") || citations(evidence).length > 0, id + ": partial evidence names its test");
+  for (const row of matrixRows(acceptance()).filter(row => row[2] === "fixture-only"))
+    assert.ok(citations(row[3]).length > 0, row[0] + ": fixture-only names its tests");
+});
+test("N6 N8 the notes keep the merged rules, the full live gate and the catalogue facts, and open nothing", () => {
+  const text = acceptance();
+  for (const rule of ["A higher class is never inferred from a lower one.",
+    "they are not evidence for any row here", "One passing case never establishes a checkbox by itself.",
+    "the scan is a tripwire, not a proof"])
+    assert.ok(text.includes(rule), rule);
+  const live = text.split("\n").find(line => line.startsWith("| Live qualification |")) ?? "";
+  for (const condition of ["Accepted #2 to #4 revisions", "real admission", "safe containment", "exact sandbox assignment",
+    "separate explicit provider and spending authorization", "named operator and window"])
+    assert.ok(live.includes(condition), condition);
+  const catalogue = readJson(resolve(fixtureRoot, "negative-cases.json")) as {cases: {id: string, basis?: unknown, dependsOn: string[]}[]};
+  const basis = catalogue.cases.filter(entry => entry.basis !== undefined).map(entry => entry.id);
+  assert.equal(basis.length, 13);
+  const basisLine = text.split("\n\n").find(paragraph => paragraph.startsWith("Thirteen cases carry a `basis` field")) ?? "";
+  assert.deepEqual(basisLine.match(/[A-Z]{3}-\d\d/g), basis);
+  assert.equal(catalogue.cases.filter(entry => entry.dependsOn.some(item => item.startsWith("#2 binding/preflight contract"))).length, 19);
+  assert.ok(text.includes("Nineteen cases name"));
+  assert.ok(coverageRows(text).find(row => row[0] === "ADM-05")?.[2].includes("coven-agents#298"), "ADM-05 names the dispatch half");
+  assert.doesNotMatch(text, /supersede/i, "a #5 document supersedes no shared file");
+  assert.doesNotMatch(text, /\bopened by\b|\bgate (?:is )?open(?:ed)?\b/i, "no gate is recorded as open");
 });
