@@ -162,7 +162,7 @@ test("N2 grader: a repeated title uses its first section, and only level-2 headi
   assert.ok(passText.includes("## Findings\n\n"));
   assert.deepEqual(failures(passText.replace("## Findings\n\n", "## Findings\n\n### Detail\n\n")), []);
 });
-test("N2 grader: section length counts code points, flat text collapses whitespace, `in` sections join with a space", () => {
+test("N2 grader: section length counts code points, flat text collapses whitespace, 'in' sections join with a space", () => {
   const limitations = passText.slice(passText.indexOf("## Limitations\n"));
   assert.deepEqual(failures(passText.replace(limitations, "## Limitations\n\n" + "🦉".repeat(6) + "\n")), ["RP-16"],
     "six astral characters are 12 UTF-16 units but 6 characters");
@@ -173,7 +173,7 @@ test("N2 grader: section length counts code points, flat text collapses whitespa
   const joined = summaryEndsWith("There is no defect").replace("## Findings\n\n", "## Findings\n\nin the code. ");
   assert.deepEqual(failures(joined), ["RP-17"], "Summary and Findings are joined by one space");
 });
-test("N2 grader: RP-03 accepts exactly 200 bytes, and rules without `in` read comments too", () => {
+test("N2 grader: RP-03 accepts exactly 200 bytes, and rules without 'in' read comments too", () => {
   assert.ok(!reportFailures(Buffer.alloc(200, "a")).includes("RP-03"));
   assert.ok(reportFailures(Buffer.alloc(199, "a")).includes("RP-03"));
   const marker = "-----BEGIN " + "PRIVATE KEY-----";
