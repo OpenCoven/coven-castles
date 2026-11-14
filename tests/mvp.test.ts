@@ -428,6 +428,35 @@ test("CFG-05 smoke refuses a missing or different exact target", () => {
   assert.equal(smoke(liveArgs.filter((_, i) => i !== 1 && i !== 2)).reason, "exact_target_required");
   assert.equal(smoke(liveArgs.map(v => v === syntheticBinding.CASTLES_SANDBOX_ID ? "synthetic-other" : v)).reason, "target_mismatch");
 });
+test("CFG-04 smoke spend is at most six integer digits and two fractional digits (review N5)", () => {
+  const spend = (value: string) => smokeRefusal(["--live", "--sandbox-id", syntheticBinding.CASTLES_SANDBOX_ID,
+    `--max-spend-usd=${value}`, "--max-seconds", "900"], syntheticBinding).reason;
+  for (const value of ["999999.99", "999999", "0.01", "1.5", "10"])
+    assert.equal(spend(value), "canonical_capabilities_unavailable", value);
+  for (const value of ["1000000", "9999999.99", "0.001", "1.234", "01", "1.", ".5", "+1", "1_000", "0.00"])
+    assert.equal(spend(value), "budget_invalid", value);
+});
+test("CFG-05 smoke compares the target exactly and never echoes it (review N5)", () => {
+  const other = `synthetic-other-${randomBytes(8).toString("hex")}`;
+  const keys = ["evidence", "providerCalls", "reason", "schema", "status"];
+  for (const target of [other, syntheticBinding.CASTLES_SANDBOX_ID.toUpperCase(), `${syntheticBinding.CASTLES_SANDBOX_ID} `]) {
+    const args = liveArgs.map(value => value === syntheticBinding.CASTLES_SANDBOX_ID ? target : value);
+    const result = smokeRefusal(args, syntheticBinding);
+    assert.equal(result.reason, "target_mismatch", target);
+    assert.deepEqual(Object.keys(result).sort(), keys);
+    const child = smoke(args);
+    assert.equal(child.reason, "target_mismatch", target);
+    assert.deepEqual(Object.keys(child).sort(), keys);
+  }
+  // The given target never reaches output, mismatched or not.
+  const child = spawnSync(process.execPath, [...guarded, "scripts/smoke.ts",
+    ...liveArgs.map(value => value === syntheticBinding.CASTLES_SANDBOX_ID ? other : value)], {
+    cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
+    env: {PATH: process.env.PATH, TSX_DISABLE_CACHE: "1", ...syntheticBinding},
+  });
+  assert.equal(child.status, 1);
+  assert.ok(!(child.stdout + child.stderr).includes(other));
+});
 test("CFG-06 smoke never accepts fixture or mock flags", () => {
   for (const args of [["--fixture", "ready.json"], ["--mock"], ["--json"], ["run"], ["--live=true"],
     [...liveArgs, "--live"], [...liveArgs, "--max-seconds", "1"], [...liveArgs, "--reset"], [...liveArgs, "--ignore-cleanup"]])
