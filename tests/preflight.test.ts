@@ -4851,6 +4851,33 @@ test("the abort signal handed to the seam is live during the call and aborted on
   }
 });
 
+test("N11: the seam method receives exactly the request and options holding only the signal", async () => {
+  // Review rv11 N11. The test above pins the signal; this pins the rest of
+  // what crosses the seam: two arguments, the request with the three binding
+  // values and nothing else, and options with nothing but the signal.
+  const fixture = loadFixtureCase(casePath("ready"));
+  const received: unknown[][] = [];
+  const client: SandboxInspectionClient = {
+    inspectBoundSandbox(...args: unknown[]) {
+      received.push(args);
+      return Promise.resolve(fixture.inspection);
+    },
+  } as SandboxInspectionClient;
+  const result = await runPreflight(fixture.env, client, { timeoutMs: 5_000 });
+  assert.equal(result.status, "ready");
+  assert.equal(received.length, 1);
+  const [args] = received as [unknown[]];
+  assert.equal(args.length, 2);
+  const [request, options] = args as [Record<string, unknown>, Record<string, unknown>];
+  assert.deepEqual(request, {
+    agentId: fixture.env.CASTLES_OWNER_AGENT_ID,
+    expectedGeneration: Number(fixture.env.CASTLES_SANDBOX_GENERATION),
+    sandboxId: fixture.env.CASTLES_SANDBOX_ID,
+  });
+  assert.deepEqual(Object.keys(options), ["signal"]);
+  assert.ok(options.signal instanceof AbortSignal);
+});
+
 function runScript(source: string, args: readonly string[] = []) {
   const directory = realpathSync(
     mkdtempSync(join(tmpdir(), "castles-script-"))
