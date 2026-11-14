@@ -322,18 +322,27 @@ function echoedInteger(value: unknown): number | null {
 const ECHOED_COUNT_MAX = 999;
 
 /**
+ * An array length as a count: the length when it is an integer from 0 up,
+ * otherwise null. A real array always has such a length; an array behind a
+ * proxy, in a response held in memory, can report anything (a negative
+ * number, a fraction, `NaN`, a bigint, a string). Such a length is not a
+ * count, so the volume policy does not read it as "no volume" and the echo
+ * does not print it.
+ */
+function countOf(length: unknown): number | null {
+  const reading = integer(length);
+  return reading !== null && reading >= 0 ? reading : null;
+}
+
+/**
  * A count as it may be printed: an integer from 0 to `ECHOED_COUNT_MAX`,
- * or null when the length is not an integer at all. A real array always has
- * a length that is an integer from 0 up; an array behind a proxy, in a
- * response held in memory, can report a negative or fractional one, which
- * would be a third way for an all-digit ID to come back. Output only: the
- * policy on volumes reads the length itself.
+ * or null when the length is not a count (see `countOf`). Printing a
+ * negative or fractional length would be a third way for an all-digit ID to
+ * come back.
  */
 function echoedCount(length: unknown): number | null {
-  const reading = integer(length);
-  return reading === null
-    ? null
-    : Math.max(0, Math.min(reading, ECHOED_COUNT_MAX));
+  const count = countOf(length);
+  return count === null ? null : Math.min(count, ECHOED_COUNT_MAX);
 }
 
 function allowListItems(value: unknown): readonly string[] {
@@ -715,8 +724,13 @@ function evaluateCompatibility(
     fail("gpu_present", "gpu");
   }
 
+  // Only an empty array is "no volume". Anything else present is an
+  // attachment, including an array whose length is not a count.
   if (sandbox.volumes !== undefined && sandbox.volumes !== null) {
-    if (!Array.isArray(sandbox.volumes) || sandbox.volumes.length > 0) {
+    if (
+      !Array.isArray(sandbox.volumes) ||
+      countOf(sandbox.volumes.length) !== 0
+    ) {
       fail("volumes_present", "volumes");
     }
   }

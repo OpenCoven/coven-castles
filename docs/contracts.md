@@ -137,7 +137,8 @@ inside that range cannot be told from a reading. The two counts,
 `attachments.volumes` and `exposure.egressAllowListEntries`, are integers from
 0 to 999. `attachments.volumes` is 0 when the field is absent, and `null` when
 it holds anything else that is not an array, or an array whose length is not
-an integer.
+an integer from 0 up. Only an empty array is "no volume": any other present
+value, such an array included, is `incompatible` with `volumes_present`.
 
 Two rules behind existing reason codes, both Castles decisions:
 
