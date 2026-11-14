@@ -29,6 +29,8 @@ export const FIXTURE_LABEL =
 export const INSPECTION_CONTRACT = "castles.fixture.sandbox-inspection.v1";
 export const PREFLIGHT_JSON_MAX_BYTES = 16_384;
 export const DEFAULT_INSPECTION_TIMEOUT_MS = 30_000;
+/** The longest delay a Node timer accepts. Node turns a longer one into 1 ms. */
+const MAX_INSPECTION_TIMEOUT_MS = 2_147_483_647;
 const MAX_REASONS = 16;
 
 // --- The constrained client seam -------------------------------------------
@@ -112,7 +114,8 @@ export type ObservedSandbox = Readonly<{
   }>;
   binding: Readonly<{
     attemptFence: string;
-    generation: number;
+    /** Null when the recorded generation is outside the echoed range. */
+    generation: number | null;
     lifecycle: string;
   }>;
   exposure: Readonly<{
@@ -200,7 +203,7 @@ function alias(prefix: "own" | "sbx", value: string | undefined): string | null 
  * `major.minor.patch` SDK version, `"unrecognised"` for any other string, or
  * null for an absent or non-string value. A field set to a private ID, a
  * credential or any other free text therefore cannot reach human or JSON
- * output.
+ * output. Numbers have their own rule: see `echoedInteger`.
  *
  * Sources: sandbox states are the `SandboxState` values of the public
  * `@daytona/api-client` 0.220.0 package; binding lifecycles are
@@ -279,6 +282,67 @@ function integer(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value)
     ? value
     : null;
+}
+
+/**
+ * The only integers `observed` may carry. An identifier may be all digits,
+ * so a numeric field is a second way for a configured ID to come back from
+ * the seam. Every resource and lifecycle reading this profile can accept
+ * lies between -1 (auto-delete disabled) and 43,200 (the auto-archive
+ * ceiling); the range leaves room to show a reading that is out of policy,
+ * and no more.
+ *
+ * The recorded generation is the one field whose accepted values can lie
+ * outside the range: a binding may state up to nine digits. From 100,000 up
+ * it is not echoed even when it matches. The match still shows, as the
+ * absence of `generation_mismatch` beside `target.expectedGeneration`.
+ */
+const ECHOED_INTEGER = Object.freeze({ max: 99_999, min: -1 });
+
+/**
+ * A reading as it may be printed: the integer itself inside
+ * `ECHOED_INTEGER`, null outside it or when it is not an integer. This
+ * bounds output only. Policy is always evaluated on the reading itself, so
+ * a number that is not echoed still produces its reason code.
+ *
+ * What this does not do: an ID that is itself an integer inside the range
+ * (at most five digits) cannot be told from a reading and is printed when a
+ * field reports that number.
+ */
+function echoedInteger(value: unknown): number | null {
+  const reading = integer(value);
+  return reading !== null &&
+    reading >= ECHOED_INTEGER.min &&
+    reading <= ECHOED_INTEGER.max
+    ? reading
+    : null;
+}
+
+/** The most a count in `observed` may say. */
+const ECHOED_COUNT_MAX = 999;
+
+/**
+ * An array length as a count: the length when it is an integer from 0 up,
+ * otherwise null. A real array always has such a length; an array behind a
+ * proxy, in a response held in memory, can report anything (a negative
+ * number, a fraction, `NaN`, a bigint, a string). Such a length is not a
+ * count, so the volume policy does not read it as "no volume" and the echo
+ * does not print it.
+ */
+function countOf(length: unknown): number | null {
+  const reading = integer(length);
+  return reading !== null && reading >= 0 ? reading : null;
+}
+
+/**
+ * A count as it may be printed: an integer from 0 to `ECHOED_COUNT_MAX`,
+ * or null when the length is not a count (see `countOf`). Printing a
+ * negative or fractional length would be a third way for an all-digit ID to
+ * come back.
+ */
+function echoedCount(length: unknown): number | null {
+  const count = countOf(length);
+  return count === null ? null : Math.min(count, ECHOED_COUNT_MAX);
 }
 
 function allowListItems(value: unknown): readonly string[] {
@@ -554,13 +618,17 @@ function evaluateCompatibility(
   // bounded. Block-all or a second, safe list does not excuse an unsafe one.
   // The domain rule is stricter than the owning service; the network-list
   // and block-all rules are Castles decisions with no upstream pin.
+  // Each list must be stated: `null` is "no list", a string is examined, and
+  // an absent key is missing metadata, since a list nobody stated can open
+  // what block-all closes. An unstated list also keeps egress from being
+  // called unrestricted: it is unknown, not empty.
   let allowListsUsable = true;
   for (const [field, accepts, maxEntries] of [
     ["domainAllowList", isAllowedDomain, Number.POSITIVE_INFINITY],
     ["networkAllowList", isBoundedIpv4Range, NETWORK_ALLOW_LIST.maxEntries],
   ] as const) {
     const value = sandbox[field];
-    if (value === undefined || value === null) {
+    if (value === null) {
       continue;
     }
     if (typeof value !== "string") {
@@ -607,15 +675,19 @@ function evaluateCompatibility(
   } else if (autoPause !== policy.lifecycle.autoPauseInterval) {
     fail("lifecycle_auto_pause", "autoPauseInterval");
   }
-  // Stated decision: `autoDestroyAt`, `volumes`, `warmPoolId` and
-  // `linkedSandboxId` are optional in the provider model. For an ABSENT key
-  // this matches the owning service, whose drift inventory (pinned
-  // resource-inventory.ts) compares `autoDestroyAt`, `warmPoolId` and
-  // `linkedSandboxId` with `undefined`. For an explicit `null` it does not:
-  // the owner's comparison would report drift, while Castles reads null as
-  // "not set" as well. That is a Castles choice, looser than the owner for
-  // null only. Any other present value fails.
-  if (sandbox.autoDestroyAt !== undefined && sandbox.autoDestroyAt !== null) {
+  // Stated decision: `autoDestroyAt`, `warmPoolId` and `linkedSandboxId`
+  // are optional in the provider model, where an absent key means "not set"
+  // (the owning service's drift inventory, pinned resource-inventory.ts,
+  // compares them with `undefined`). The inspection response must still
+  // state them: `null` is "not set", and an ABSENT key is missing metadata,
+  // because a client that drops a key it cannot map would otherwise pass
+  // the check (second read on #3, fail-open paths item 2). Reading `null` as
+  // "not set" is a Castles choice; the owner's comparison would report drift
+  // for it. Any other value fails. `volumes` is not part of this rule: an
+  // absent `volumes` still reads as none.
+  if (sandbox.autoDestroyAt === undefined) {
+    missing("autoDestroyAt");
+  } else if (sandbox.autoDestroyAt !== null) {
     fail("lifecycle_ttl", "autoDestroyAt");
   }
 
@@ -660,18 +732,24 @@ function evaluateCompatibility(
     fail("gpu_present", "gpu");
   }
 
+  // Only an empty array is "no volume". Anything else present is an
+  // attachment, including an array whose length is not a count.
   if (sandbox.volumes !== undefined && sandbox.volumes !== null) {
-    if (!Array.isArray(sandbox.volumes) || sandbox.volumes.length > 0) {
+    if (
+      !Array.isArray(sandbox.volumes) ||
+      countOf(sandbox.volumes.length) !== 0
+    ) {
       fail("volumes_present", "volumes");
     }
   }
-  if (sandbox.warmPoolId !== undefined && sandbox.warmPoolId !== null) {
+  if (sandbox.warmPoolId === undefined) {
+    missing("warmPoolId");
+  } else if (sandbox.warmPoolId !== null) {
     fail("warm_pool_member", "warmPoolId");
   }
-  if (
-    sandbox.linkedSandboxId !== undefined &&
-    sandbox.linkedSandboxId !== null
-  ) {
+  if (sandbox.linkedSandboxId === undefined) {
+    missing("linkedSandboxId");
+  } else if (sandbox.linkedSandboxId !== null) {
     fail("linked_sandbox_present", "linkedSandboxId");
   }
 
@@ -703,9 +781,6 @@ function evaluateState(envelope: ObservedEnvelope, findings: Findings): void {
 
 function observe(envelope: ObservedEnvelope): ObservedSandbox {
   const { binding, platform, sandbox, sdk } = envelope;
-  const cpu = integer(sandbox.cpu);
-  const memoryGiB = integer(sandbox.memory);
-  const diskGiB = integer(sandbox.disk);
   const { target } = SUPPORTED_PROFILE.resources;
   return {
     attachments: {
@@ -713,7 +788,7 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
         sandbox.linkedSandboxId !== undefined &&
         sandbox.linkedSandboxId !== null,
       volumes: Array.isArray(sandbox.volumes)
-        ? Math.min(sandbox.volumes.length, 999)
+        ? echoedCount(sandbox.volumes.length)
         : sandbox.volumes === undefined
           ? 0
           : null,
@@ -721,14 +796,14 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
     },
     binding: {
       attemptFence: known(binding.attemptFence, KNOWN.attemptFence) ?? UNRECOGNISED,
-      generation: binding.generation,
+      generation: echoedInteger(binding.generation),
       lifecycle: known(binding.lifecycle, KNOWN.bindingLifecycle) ?? UNRECOGNISED,
     },
     exposure: {
       egressAllowListEntries: Math.min(
         allowListEntries(sandbox.domainAllowList) +
           allowListEntries(sandbox.networkAllowList),
-        999
+        ECHOED_COUNT_MAX
       ),
       networkBlockAll:
         typeof sandbox.networkBlockAll === "boolean"
@@ -738,28 +813,28 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
     },
     image: { snapshot: known(sandbox.snapshot, KNOWN.snapshot) },
     lifecycle: {
-      autoArchiveInterval: integer(sandbox.autoArchiveInterval),
-      autoDeleteInterval: integer(sandbox.autoDeleteInterval),
+      autoArchiveInterval: echoedInteger(sandbox.autoArchiveInterval),
+      autoDeleteInterval: echoedInteger(sandbox.autoDeleteInterval),
       autoDestroyAt:
         sandbox.autoDestroyAt === undefined || sandbox.autoDestroyAt === null
           ? "absent"
           : "present",
-      autoPauseInterval: integer(sandbox.autoPauseInterval),
-      autoStopInterval: integer(sandbox.autoStopInterval),
+      autoPauseInterval: echoedInteger(sandbox.autoPauseInterval),
+      autoStopInterval: echoedInteger(sandbox.autoStopInterval),
     },
     platform: {
       architecture: known(platform.architecture, KNOWN.architecture),
       os: known(platform.os, KNOWN.os),
     },
     resources: {
-      cpu,
-      diskGiB,
-      gpu: integer(sandbox.gpu),
+      cpu: echoedInteger(sandbox.cpu),
+      diskGiB: echoedInteger(sandbox.disk),
+      gpu: echoedInteger(sandbox.gpu),
       matchesTarget:
-        cpu === target.cpu &&
-        memoryGiB === target.memoryGiB &&
-        diskGiB === target.diskGiB,
-      memoryGiB,
+        sandbox.cpu === target.cpu &&
+        sandbox.memory === target.memoryGiB &&
+        sandbox.disk === target.diskGiB,
+      memoryGiB: echoedInteger(sandbox.memory),
     },
     sdk: { version: sdkVersion(sdk.version) },
     state: known(sandbox.state, KNOWN.state),
@@ -767,9 +842,86 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
   };
 }
 
+type Inspect = SandboxInspectionClient["inspectBoundSandbox"];
+
+/**
+ * Invokes a seam method with its client as the receiver, reading no
+ * property of the method: `invokeSeam(method, client, request, options)`.
+ * It is the built-in call operation, taken once from a function this module
+ * owns and bound to that same operation. Writing `method.call(...)` would
+ * read `call` from the method, so a method without the built-in one could
+ * not be invoked, and a method carrying its own would be bypassed.
+ *
+ * Taken at module load, so it is whatever the built-in `call` and `bind`
+ * of functions were then. "No property of the method is read" and "one
+ * inspection is counted exactly when the method was invoked" hold in a
+ * realm whose built-ins were intact when this module was imported.
+ */
+const builtInCall = seamOf.call as (
+  this: unknown,
+  ...args: unknown[]
+) => unknown;
+const invokeSeam = builtInCall.bind(builtInCall) as (
+  method: Inspect,
+  client: unknown,
+  ...args: Parameters<Inspect>
+) => ReturnType<Inspect>;
+
+/**
+ * The seam method of a usable client, bound to that client, or null when
+ * there is none. A client is any value whose `inspectBoundSandbox` is
+ * callable; `null`, `undefined` and everything else are no client. The
+ * property is read once, here, so what was judged usable is what gets
+ * invoked, and a read that throws means no client. Nothing else is read
+ * from the client or from the method.
+ */
+function seamOf(client: unknown): Inspect | null {
+  if (client === null || client === undefined) {
+    return null;
+  }
+  try {
+    const method: unknown = (client as Partial<SandboxInspectionClient>)
+      .inspectBoundSandbox;
+    if (typeof method !== "function") {
+      return null;
+    }
+    const seam = method as Inspect;
+    return (request, options) => invokeSeam(seam, client, request, options);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The deadline for the one inspection call. Options that are not an object
+ * (`null`, a primitive, a function) or that are an array are no options.
+ *
+ * One stated value is replaced: a number above the longest delay a timer
+ * accepts, `Infinity` included. Node turns such a delay into 1 ms, so a
+ * caller asking for a long wait would have every provider reported as
+ * unavailable; it means the default and is never handed to a timer.
+ *
+ * Every other stated value is handed to the timer as given, as it always
+ * was, and Node decides: 1 ms for a number below 1 or `NaN`, a conversion
+ * for a value that is not a number (so a string or a boxed number above the
+ * limit still becomes 1 ms), an exception for a bigint or a symbol, which
+ * `inspectOnce` flattens to `provider_unavailable`. What such a value should
+ * mean is an open question for the maintainer, not decided here; hence the
+ * cast.
+ */
+function inspectionDeadline(options: unknown): number {
+  const stated = isRecord(options) ? options.timeoutMs : undefined;
+  if (stated === undefined || stated === null) {
+    return DEFAULT_INSPECTION_TIMEOUT_MS;
+  }
+  return typeof stated === "number" && stated > MAX_INSPECTION_TIMEOUT_MS
+    ? DEFAULT_INSPECTION_TIMEOUT_MS
+    : (stated as number);
+}
+
 /** One bounded inspection call. Any failure is flattened; nothing is kept. */
 async function inspectOnce(
-  client: SandboxInspectionClient,
+  inspect: Inspect,
   binding: Binding,
   timeoutMs: number
 ): Promise<Inspection> {
@@ -778,7 +930,7 @@ async function inspectOnce(
   try {
     const response = await Promise.race([
       Promise.resolve().then(() =>
-        client.inspectBoundSandbox(
+        inspect(
           {
             agentId: binding.agentId,
             expectedGeneration: binding.expectedGeneration,
@@ -811,26 +963,46 @@ export type PreflightOptions = Readonly<{ timeoutMs?: number }>;
  * The evidence class is a fact about the client, so it is derived here and
  * cannot be supplied by a caller. No live client exists at this head (the
  * upstream seam is missing), so nothing this library returns is
- * `live-provider`: no client means no inspection, and every client object,
- * whoever built it and whatever properties it carries, is non-live. When the
- * seam lands, the live client factory added to this module becomes the only
- * source of `live-provider`.
+ * `live-provider`: no usable client means no inspection, and every usable
+ * client, whoever built it and whatever properties it carries, is non-live.
+ * When the seam lands, the live client factory added to this module becomes
+ * the only source of `live-provider`.
  */
-function evidenceOf(client: SandboxInspectionClient | null): PreflightEvidence {
-  return client === null ? "none" : "fixture";
+function evidenceOf(inspect: Inspect | null): PreflightEvidence {
+  return inspect === null ? "none" : "fixture";
 }
 
 /**
  * Checks the one configured sandbox. Passing `null` for the client means no
  * seam is available: the binding is still validated, and the result names the
  * upstream blocker instead of guessing an endpoint.
+ *
+ * For plain values, the edges a caller can reach from plain JavaScript are
+ * decided here, not left to an exception or to a timer:
+ * - a client that is `undefined`, or any value without a callable
+ *   `inspectBoundSandbox`, is the same as `null`: evidence `none`, no call
+ *   counted, `upstream_seam_missing`. The property is read once, before the
+ *   binding is validated, because the evidence class depends on it;
+ * - `providerCalls.inspect` is 1 exactly when the seam method was invoked;
+ * - an environment that is `null`, `undefined`, a primitive or a function
+ *   configures nothing (`sandbox_id_missing`); options that are `null`, a
+ *   primitive, a function or an array are no options. Any other object is
+ *   read, whatever built it;
+ * - a `timeoutMs` that is a number above 2,147,483,647 means the default
+ *   deadline; every other stated value goes to the timer as given.
+ *
+ * Not handled: a property whose read throws. An accessor that throws on the
+ * environment, the options or a response held in memory still rejects this
+ * call with the caller's own error. Only the read of the client's
+ * `inspectBoundSandbox` is caught.
  */
 export async function runPreflight(
   environment: Readonly<Record<string, string | undefined>>,
   client: SandboxInspectionClient | null,
   options: PreflightOptions = {}
 ): Promise<PreflightResult> {
-  const evidence = evidenceOf(client);
+  const inspect = seamOf(client);
+  const evidence = evidenceOf(inspect);
   const findings = new Findings();
   const parsed = parseBinding(environment);
   if (!parsed.ok) {
@@ -844,15 +1016,15 @@ export async function runPreflight(
     return result(findings, parsed.partial, evidence, 0, null);
   }
   const { binding } = parsed;
-  if (client === null) {
+  if (inspect === null) {
     findings.add("unavailable", "upstream_seam_missing");
     return result(findings, binding, evidence, 0, null);
   }
 
   const inspection = await inspectOnce(
-    client,
+    inspect,
     binding,
-    options.timeoutMs ?? DEFAULT_INSPECTION_TIMEOUT_MS
+    inspectionDeadline(options)
   );
   if (inspection.kind === "refused") {
     findings.add(inspection.status, inspection.code);
@@ -936,7 +1108,10 @@ export function isLiveReady(value: PreflightResult): boolean {
 
 /**
  * Bounded by construction: every string is a literal, an alias, a member of
- * a fixed set, or a strict three-part version.
+ * a fixed set, or a strict three-part version; every observed number is a
+ * count from 0 to 999 or an integer inside `ECHOED_INTEGER`. The egress
+ * count is the length of arrays this module builds itself; the volume count
+ * goes through `echoedCount`.
  */
 export function renderJson(value: PreflightResult): string {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -968,7 +1143,7 @@ export function renderHuman(value: PreflightResult): string {
       "observed (as reported through the seam):",
       `  state ${observed.state ?? "?"}; ${observed.resources.cpu ?? "?"} vCPU / ${observed.resources.memoryGiB ?? "?"} GiB RAM / ${observed.resources.diskGiB ?? "?"} GiB disk; snapshot ${observed.image.snapshot ?? "?"}; ${observed.platform.os ?? "?"}/${observed.platform.architecture ?? "?"}; sdk ${observed.sdk.version ?? "?"}`,
       `  public ${observed.exposure.public ?? "?"}; egress allow-list entries ${observed.exposure.egressAllowListEntries}; auto-stop ${observed.lifecycle.autoStopInterval ?? "?"} min; auto-archive ${observed.lifecycle.autoArchiveInterval ?? "?"} min; auto-delete ${observed.lifecycle.autoDeleteInterval ?? "?"}; ttl ${observed.lifecycle.autoDestroyAt}`,
-      `  binding generation ${observed.binding.generation}, lifecycle ${observed.binding.lifecycle}, attempt fence ${observed.binding.attemptFence}`
+      `  binding generation ${observed.binding.generation ?? "?"}, lifecycle ${observed.binding.lifecycle}, attempt fence ${observed.binding.attemptFence}`
     );
   } else {
     lines.push("observed: nothing disclosed");
