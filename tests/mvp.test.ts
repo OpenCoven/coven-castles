@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import nodeTest, { after } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { runsAsProgram, smokeRefusal, type SmokeRefusal } from "../scripts/smoke.ts";
+import type { SmokeRefusal } from "../scripts/smoke.ts";
 import { createFixtureInspectionClient, isLiveReady, loadFixtureCase, renderHuman, renderJson,
   runPreflight, type SandboxInspectionClient } from "../src/preflight.ts";
 
@@ -28,6 +28,12 @@ function test(name: string, fn: () => void | Promise<void>) {
 function guardEarlyExit(registerAfter: (fn: () => void) => void) {
   let finished = false;
   registerAfter(() => { finished = true; });
+  // reallyExit does not emit the exit event. Keep this gate active before
+  // evaluating the candidate, including the import itself.
+  const exiting = process as typeof process & { reallyExit: (code: number) => never };
+  const reallyExit = exiting.reallyExit.bind(process);
+  Object.defineProperty(process, "reallyExit", {configurable: false, writable: false,
+    value: (code: number) => reallyExit(!finished && (code ?? process.exitCode ?? 0) === 0 ? 1 : code)});
   process.on("exit", code => {
     if (finished || code !== 0) return;
     process.stderr.write("the test process exited before its tests finished\n");
@@ -35,6 +41,7 @@ function guardEarlyExit(registerAfter: (fn: () => void) => void) {
   });
 }
 guardEarlyExit(after);
+const { runsAsProgram, smokeRefusal } = await import("../scripts/smoke.ts");
 const fixtureRoot = resolve(root, "fixtures/report-task");
 const readJson = (path: string) => JSON.parse(readFileSync(path, "utf8"));
 type ReportRule = { id: string; kind: string; value?: number | string[]; level?: number;
