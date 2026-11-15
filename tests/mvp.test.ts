@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
+import { cpSync, lstatSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import nodeTest, { after } from "node:test";
@@ -512,6 +512,27 @@ function smokeRun(command: string[], binding: Record<string, string> = synthetic
 
 test("CFG-03 smoke without explicit opt-in refuses", () => {
   assert.equal(smoke([]).reason, "explicit_opt_in_required");
+});
+test("R1 import-time exits cannot pass an MVP file that never reaches its tests", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-import-exit-"));
+  try {
+    for (const name of ["scripts", "src", "tests", "fixtures", "docs"])
+      cpSync(resolve(root, name), resolve(directory, name), {recursive: true});
+    cpSync(resolve(root, "package.json"), resolve(directory, "package.json"));
+    symlinkSync(resolve(root, "node_modules"), resolve(directory, "node_modules"));
+    const source = readFileSync(resolve(directory, "scripts/smoke.ts"), "utf8");
+    for (const effect of ["process.exit(0);", "process.reallyExit(0);",
+      'const p = process; p["stdout"]["write"](JSON.stringify({status:"re"+"ady"})+"\\n"); p["exit"](0);']) {
+      writeFileSync(resolve(directory, "scripts/smoke.ts"), effect + "\n" + source);
+      const child = spawnSync(process.execPath, ["--import", "tsx", "--test",
+        "--test-name-pattern=^CFG-03 smoke without explicit opt-in refuses$", "tests/mvp.test.ts"], {
+        cwd: directory, encoding: "utf8", timeout: 10_000, maxBuffer: 65_536,
+        env: {PATH: process.env.PATH, TSX_DISABLE_CACHE: "1"},
+      });
+      assert.equal(child.error, undefined, effect);
+      assert.equal(child.status, 1, effect + ": an incomplete MVP file must fail");
+    }
+  } finally { rmSync(directory, {recursive: true, force: true}); }
 });
 test("B1 smoke refuses however it is invoked as the program", () => {
   // Second reads rv5-aa741628 and rv5b-7a31c9e4, B1: at df7597b every spelling
