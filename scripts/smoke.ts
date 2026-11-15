@@ -1,5 +1,7 @@
 /** Refusal-only operator entrypoint. No live implementation or provider capability. */
 import { parseArgs } from "node:util";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { BINDING_ENVIRONMENT_KEYS, parseBinding } from "../src/profile.ts";
 
 type RefusalReason = "unsupported_arguments" | "explicit_opt_in_required" |
@@ -54,17 +56,20 @@ export function smokeRefusal(
 }
 
 /**
- * Whether this module is the program being run. Node answers that itself in
- * `import.meta.main`: true for the entry module however it was named (no
- * extension, a symlink, the tsx binary, a path through a symlinked
- * directory), false when it is imported. Comparing paths cannot answer it,
- * because Node resolves the entry's symlinks and extension and `argv` keeps
- * neither. Only an explicit `false` skips the refusal: on a Node without
- * `import.meta.main` the script still refuses, and so does an import, so
- * the failure is loud rather than a silent exit 0.
+ * Prefer Node's main metadata. Older supported Node versions resolve the
+ * supplied entry as a module URL, including symlinks and tsx's implicit .ts
+ * extension. A module import has a different entry, or no entry under eval.
+ * No provider lookup, directory scan or env-file read is involved.
  */
 export function runsAsProgram(main: unknown): boolean {
-  return main !== false;
+  if (main !== undefined) return main !== false;
+  const argument = process.argv[1];
+  if (!argument) return false;
+  const entry = pathToFileURL(resolve(argument)).href;
+  return [entry, `${entry}.ts`].some(candidate => {
+    try { return import.meta.resolve(candidate) === import.meta.url; }
+    catch { return false; }
+  });
 }
 
 if (runsAsProgram((import.meta as { main?: unknown }).main)) {

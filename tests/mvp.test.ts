@@ -674,7 +674,7 @@ test("CFG-10 smoke refuses arbitrary directory arguments and preserves existing 
  * or second output channel; one environment read, of the binding keys; one
  * output; exit code 1. A script that needs more changes this test on purpose.
  */
-const SCRIPT_IMPORTS = new Set(["node:util", "../src/profile.ts"]);
+const SCRIPT_IMPORTS = new Set(["node:util", "node:path", "node:url", "../src/profile.ts"]);
 function scriptProblems(source: string): string[] {
   const problems: string[] = [];
   for (const match of source.matchAll(/\b(?:import|export)\s+(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/g))
