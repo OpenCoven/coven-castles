@@ -918,3 +918,45 @@ test("N6 N8 the notes keep the merged rules, the full live gate and the catalogu
   assert.doesNotMatch(text, /supersede/i, "a #5 document supersedes no shared file");
   assert.doesNotMatch(text, /\bopened by\b|\bgate (?:is )?open(?:ed)?\b/i, "no gate is recorded as open");
 });
+
+// Review rv5c-6dd0e5ca: executable changes must not evade the refusal boundary.
+const REVIEW_EFFECTS: [string, string][] = [
+  ["comment-separated dynamic import", 'import/*gap*/("data:text/javascript,void 0");'],
+  ["compact built-in import", 'import{appendFileSync}from"node:fs";'],
+  ["stack-blinded environment read", 'const saved = Error.stackTraceLimit; Error.stackTraceLimit = 0; void process["env"]["SYNTHETIC_REVIEW"]; Error.stackTraceLimit = saved;'],
+  ["spoofed stack", 'Error.prepareStackTrace = () => "synthetic external frame";'],
+  ["environment descriptor read", 'void Object.getOwnPropertyDescriptor(process["env"], "PATH");'],
+  ["computed fetch", 'void global["fe"+"tch"]("http://127.0.0.1:9/synthetic");'],
+  ["computed builtin access", 'const p = process; void p["get"+"BuiltinModule"]("node:fs");'],
+  ["worker construction", 'const p = process; const {Worker} = p["get"+"BuiltinModule"]("node:worker_threads"); new Worker("0", {["e"+"val"]:true});'],
+  ["computed process binding", 'const p = process; void p["bind"+"ing"]("constants");'],
+  ["extra output", 'process.stdout["write"](" ");'],
+  ["deferred output", 'process.on("exit", () => process.stdout["write"](" "));'],
+  ["early reallyExit", 'process.reallyExit(0);'],
+];
+test("R2 every reviewed effect escape is rejected by source approval", () => {
+  const source = smokeSource();
+  for (const [name, insertion] of REVIEW_EFFECTS)
+    assert.notDeepEqual(scriptProblems(source + "\n" + insertion + "\n"), [], name);
+});
+
+test("R1 an import-time exit cannot make the copied MVP harness pass", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-import-exit-"));
+  try {
+    mkdirSync(resolve(directory, "tests"));
+    mkdirSync(resolve(directory, "scripts"));
+    for (const name of ["src", "fixtures", "docs", "node_modules"])
+      symlinkSync(resolve(root, name), resolve(directory, name), "dir");
+    writeFileSync(resolve(directory, "package.json"), '{"type":"module"}\n');
+    writeFileSync(resolve(directory, "tests/mvp.test.ts"), readFileSync(resolve(root, "tests/mvp.test.ts")));
+    writeFileSync(resolve(directory, "scripts/smoke.ts"), 'process["exit"](0);\n' + smokeSource());
+    const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--test",
+      "--test-name-pattern=CFG-03 smoke without explicit opt-in refuses", resolve(directory, "tests/mvp.test.ts")], {
+      cwd: directory, encoding: "utf8", timeout: 15_000, maxBuffer: 131_072,
+      env: {PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, TSX_DISABLE_CACHE: "1"},
+    });
+    assert.equal(child.error, undefined);
+    assert.equal(child.signal, null);
+    assert.equal(child.status, 1, "candidate module evaluation must not bypass parent test assertions");
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
