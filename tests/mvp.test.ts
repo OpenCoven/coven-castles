@@ -568,9 +568,10 @@ test("B1 smoke refuses however it is invoked as the program", () => {
     }
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
-test("B1 only Node's explicit false skips the refusal, so a Node without import.meta.main fails closed", () => {
+test("B1 main detection uses Node metadata or canonical legacy module resolution", () => {
   assert.equal(runsAsProgram(false), false);
-  for (const main of [true, undefined, null, 0, "", "false", {}]) assert.equal(runsAsProgram(main), true, String(main));
+  assert.equal(runsAsProgram(undefined), false, "the importing test file is not the smoke program");
+  for (const main of [true, null, 0, "", "false", {}]) assert.equal(runsAsProgram(main), true, String(main));
 });
 test("B1 importing the smoke module is side-effect free", () => {
   const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval",
