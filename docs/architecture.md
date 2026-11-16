@@ -2,24 +2,17 @@
 
 ## What Castles is
 
-A thin, CLI-first package for **one** job: letting an authenticated owner use
-one explicitly supplied, existing Daytona sandbox to run one bounded familiar
-task, reconnect to it, retrieve the result, and safely run a second task.
+A thin, CLI-first package for **one** job: letting an authenticated owner use one explicitly supplied, existing Daytona sandbox to run one bounded familiar task, reconnect to it, retrieve the result, and safely run a second task.
 
-Castles is a client and a conformance check. It supplies a sandbox profile, a
-read-only preflight, and, as the later lanes land, a run entrypoint and
-recovery commands that call the existing canonical service.
+Castles is a client and a conformance check. It supplies a sandbox profile, a read-only preflight, and, as the later lanes land, a run entrypoint and recovery commands that call the existing canonical service.
 
 ## What Castles is not
 
-- Not an authority. It decides nothing about identity, ownership, admission or
-  permission.
+- Not an authority. It decides nothing about identity, ownership, admission or permission.
 - Not a backend. No server, database, queue, scheduler or object store.
-- Not a provider adapter. It does not depend on the Daytona SDK and holds no
-  provider credential.
+- Not a provider adapter. It does not depend on the Daytona SDK and holds no provider credential.
 - Not a fleet manager. One sandbox, one familiar, one active attempt.
-- Not a second copy of anything upstream. Where the canonical owner lacks a
-  capability, the answer is a linked upstream issue.
+- Not a second copy of anything upstream. Where the canonical owner lacks a capability, the answer is a linked upstream issue.
 
 ## What exists today
 
@@ -33,10 +26,9 @@ tests/             offline tests
 fixtures/preflight synthetic inspection cases
 ```
 
-There is no live path. A fully configured `castles check` reports
-`unavailable` with `upstream_seam_missing` and makes zero provider calls,
-because the read-only seam it needs does not exist upstream yet. Everything
-described below as #3 or #4 is planned, not built.
+PR #7 added #5's `fixtures/report-task/` and [`acceptance.md`](acceptance.md) on 2026-11-12. At its merge `b5d7fc14add09fa94a7103031d7d625f710e519c`, these were synthetic data and notes without an executable consumer. PR #13 later added `tests/mvp.test.ts` and the refusal-only `scripts/smoke.ts`, merged as `ecd360702e0d5d11f3acfc5899847ab4eb2df702`. The offline suite now exercises the corpus and refusal boundaries; it supplies no real admission, provider or containment evidence.
+
+There is no live path. A fully configured `castles check` reports `unavailable` with `upstream_seam_missing` and makes zero provider calls, because the read-only seam it needs does not exist upstream yet. Everything described below as #3 or #4 is planned, not built.
 
 ## The trust boundary
 
@@ -72,17 +64,9 @@ What crosses each line:
 
 Three consequences that shape the code:
 
-1. **The sandbox ID is a target, not authorization.** The CLI can name a
-   sandbox; only the canonical service, from its authenticated caller, decides
-   whether that caller owns it. Account login, familiar name and subscription
-   state are not execution authority either.
-2. **The provider response is untrusted input** even though it arrives through
-   a trusted service. Preflight never copies provider text into a result:
-   it reports values from fixed sets, numbers or `unrecognised`, and fails
-   closed on anything it does not recognise.
-3. **A failed check has nothing to fall back to.** The client seam has one
-   method. There is no create, start, list or lookup-by-name to reach for when
-   the exact sandbox is missing.
+1. **The sandbox ID is a target, not authorization.** The CLI can name a sandbox; only the canonical service, from its authenticated caller, decides whether that caller owns it. Account login, familiar name and subscription state are not execution authority either.
+2. **The provider response is untrusted input** even though it arrives through a trusted service. Preflight never copies provider text into a result: it reports values from fixed sets, numbers or `unrecognised`, and fails closed on anything it does not recognise.
+3. **A failed check has nothing to fall back to.** The client seam has one method. There is no create, start, list or lookup-by-name to reach for when the exact sandbox is missing.
 
 ## What stays upstream
 
@@ -94,9 +78,7 @@ Three consequences that shape the code:
 | Authoritative runtime transitions | Coven |
 | Admission, credential custody, durable run records, Daytona lifecycle | Coven Agents |
 
-Each sandbox mutation found at the pin has an existing owner in Coven Agents,
-recorded with a source pin in `MUTATION_OWNERS` in `src/profile.ts`. The table
-is a reading of the pinned files, not a proof that no other call site exists:
+Each sandbox mutation found at the pin has an existing owner in Coven Agents, recorded with a source pin in `MUTATION_OWNERS` in `src/profile.ts`. The table is a reading of the pinned files, not a proof that no other call site exists:
 
 | Mutation | Existing owner | Castles |
 | --- | --- | --- |
@@ -108,60 +90,35 @@ is a reading of the pinned files, not a proof that no other call site exists:
 | adopt policy | `lib/runner/daytona/sandbox.ts` | never |
 | create and delete of the owner's own short-lived diagnostic sandbox | `lib/runner/diagnostics.ts` | never |
 
-Command execution inside a sandbox and snapshot creation are not lifecycle
-mutations; `OUTSIDE_LISTED_MUTATIONS` names them, and Castles performs neither.
+Command execution inside a sandbox and snapshot creation are not lifecycle mutations; `OUTSIDE_LISTED_MUTATIONS` names them, and Castles performs neither.
 
-Persistent sandbox files are working state. Identity, selected context, durable
-task and attempt records and the committed outcome live in their canonical
-owners outside the task guest, so a result remains retrievable when the sandbox
-is stopped or gone. Reconnect does not replay a task, and stop/start does not
-promise that a process or its memory survived.
+Persistent sandbox files are working state. Identity, selected context, durable task and attempt records and the committed outcome live in their canonical owners outside the task guest, so a result remains retrievable when the sandbox is stopped or gone. Reconnect does not replay a task, and stop/start does not promise that a process or its memory survived.
 
 ## The one supported profile
 
-`castles.daytona-private-linux.v1`: a private, persistent Linux sandbox.
-Starting target 2 vCPU / 4 GiB RAM / 10 GiB disk, taken from a documented
-upstream pilot and **not measured** on any supplied sandbox.
+`castles.daytona-private-linux.v1`: a private, persistent Linux sandbox. Starting target 2 vCPU / 4 GiB RAM / 10 GiB disk, taken from a documented upstream pilot and **not measured** on any supplied sandbox.
 
-#1 also fixes the scope at one familiar and one active attempt, and limits
-each attempt to 900 seconds or the tighter existing bound. Those are #1's
-limits for the run path in #3. They are not fields of the profile, and nothing
-at this revision enforces them.
+#1 also fixes the scope at one familiar and one active attempt, and limits each attempt to 900 seconds or the tighter existing bound. Those are #1's limits for the run path in #3. They are not fields of the profile, and nothing at this revision enforces them.
 
-Preflight checks, read-only: owner binding and generation, the recorded and
-returned sandbox IDs, lifecycle state, the credential-boundary marker,
-attempt fence, privacy, egress allow lists entry by entry and by length,
-auto-stop, auto-archive, auto-delete, auto-pause and TTL, image snapshot, target,
-resources, GPU, volumes, warm-pool and linked-sandbox membership, platform and
-SDK generation. Missing metadata or an unsafe policy fails; nothing is
-repaired. A stopped sandbox is reported as stopped and is not woken.
+Preflight checks, read-only: owner binding and generation, the recorded and returned sandbox IDs, lifecycle state, the credential-boundary marker, attempt fence, privacy, egress allow lists entry by entry and by length, auto-stop, auto-archive, auto-delete, auto-pause and TTL, image snapshot, target, resources, GPU, volumes, warm-pool and linked-sandbox membership, platform and SDK generation. Missing metadata or an unsafe policy fails; nothing is repaired. A stopped sandbox is reported as stopped and is not woken.
 
-Policy values and the upstream file each one came from are in
-`SUPPORTED_PROFILE` and `SOURCE_PINS` in `src/profile.ts`. The network
-allow-list bounds (at most 10 entries, none wider than `/8`) are Castles
-decisions with no upstream pin.
+Policy values and the upstream file each one came from are in `SUPPORTED_PROFILE` and `SOURCE_PINS` in `src/profile.ts`. The network allow-list bounds (at most 10 entries, none wider than `/8`) are Castles decisions with no upstream pin.
 
 ## Pinned upstream sources
 
-All at `OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180`. The
-repository is private; these links need access.
+All at `OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180`. The repository is private; these links need access.
 
 - [Ownership and execution overview](https://github.com/OpenCoven/coven-agents/blob/3a4f3ff4130860d0abda1d2207b43b2f9d372180/README.md)
 - [ADR-002: Daytona execution boundary](https://github.com/OpenCoven/coven-agents/blob/3a4f3ff4130860d0abda1d2207b43b2f9d372180/docs/architecture/adr-002-daytona-execution-boundary.md)
 - [Cloud pilot integration: authority and repeat-run gaps](https://github.com/OpenCoven/coven-agents/blob/3a4f3ff4130860d0abda1d2207b43b2f9d372180/docs/product/cloud-pilot-integration.md)
 
-Provider documentation: [persistence](https://www.daytona.io/docs/en/persistence/)
-and [sandbox lifecycle](https://www.daytona.io/docs/en/sandboxes/). Validate
-against the pinned SDK generation (`@daytona/sdk` 0.220.0), not another API
-generation.
+Provider documentation: [persistence](https://www.daytona.io/docs/en/persistence/) and [sandbox lifecycle](https://www.daytona.io/docs/en/sandboxes/). Validate against the pinned SDK generation (`@daytona/sdk` 0.220.0), not another API generation.
 
-A pin records what was read. It is refreshed deliberately, in a change that
-re-checks every value derived from it.
+A pin records what was read. It is refreshed deliberately, in a change that re-checks every value derived from it.
 
 ## Open upstream dependencies
 
-Each of these blocks part of the MVP and is owned outside this repository.
-States are as of 2026-11-12; check the issue before relying on this list.
+Each of these blocks part of the MVP and is owned outside this repository. States are as of 2026-11-12; check the issue before relying on this list.
 
 | Upstream issue | Needed for | State |
 | --- | --- | --- |
@@ -172,14 +129,8 @@ States are as of 2026-11-12; check the issue before relying on this list.
 | [coven-agents#300](https://github.com/OpenCoven/coven-agents/issues/300) Bootstrap decision: snapshot verification or an admitted install | Bootstrap (#3) | open upstream. Decided for Castles on 2026-11-11: option 1, snapshot verification only; Castles installs nothing. Recorded in [#3](https://github.com/OpenCoven/coven-castles/issues/3#issuecomment-6791982826) |
 | [coven-agents#262](https://github.com/OpenCoven/coven-agents/issues/262) Resource bounds, process containment and safe sandbox reuse | A second task on the same sandbox (#4, #5) | open |
 
-The investigation comments on #3 and #4 list further gaps (familiar revision
-in admission, receipt and attempt references on the outcome) that are not yet
-tracked by an upstream issue.
+The investigation comments on #3 and #4 list further gaps (familiar revision in admission, receipt and attempt references on the outcome) that are not yet tracked by an upstream issue.
 
 ## Deliberately out of scope
 
-Billing and pricing, custom databases or new data services, multi-tenancy,
-generalized provider interfaces, always-on claims, automatic failover, local
-models, desktop or browser automation, nested containers, swarms and
-marketplaces. See the "Explicitly deferred" section of
-[#1](https://github.com/OpenCoven/coven-castles/issues/1).
+Billing and pricing, custom databases or new data services, multi-tenancy, generalized provider interfaces, always-on claims, automatic failover, local models, desktop or browser automation, nested containers, swarms and marketplaces. See the "Explicitly deferred" section of [#1](https://github.com/OpenCoven/coven-castles/issues/1).
