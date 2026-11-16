@@ -754,6 +754,7 @@ test("B2 scan controls: each planted effect S1 to S6 is found", () => {
   for (const [id, edits] of PLANTED) assert.notDeepEqual(scriptProblems(plant(smokeSource(), edits)), [], id);
 });
 test("B2 tripwire controls: each planted effect S1 to S6 is reported, and an unchanged copy runs clean", () => {
+  assert.deepEqual(scriptProblems(smokeSource()), [], "planted controls require the proposed original source before deriving copies");
   const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-planted-"));
   try {
     const base = smokeSource().replace('"../src/profile.ts"', JSON.stringify(pathToFileURL(resolve(root, "src/profile.ts")).href));
