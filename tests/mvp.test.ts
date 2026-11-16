@@ -718,6 +718,16 @@ const PLANTED: [string, [string, string][]][] = [
   ["S6 success branch", [["  return refuse(\"canonical_capabilities_unavailable\");",
     "  if (Number(dollars) >= 1) { process.stdout.write(\"{\\\"status\\\":\\\"ready\\\"}\\n\"); process.exit(0); }\n  return refuse(\"canonical_capabilities_unavailable\");"]]],
 ];
+const REFLECTIVE_PLANTED: [string, [string, string][]][] = [
+  ["R2 environment descriptor", [[MAIN_LINE,
+    '  const {env: e} = process; void Object.getOwnPropertyDescriptor(e, "DAYTONA_API_KEY")?.value;\n' + MAIN_LINE]]],
+  ["R2 stack-blinded write", [[MAIN_LINE,
+    '  const depth = Error.stackTraceLimit; try { Error.stackTraceLimit = 0; process["getBuiltinModule"]("node:fs").appendFileSync("synthetic-review-marker.log", "x"); } finally { Error.stackTraceLimit = depth; }\n' + MAIN_LINE]]],
+  ["R2 prepared stack", [[MAIN_LINE,
+    '  const prepare = Error.prepareStackTrace; try { Error.prepareStackTrace = () => ""; const {env: e} = process; void e.DAYTONA_API_KEY; } finally { Error.prepareStackTrace = prepare; }\n' + MAIN_LINE]]],
+  ["R2 process report", [[MAIN_LINE,
+    '  void process.report.getReport();\n' + MAIN_LINE]]],
+];
 const plant = (source: string, edits: [string, string][]) => edits.reduce((text, [find, to]) => {
   assert.ok(text.includes(find), "planted edit anchor must exist: " + find.slice(0, 40));
   return text.replace(find, () => to);
@@ -736,11 +746,21 @@ test("B2 scan: every file under scripts/ imports, reads and prints nothing beyon
 test("B2 scan controls: each planted effect S1 to S6 is found", () => {
   for (const [id, edits] of PLANTED) assert.notDeepEqual(scriptProblems(plant(smokeSource(), edits)), [], id);
 });
+test("R2 scan rejects compact imports, ambient aliases, hidden returns and reflective effects", () => {
+  for (const [id, edits] of REFLECTIVE_PLANTED)
+    assert.notDeepEqual(scriptProblems(plant(smokeSource(), edits)), [], id);
+  for (const code of ['import{appendFileSync}from"node:fs";', 'void import /* synthetic gap */ ("node:fs");',
+    'const p = process; void p["env"]["SYNTHETIC_REVIEW"];',
+    'const p = process; p["stdout"]["write"](" ");',
+    'const p = process; if (dollars === "2.50") return {status:String.fromCharCode(114,101,97,100,121)};'])
+    assert.notDeepEqual(scriptProblems(smokeSource() + "\n" + code), [], code);
+  assert.deepEqual(scriptProblems(smokeSource() + "\n// eval is prose, not an executed capability\n"), []);
+});
 test("B2 tripwire controls: each planted effect S1 to S6 is reported, and an unchanged copy runs clean", () => {
   const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-planted-"));
   try {
     const base = smokeSource().replace('"../src/profile.ts"', JSON.stringify(pathToFileURL(resolve(root, "src/profile.ts")).href));
-    for (const [id, edits] of [["unchanged copy", []], ...PLANTED] as [string, [string, string][]][]) {
+    for (const [id, edits] of [["unchanged copy", []], ...PLANTED, ...REFLECTIVE_PLANTED] as [string, [string, string][]][]) {
       const copy = resolve(directory, String(id.split(" ")[0]));
       mkdirSync(resolve(copy, "scripts"), {recursive: true});
       writeFileSync(resolve(copy, "package.json"), "{\"type\": \"module\"}\n");
