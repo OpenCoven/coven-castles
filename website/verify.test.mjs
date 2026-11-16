@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { sourceRevision } from './content.mjs';
 
 const root = new URL('./dist/', import.meta.url);
 async function files(directory = root) {
@@ -45,6 +46,11 @@ test('all internal links, fragments, assets and sitemap routes resolve in the st
 
 test('quickstart documents the executable fixture contract rather than live readiness', async () => {
   const html = await readFile(new URL('getting-started/index.html', root), 'utf8');
+  const firstExample = html.match(/<pre><code>([\s\S]*?)<\/code><\/pre>/)?.[1];
+  assert.ok(firstExample, 'quickstart must provide an executable source checkout');
+  const commands = firstExample.split('\n');
+  assert.ok(commands.includes(`git checkout --detach ${sourceRevision}`), 'quickstart must check out the documented revision');
+  assert.ok(commands.indexOf(`git checkout --detach ${sourceRevision}`) < commands.indexOf('corepack pnpm install --frozen-lockfile'), 'pin the checkout before installing');
   assert.match(html, /corepack pnpm check --fixture fixtures\/preflight\/cases\/ready\.json/);
   assert.match(html, /exit code <strong>3<\/strong>/);
   assert.match(html, /synthetic/i);
@@ -52,4 +58,26 @@ test('quickstart documents the executable fixture contract rather than live read
   for (const status of ['ready', 'stopped', 'unavailable', 'incompatible', 'unauthorized', 'reconciliation-required']) assert.ok(cli.includes(status));
   assert.match(cli, /live-provider/);
   assert.match(cli, /upstream_seam_missing/);
+});
+
+test('local search covers every page and links only to generated pages and headings', async () => {
+  const index = JSON.parse(await readFile(new URL('search-index.json', root), 'utf8'));
+  assert.ok(Array.isArray(index) && index.length > 7, 'search needs pages and sections');
+  const expected = ['/', '/getting-started/', '/how-it-works/', '/cli-reference/', '/configuration/', '/profile/', '/qualification/'];
+  for (const route of expected) assert.ok(index.some(entry => entry.url === route && entry.title === entry.page), `missing page ${route}`);
+  const urls = new Set();
+  for (const entry of index) {
+    assert.ok(typeof entry.title === 'string' && entry.title.trim());
+    assert.ok(typeof entry.text === 'string' && entry.text.trim());
+    assert.ok(typeof entry.page === 'string' && entry.page.trim());
+    assert.ok(entry.url.startsWith('/') && !entry.url.startsWith('//'), 'search stays within Castles');
+    assert.ok(!urls.has(entry.url), `duplicate search target ${entry.url}`);
+    urls.add(entry.url);
+    const target = new URL(entry.url, 'https://castles.opencoven.ai');
+    assert.ok(expected.includes(target.pathname), `unknown search route ${entry.url}`);
+    const html = await readFile(new URL(target.pathname.slice(1) + 'index.html', root), 'utf8');
+    if (target.hash) assert.ok(html.includes(`id="${target.hash.slice(1)}"`), `missing search heading ${entry.url}`);
+  }
+  const css = await readFile(new URL('assets/style.css', root), 'utf8');
+  for (const [, asset] of css.matchAll(/url\(['"]?(\/[^)'"\s]+)['"]?\)/g)) await readFile(new URL(asset.slice(1), root));
 });
