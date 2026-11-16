@@ -4,7 +4,7 @@ This is the standalone static documentation site for Coven Castles, deployed at 
 
 ## Build and verify
 
-Use Node.js 22 or newer. The website needs no dependency installation.
+Use Node.js 24 for the website build, matching the Vercel project. The website needs no dependency installation. The separate Castles operator package supports Node.js 22 or newer.
 
 ```sh
 cd website
