@@ -688,7 +688,7 @@ test("CFG-10 smoke refuses arbitrary directory arguments and preserves existing 
  * output; exit code 1. A script that needs more changes this test on purpose.
  */
 /** A changed program needs a deliberate fingerprint update and new exact-SHA review. */
-const SMOKE_SOURCE_SHA256 = "5071ea6e7c6f917d3fc7695539ced9ddcb5fdcbff7c5e7f1253552a2bace7627";
+const SMOKE_SOURCE_SHA256 = "4f3fa1236d4f586f06d44d1539791fb7d5edc79faeebedf265250ed465edeccf";
 const SCRIPT_IMPORTS = new Set(["node:util", "node:path", "node:url", "../src/profile.ts"]);
 function scriptProblems(source: string): string[] {
   const problems: string[] = [];

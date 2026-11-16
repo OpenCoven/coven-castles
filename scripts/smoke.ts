@@ -60,7 +60,7 @@ export function runsAsProgram(main: unknown): boolean {
   if (main !== undefined) return main !== false;
   if (!process.argv[1]) return false;
   try {
-    return import.meta.resolve(pathToFileURL(resolve(process.argv[1])).href) === import.meta.url;
+    return import.meta.resolve(pathToFileURL(resolve(process.argv[1])).href) === import.meta.resolve(import.meta.url);
   } catch {
     // An entry that cannot be resolved is never a reason to report success.
     return true;
