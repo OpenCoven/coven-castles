@@ -434,7 +434,23 @@ import workers from "node:worker_threads";
 import { syncBuiltinESMExports } from "node:module";
 
 const write = process.stderr.write.bind(process.stderr);
-const fromScript = () => /[\\/]scripts[\\/][^\\/()]+\.[cm]?[jt]s:\d+:\d+/.test(new Error().stack ?? "");
+const SafeError = Error;
+const captureStack = SafeError.captureStackTrace.bind(SafeError);
+const prepareStack = SafeError.prepareStackTrace;
+const fromScript = () => {
+  const depth = SafeError.stackTraceLimit;
+  const prepare = SafeError.prepareStackTrace;
+  try {
+    SafeError.stackTraceLimit = 64;
+    SafeError.prepareStackTrace = prepareStack;
+    const trace = {};
+    captureStack(trace);
+    return /[\\/]scripts[\\/][^()\n]*\.[cm]?[jt]s:\d+:\d+/.test(trace.stack ?? "");
+  } finally {
+    SafeError.stackTraceLimit = depth;
+    SafeError.prepareStackTrace = prepare;
+  }
+};
 const tripped = (what) => {
   if (!fromScript()) return false;
   write("TRIPWIRE " + what + "\n");
@@ -467,7 +483,7 @@ for (const name of ["fetch", "WebSocket", "EventSource"]) {
     construct(target, args, next) { if (tripped(name)) refuse(); return Reflect.construct(target, args, next); },
   });
 }
-for (const name of ["loadEnvFile", "exit", "kill", "chdir", "dlopen", "binding", "abort", "getBuiltinModule"]) {
+for (const name of ["loadEnvFile", "exit", "reallyExit", "_exit", "kill", "chdir", "dlopen", "binding", "abort", "getBuiltinModule"]) {
   const original = process[name];
   if (typeof original !== "function") continue;
   process[name] = function (...args) {
@@ -475,10 +491,19 @@ for (const name of ["loadEnvFile", "exit", "kill", "chdir", "dlopen", "binding",
     return original.apply(this, args);
   };
 }
+for (const name of ["getReport", "writeReport"]) {
+  const original = process.report?.[name];
+  if (typeof original !== "function") continue;
+  process.report[name] = function (...args) {
+    if (tripped("process.report." + name)) refuse();
+    return original.apply(process.report, args);
+  };
+}
 const binding = new Set(["CASTLES_PROFILE", "CASTLES_SANDBOX_ID", "CASTLES_OWNER_AGENT_ID", "CASTLES_SANDBOX_GENERATION"]);
 const named = (key) => typeof key === "string" && !binding.has(key);
 process.env = new Proxy(process.env, {
   get(target, key) { if (named(key)) tripped("env read " + key); return Reflect.get(target, key); },
+  getOwnPropertyDescriptor(target, key) { if (named(key)) tripped("env descriptor " + key); return Reflect.getOwnPropertyDescriptor(target, key); },
   has(target, key) { if (named(key)) tripped("env probe " + key); return Reflect.has(target, key); },
   ownKeys(target) { tripped("env enumeration"); return Reflect.ownKeys(target); },
   set(target, key, value) { if (tripped("env write " + String(key))) refuse(); return Reflect.set(target, key, value); },
@@ -507,6 +532,8 @@ function smokeRun(command: string[], binding: Record<string, string> = synthetic
   assert.equal(child.status, 1, "every current smoke invocation must refuse");
   assert.equal(child.stderr, "");
   const result: SmokeRefusal = JSON.parse(child.stdout);
+  assert.equal(child.stdout, JSON.stringify(result) + "\n", "exactly one canonical JSON line, no extra output");
+  assert.deepEqual(Object.keys(result).sort(), ["evidence", "providerCalls", "reason", "schema", "status"]);
   assert.equal(result.schema, "castles.smoke-refusal.v1");
   assert.equal(result.status, "blocked");
   assert.equal(result.evidence, "none");
@@ -550,14 +577,14 @@ test("B1 smoke refuses however it is invoked as the program", () => {
     symlinkSync(resolve(root, "scripts/smoke.ts"), resolve(directory, "link.ts"));
     symlinkSync(resolve(root, "scripts/smoke.ts"), resolve(directory, "smoke-link"));
     symlinkSync(resolve(root, "scripts"), resolve(directory, "aliased-scripts"));
-    const node = [process.execPath, "--import", "tsx"];
+    const node = [process.execPath, ...guarded];
     const spellings: [string, string[]][] = [
       ["exact relative path", [...node, "scripts/smoke.ts"]],
       ["no extension", [...node, "scripts/smoke"]],
       ["dot segments", [...node, "./scripts/../scripts/smoke.ts"]],
       ["absolute path", [...node, resolve(root, "scripts/smoke.ts")]],
-      ["the tsx binary, no extension", [tsxBin, "scripts/smoke"]],
-      ["the tsx binary", [tsxBin, "scripts/smoke.ts"]],
+      ["the tsx binary, no extension", [tsxBin, "--import", pathToFileURL(tripwire).href, "scripts/smoke"]],
+      ["the tsx binary", [tsxBin, "--import", pathToFileURL(tripwire).href, "scripts/smoke.ts"]],
       ["a symlink to the script", [...node, resolve(directory, "link.ts")]],
       ["an extensionless symlink", [...node, resolve(directory, "smoke-link")]],
       ["a path through a symlinked directory", [...node, resolve(directory, "aliased-scripts/smoke.ts")]],
@@ -602,6 +629,16 @@ test("CFG-04 smoke spend is at most six integer digits and two fractional digits
     assert.equal(spend(value), "canonical_capabilities_unavailable", value);
   for (const value of ["1000000", "9999999.99", "0.001", "1.234", "01", "1.", ".5", "+1", "1_000", "0.00"])
     assert.equal(spend(value), "budget_invalid", value);
+});
+test("CFG-04 CFG-05 separate missing budgets, valid seconds and empty targets retain their reasons", () => {
+  for (const args of [["--live", "--max-seconds", "900"], ["--live", "--max-spend-usd", "0.01"]])
+    assert.equal(smokeRefusal(args, syntheticBinding).reason, "budget_required");
+  for (const seconds of ["1", "9", "10", "100", "199", "899", "900"])
+    for (const spend of ["2.50", "4242.42"])
+      assert.equal(smokeRefusal(["--live", "--sandbox-id", syntheticBinding.CASTLES_SANDBOX_ID,
+        "--max-seconds", seconds, "--max-spend-usd", spend], syntheticBinding).reason, "canonical_capabilities_unavailable");
+  assert.equal(smokeRefusal(["--live", "--sandbox-id=", "--max-seconds", "1", "--max-spend-usd", "2.50"],
+    syntheticBinding).reason, "exact_target_required");
 });
 test("CFG-05 smoke compares the target exactly and never echoes it (review N5)", () => {
   const other = `synthetic-other-${randomBytes(8).toString("hex")}`;
@@ -675,14 +712,19 @@ test("CFG-10 smoke refuses arbitrary directory arguments and preserves existing 
  * output; exit code 1. A script that needs more changes this test on purpose.
  */
 const SCRIPT_IMPORTS = new Set(["node:util", "node:path", "node:url", "../src/profile.ts"]);
+function withoutComments(source: string): string {
+  return source.replace(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(\/\*[\s\S]*?\*\/|\/\/[^\n]*)/g,
+    (match, quoted: string | undefined) => quoted ?? " ");
+}
 function scriptProblems(source: string): string[] {
+  source = withoutComments(source);
   const problems: string[] = [];
-  for (const match of source.matchAll(/\b(?:import|export)\s+(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/g))
+  for (const match of source.matchAll(/\b(?:import|export)\s*(?:[^"'`;]*?\bfrom\s*)?["']([^"']+)["']/g))
     if (!SCRIPT_IMPORTS.has(match[1])) problems.push("import " + match[1]);
   const forbidden: [string, RegExp][] = [
     ["dynamic import or require", /\bimport\s*\(|\brequire\s*\(|\bcreateRequire\b/],
     ["network global", /\b(?:fetch|WebSocket|EventSource|XMLHttpRequest)\b/],
-    ["reflection", /\b(?:globalThis|Function|eval|Reflect|Proxy)\b/],
+    ["reflection", /\b(?:globalThis|global|Function|eval|Reflect|Proxy|Error|constructor|__proto__)\b/],
     ["process control or env-file load", /\bprocess\s*\.\s*(?:binding|dlopen|loadEnvFile|exit(?!Code)|kill|chdir|abort|getBuiltinModule)\b/],
     ["env-file name", /["'`][^"'`\n]*\.env\b[^"'`\n]*["'`]/],
     ["second output channel", /\bprocess\s*\.\s*stderr\b|\bconsole\s*\./],
@@ -695,6 +737,22 @@ function scriptProblems(source: string): string[] {
   const exitCodes = [...source.matchAll(/\bprocess\s*\.\s*exitCode\s*=\s*([^;\n]+)/g)].map(match => match[1].trim());
   if (exitCodes.length !== 1 || exitCodes[0] !== "1") problems.push("exit code other than 1");
   if ((source.match(/\bprocess\s*\.\s*stdout\s*\.\s*write\b/g) ?? []).length !== 1) problems.push("more than one output");
+  // An ambient capability may appear only at its reviewed call site. This
+  // rejects destructuring, optional/computed access and aliases regardless
+  // of what literal input would reach them.
+  let ambient = source;
+  for (const allowed of ["const argument = process.argv[1];",
+    "for (const key of BINDING_ENVIRONMENT_KEYS) environment[key] = process.env[key];",
+    'process.stdout.write(`${JSON.stringify(smokeRefusal(process.argv.slice(2), environment))}\\n`);',
+    "process.exitCode = 1;"])
+    ambient = ambient.replace(allowed, "");
+  if (/\bprocess\b/.test(ambient)) problems.push("unreviewed ambient process access");
+  const refusal = source.split("export function smokeRefusal(")[1]?.split("export function runsAsProgram(")[0] ?? "";
+  const factory = refusal.match(/const\s+refuse\s*=\s*([\s\S]*?);\s*let\s+values;/)?.[1].replace(/\s/g, "");
+  if (factory !== '(reason:RefusalReason):SmokeRefusal=>({schema:"castles.smoke-refusal.v1",status:"blocked",evidence:"none",reason,providerCalls:0,})')
+    problems.push("refusal construction must use fixed literal fields");
+  const returns = refusal.replace(/\breturn\s+refuse\("(?:unsupported_arguments|explicit_opt_in_required|budget_required|budget_invalid|binding_invalid|exact_target_required|target_mismatch|canonical_capabilities_unavailable)"\);/g, "");
+  if (/\breturn\b/.test(returns)) problems.push("return outside the refusal vocabulary");
   return problems;
 }
 function scriptFiles(directory: string, prefix = ""): string[] {
@@ -737,7 +795,7 @@ const largestBudget = ["--live", "--sandbox-id", syntheticBinding.CASTLES_SANDBO
 
 test("B2 scan: every file under scripts/ imports, reads and prints nothing beyond the refusal", () => {
   const files = scriptFiles(resolve(root, "scripts"));
-  assert.ok(files.includes("smoke.ts"));
+  assert.deepEqual(files, ["smoke.ts"], "an additional executable needs its own reviewed qualification");
   for (const file of files) {
     assert.match(file, /\.ts$/, "only TypeScript is scanned");
     assert.deepEqual(scriptProblems(readFileSync(resolve(root, "scripts", file), "utf8")), [], file);
@@ -751,9 +809,15 @@ test("R2 scan rejects compact imports, ambient aliases, hidden returns and refle
     assert.notDeepEqual(scriptProblems(plant(smokeSource(), edits)), [], id);
   for (const code of ['import{appendFileSync}from"node:fs";', 'void import /* synthetic gap */ ("node:fs");',
     'const p = process; void p["env"]["SYNTHETIC_REVIEW"];',
-    'const p = process; p["stdout"]["write"](" ");',
-    'const p = process; if (dollars === "2.50") return {status:String.fromCharCode(114,101,97,100,121)};'])
+    'const p = process; p["stdout"]["write"](" ");'])
     assert.notDeepEqual(scriptProblems(smokeSource() + "\n" + code), [], code);
+  const hidden = smokeSource().replace('status: "blocked", evidence: "none",',
+    'status: (args.includes("2.50") ? String.fromCharCode(114,101,97,100,121) : "blocked") as "blocked", evidence: "none",');
+  assert.notEqual(hidden, smokeSource(), "hidden-state control anchor exists");
+  assert.notDeepEqual(scriptProblems(hidden), [], "a refusal state cannot depend on an untested input");
+  const extraReturn = smokeSource().replace('  return refuse("canonical_capabilities_unavailable");',
+    '  if (dollars === "2.50") return {schema:"castles.smoke-refusal.v1",status:String.fromCharCode(114,101,97,100,121),evidence:"none",reason:"canonical_capabilities_unavailable",providerCalls:0} as SmokeRefusal;\n  return refuse("canonical_capabilities_unavailable");');
+  assert.notDeepEqual(scriptProblems(extraReturn), [], "an additional return needs explicit qualification");
   assert.deepEqual(scriptProblems(smokeSource() + "\n// eval is prose, not an executed capability\n"), []);
 });
 test("B2 tripwire controls: each planted effect S1 to S6 is reported, and an unchanged copy runs clean", () => {
