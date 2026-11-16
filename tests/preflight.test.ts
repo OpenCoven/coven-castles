@@ -5109,3 +5109,58 @@ test("the deadline timer is cleared once the inspection settles, whatever the ou
     "every deadline timer is cleared"
   );
 });
+
+test("missing volumes cannot certify an empty attachment set", async () => {
+  // Restoring the absent-as-empty branch must fail this boundary test.
+  for (const networkBlockAll of [false, true]) {
+    for (const omit of [true, false]) {
+      const result = await withSandbox((sandbox) => {
+        sandbox.networkBlockAll = networkBlockAll;
+        if (omit) delete sandbox.volumes;
+        else sandbox.volumes = undefined;
+      });
+      assert.equal(result.status, "incompatible");
+      assert.deepEqual(result.reasons, [
+        { code: "metadata_missing", field: "volumes" },
+      ]);
+      assert.equal(result.observed?.attachments.volumes, null);
+      assert.equal(result.providerCalls.inspect, 1);
+      assert.equal(result.evidence, "fixture");
+      assert.equal(isLiveReady(result), false);
+    }
+  }
+});
+
+test("unstated metadata is echoed as unknown rather than a safe observation", async () => {
+  // Collapsing undefined into null/false/zero would contradict these reasons.
+  const result = await withSandbox((sandbox) => {
+    delete sandbox.autoDestroyAt;
+    delete sandbox.warmPoolId;
+    delete sandbox.linkedSandboxId;
+    delete sandbox.domainAllowList;
+    delete sandbox.networkAllowList;
+  });
+  assert.equal(result.status, "incompatible");
+  assert.deepEqual(result.reasons, [
+    { code: "metadata_missing", field: "domainAllowList" },
+    { code: "metadata_missing", field: "networkAllowList" },
+    { code: "metadata_missing", field: "autoDestroyAt" },
+    { code: "metadata_missing", field: "warmPoolId" },
+    { code: "metadata_missing", field: "linkedSandboxId" },
+  ]);
+  assert.deepEqual(result.observed?.attachments, {
+    linkedSandbox: null,
+    volumes: 0,
+    warmPool: null,
+  });
+  assert.equal(result.observed?.lifecycle.autoDestroyAt, null);
+  assert.equal(result.observed?.exposure.egressAllowListEntries, null);
+  const json = JSON.parse(renderJson(result));
+  assert.equal(json.observed.lifecycle.autoDestroyAt, null);
+  assert.equal(json.observed.attachments.warmPool, null);
+  assert.equal(json.observed.attachments.linkedSandbox, null);
+  assert.equal(json.observed.exposure.egressAllowListEntries, null);
+  const human = renderHuman(result);
+  assert.ok(human.includes("ttl ?"));
+  assert.ok(human.includes("egress allow-list entries ?"));
+});
