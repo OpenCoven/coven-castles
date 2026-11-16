@@ -1091,3 +1091,38 @@ test("R2 planted controls reject a changed original before evaluating any copy",
     assert.ok(!readdirSync(directory).includes("synthetic-marker"), "unapproved copied source must never evaluate");
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
+
+test("R3 preserved main symlinks refuse with native and missing main flags", () => {
+  assert.deepEqual(scriptProblems(smokeSource()), [], "entry controls require the approved original source");
+  const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-preserved-main-"));
+  try {
+    for (const name of ["actual", "fallback", "fallback-source"]) {
+      mkdirSync(resolve(directory, name));
+      writeFileSync(resolve(directory, name, "package.json"), '{"type":"module"}\n');
+      symlinkSync(resolve(root, "src"), resolve(directory, name, "src"), "dir");
+    }
+    symlinkSync(resolve(root, "scripts"), resolve(directory, "actual/scripts"), "dir");
+    mkdirSync(resolve(directory, "fallback-source/scripts"));
+    const source = smokeSource().replace('(import.meta as { main?: unknown }).main', 'undefined');
+    assert.notEqual(source, smokeSource());
+    writeFileSync(resolve(directory, "fallback-source/scripts/smoke.ts"), source);
+    symlinkSync(resolve(directory, "fallback-source/scripts"), resolve(directory, "fallback/scripts"), "dir");
+    for (const mode of ["actual", "fallback"]) {
+      const script = resolve(directory, mode, "scripts/smoke.ts");
+      for (const flags of [["--preserve-symlinks-main"], ["--preserve-symlinks-main", "--preserve-symlinks"]]) {
+        const node = [process.execPath, ...flags, ...guarded];
+        assert.equal(smokeRun([...node, script]).reason, "explicit_opt_in_required", mode);
+        assert.equal(smokeRun([...node, script, ...liveArgs]).reason, "canonical_capabilities_unavailable", mode);
+        const child = spawnSync(process.execPath, [...flags, ...guarded, "--input-type=module", "--eval",
+          `const m = await import(${JSON.stringify(pathToFileURL(script).href)}); process.stdout.write(typeof m.smokeRefusal);`], {
+          cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
+          env: {PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, TSX_DISABLE_CACHE: "1"},
+        });
+        assert.equal(child.error, undefined);
+        assert.equal(child.status, 0);
+        assert.equal(child.stdout, "function");
+        assert.equal(child.stderr, "");
+      }
+    }
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
