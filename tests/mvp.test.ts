@@ -1022,3 +1022,44 @@ test("R1 a library exit or extra output cannot impersonate completed evaluation"
     assert.deepEqual(smokeLibrary([], {}, undefined, false, moduleUrl), {result: {synthetic:true}, reads: []});
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
+
+test("R3 missing import.meta.main still distinguishes the program from an import", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-legacy-entry-"));
+  try {
+    mkdirSync(resolve(directory, "scripts"));
+    writeFileSync(resolve(directory, "package.json"), '{"type":"module"}\n');
+    const source = smokeSource()
+      .replace('(import.meta as { main?: unknown }).main', 'undefined')
+      .replace('"../src/profile.ts"', JSON.stringify(pathToFileURL(resolve(root, "src/profile.ts")).href));
+    assert.notEqual(source, smokeSource());
+    const script = resolve(directory, "scripts/smoke.ts");
+    writeFileSync(script, source);
+    symlinkSync(script, resolve(directory, "link.ts"));
+    symlinkSync(script, resolve(directory, "link"));
+    symlinkSync(resolve(directory, "scripts"), resolve(directory, "alias"), "dir");
+    const node = [process.execPath, ...guarded];
+    for (const path of [script, script.slice(0, -3), resolve(directory, "link.ts"), resolve(directory, "link"),
+      resolve(directory, "alias/smoke.ts")]) {
+      assert.equal(smokeRun([...node, path]).reason, "explicit_opt_in_required");
+      assert.equal(smokeRun([...node, path, ...liveArgs]).reason, "canonical_capabilities_unavailable");
+    }
+    const child = spawnSync(process.execPath, [...guarded, "--input-type=module", "--eval",
+      `const m = await import(${JSON.stringify(pathToFileURL(script).href)}); process.stdout.write(typeof m.smokeRefusal);`], {
+      cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
+      env: {PATH: process.env.PATH, TSX_DISABLE_CACHE: "1"},
+    });
+    assert.equal(child.error, undefined);
+    assert.equal(child.status, 0, "a library import must stay side-effect free without import.meta.main");
+    assert.equal(child.stdout, "function");
+    assert.equal(child.stderr, "");
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
+
+test("CFG-04 CFG-05 individual budget omissions, small seconds and an empty target stay exact", () => {
+  for (const args of [["--live", "--max-seconds", "900"], ["--live", "--max-spend-usd", "0.01"]])
+    assert.equal(smoke(args).reason, "budget_required");
+  for (const seconds of ["1", "9", "10", "100", "899", "900"])
+    assert.equal(smoke(liveArgs.map(value => value === "900" ? seconds : value)).reason, "canonical_capabilities_unavailable");
+  assert.equal(smoke(liveArgs.map(value => value === syntheticBinding.CASTLES_SANDBOX_ID ? "" : value)).reason,
+    "exact_target_required");
+});
