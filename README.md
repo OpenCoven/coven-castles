@@ -4,9 +4,7 @@ Sandcastles for sandboxed familiars.
 
 A tiny operator package that checks **one explicitly configured, existing Daytona sandbox** and reports whether it is fit to host a familiar. It is read-only: it never creates, starts, resizes or deletes anything.
 
-> **Status.** Offline and fixture-verified only. No live sandbox has been
-> checked. The live path is blocked on an upstream read-only seam:
-> [OpenCoven/coven-agents#296](https://github.com/OpenCoven/coven-agents/issues/296).
+> **Status.** Offline and fixture-verified only. No live sandbox has been checked. The live path is blocked on an upstream read-only seam: [OpenCoven/coven-agents#296](https://github.com/OpenCoven/coven-agents/issues/296).
 
 ## Quickstart
 
