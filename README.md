@@ -103,14 +103,7 @@ of private IDs, and with `sourcePolicy` (pinned from source) kept separate from
   upstream pin**: the owning service configures a domain allow list only.
   The figure 10 comes from the public Daytona network-limits documentation
   and has not been verified against the provider.
-- `autoDestroyAt`, `warmPoolId`, `linkedSandboxId` and both allow lists must
-  be stated in the inspection response: `null` means "not set", and an
-  absent key is `metadata_missing`, so a client that drops a field it cannot
-  map does not pass the check. An unstated allow list is not also reported as
-  unrestricted egress. In the provider model these keys are optional and an
-  absent one means "not set"; the owner's drift inventory would report drift
-  for an explicit `null`. Any other present value fails. `volumes` may be
-  absent and then reads as none; only an empty array is "no volume".
+- `autoDestroyAt`, `warmPoolId`, `linkedSandboxId`, `volumes` and both allow lists must be stated in the inspection response. An absent key is `metadata_missing`, so dropping an unmapped field cannot pass the check. Explicit `null` means not set; `[]` also states no volume. An unstated allow list is not also reported as unrestricted egress. Unknown TTL, attachments and allow-list counts are JSON `null`, with `?` in the human TTL/count output, rather than an invented safe observation. These response semantics are a proposed Castles contract change until the exact revision is accepted; the provider model's omission semantics do not establish that a translating client reported the field.
 - Provider-supplied text is never printed. Observed fields carry a value
   from a fixed set, a three-part SDK version, `unrecognised`, or null.
 - Castles holds no provider, database or harness credential.
@@ -154,4 +147,6 @@ first.
 | [`docs/README.md`](docs/README.md) | Index of everything, including templates |
 
 Fixtures are described in
-[`fixtures/preflight/README.md`](fixtures/preflight/README.md).
+[`fixtures/preflight/README.md`](fixtures/preflight/README.md) and, for #5's
+report task, in
+[`fixtures/report-task/README.md`](fixtures/report-task/README.md).

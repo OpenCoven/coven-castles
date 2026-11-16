@@ -28,51 +28,54 @@ one. Until the maintainer decides, #1's wording applies as quoted above.
 [`coordination.md`](coordination.md#lanes-and-gates) and `AGENTS.md` say the
 same.
 
+Still undecided on 2026-11-12. That day the maintainer accepted the #2
+contract at an exact SHA (see [Produced by #2](#produced-by-2)), and the pull
+request that carries this proposal,
+[#9](https://github.com/OpenCoven/coven-castles/pull/9), was merged as
+`a4ced7b463edccbe2ddd89ad12645b60f0aacefb`. The
+[comment recording the acceptance and the instruction to merge](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865),
+posted by the coordinating session before the merges, says the decisions
+listed in that pull request's body, the gate rule among them, "remain open;
+merging them is not a decision on those items".
+
 Any change to a contract after review or acceptance is a new revision and
 starts again as **proposed**.
 
 ## Produced by #2
 
-Snapshot of draft PR [#12](https://github.com/OpenCoven/coven-castles/pull/12)
-(branch `castles/2-revision-cc2f-4dfe81ab`), taken 2026-11-14. Everything
-below describes the source at that PR's head, which is a **proposed**
-revision. A commit cannot name its own SHA: the exact head is in the PR and
-in the handoff on #2. What the maintainer accepted is still
-`13ab3bc2c823fe12b482a6701ab4df2c28e6733c`; the differences are listed under
-[Changes against the accepted revision](#changes-against-the-accepted-revision).
+Snapshot of the proposed contract carried by PR [#12](https://github.com/OpenCoven/coven-castles/pull/12), refreshed 2026-11-16 by worker `cc2g-bcb81a3a`. The source includes the original candidate at `0b87d7c2871b68139071090bf466b91a498c6454`, current-main harness integration at `ecd360702e0d5d11f3acfc5899847ab4eb2df702`, and PR #10's historical documentation corrections at `cede492f41fc4eba20576f1e11a32c24cce3990a`, with the changes below. A commit cannot name its own SHA: use the exact-head handoff on [#2](https://github.com/OpenCoven/coven-castles/issues/2) for the final revision and any subsequent review or maintainer acceptance. The standing recorded here is the standing when this snapshot was prepared; a merge alone supplies no acceptance.
 
 | | |
 | --- | --- |
-| Revision | The head of draft PR #12. It carries draft PR [#11](https://github.com/OpenCoven/coven-castles/pull/11) at `fa95bbc44c03a015f2b7c16b722cfe25c319885e` unchanged, on `main` at `b5d7fc14add09fa94a7103031d7d625f710e519c`. |
-| Standing | **Proposed.** Not reviewed in this page's sense and not accepted. #11 at `fa95bbc` is proposed as well; this revision supersedes it. |
-| Accepted revision | `13ab3bc2c823fe12b482a6701ab4df2c28e6733c`, accepted by the maintainer on 2026-11-12 in [this comment on #2](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865): "the profile/binding result shape, client seam, source pins and offline test command as they stand at" that revision. Basis: the [review at that revision](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5869660940) by `rv6c-3db7f9d0`, a second read and not independent review, on which the maintainer accepted. Evidence fixture and static only; the acceptance authorizes no live call, spending or sandbox mutation, and decides none of the proposed additions. It named three follow-ups not fixed at that revision: R1 (integer fields can echo an all-digit ID) and R2 (the capability scan) are answered by #11, carried here; R3 (five provider fields not examined) is still open. Merged into `main` as `978a2465df8d3af5b8e693fa9d228a9055aa1db8`. |
-| Reviews | Of this revision: a second read by a reviewer started from the author's session, linked from the PR. Of #11: two second reads by `rv11-c26f825a`, at [`7e5cf12`](https://github.com/OpenCoven/coven-castles/pull/11#pullrequestreview-5883103571) (changes needed) and [`fa95bbc`](https://github.com/OpenCoven/coven-castles/pull/11#pullrequestreview-5883649824) (no blocking findings). None is independent review. #2 is labelled `risk:r3`. |
-| Gates | Unchanged by this revision: it opens and closes no gate. What the acceptance of `13ab3bc` means for #3 and #5, and the open question of whether it supplies "reviewed", are as the maintainer left them; read #3 and #5 for their current blockers. |
-| Evidence | **fixture** only. No live provider call has been made through this code. |
+| Revision | The final PR #12 head pinned in its issue handoff. PR #11 at `fa95bbc44c03a015f2b7c16b722cfe25c319885e` and PR #14's tests at `c6d5ca4910183d256d671b330ce82ed904631ae8` are incorporated, with subsequent changes stated below and in the PR. |
+| Standing at preparation | **Proposed.** Final-head independent review and maintainer contract acceptance have not been claimed by the author. Earlier reviews apply only to their named revisions. |
+| Historical accepted revision | `13ab3bc2c823fe12b482a6701ab4df2c28e6733c`, accepted by the maintainer on 2026-11-12 in [the comment recording the decision](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865): “the profile/binding result shape, client seam, source pins and offline test command as they stand at” that revision. The coordinating agent session posted the comment before the merges with the instruction to merge. Basis: [review 5869660940](https://github.com/OpenCoven/coven-castles/pull/6#pullrequestreview-5869660940) by `rv6c-3db7f9d0`, disclosed as a second read rather than independent review and accepted on that basis. PR #6 subsequently merged as `978a2465df8d3af5b8e693fa9d228a9055aa1db8`. |
+| Historical acceptance limits | Fixture and static evidence only; no live provider call, spending, deployment, sandbox mutation, label or assignee change was authorized. R1 (integer-ID echoes), R2 (capability scan) and R3 (five unexamined provider fields) remained follow-ups at that SHA. This candidate bounds R1 echoes and strengthens R2's diagnostic scan with their stated limits; R3 remains open. The acceptance did not decide the proposed gate rule or the decisions in PR #9/#7. |
+| Reviews | Original PR #12 at `0b87d7c2871b68139071090bf466b91a498c6454`: [review 5902651007](https://github.com/OpenCoven/coven-castles/pull/12#pullrequestreview-5902651007), `rv12-8b71a903`, no blocking findings and six non-blocking, an author-started second read. PR #11 at [`7e5cf12`](https://github.com/OpenCoven/coven-castles/pull/11#pullrequestreview-5883103571) required changes; at [`fa95bbc`](https://github.com/OpenCoven/coven-castles/pull/11#pullrequestreview-5883649824) it had no blocking findings. PR #10 at `cede492f41fc4eba20576f1e11a32c24cce3990a`: [review 5882717263](https://github.com/OpenCoven/coven-castles/pull/10#pullrequestreview-5882717263), no blocking findings, also a second read. None is independent review of this final candidate. |
+| Gates | The historical acceptance proves the accepted-artifact condition for `13ab3bc` only. #1 also requires #3 to start against a reviewed contract; #3's Start gate asks for “a reviewed profile/binding/client contract and exact source pins”; #5's Harness wiring gate asks for “#2's reviewed package/test command and binding-result contract”. Whether the historical second read plus acceptance supplies that review is an unresolved maintainer reading, common to #3 and #5. The candidate does not decide it. Final-head review and acceptance must be linked separately. #3/#4/#5 remain blocked on their recorded upstream capability and live-authorization gates; consult the current issue handoffs rather than treating this snapshot as an execution grant. |
+| Evidence | **fixture / static** only. No real-daemon or live-provider qualification is claimed. |
 
 ### Changes against the accepted revision
 
-Each is pinned by a test. Status precedence, reason-code list, schema name,
-function signatures, exports, source pins and dependencies are unchanged.
-**No reason code is added**: every change below uses an existing code.
+Status precedence, reason-code list, schema name, function parameter signatures, exports, source pins and dependencies are unchanged. Observed-result fields explicitly gain nullable unknown states as listed below; this is a proposed contract change requiring acceptance. Every refusal uses an existing reason code.
 
 | # | What | At `13ab3bc` | At this revision | From |
 | --- | --- | --- | --- | --- |
-| 1 | An absent `autoDestroyAt`, `warmPoolId` or `linkedSandboxId` in an `observed` response | Read as "not set": no reason | `incompatible`, `metadata_missing` with the key as `field`. `null` still means "not set" | Second read on #3, fail-open item 2 |
-| 2 | An absent `domainAllowList` or `networkAllowList` | Not examined. With block-all set, `ready`; with block-all off and both absent, `egress_unrestricted` | `incompatible`, `metadata_missing` with the list as `field`, block-all or not; egress is then not also called unrestricted. `null` still means "no list" | the same |
-| 3 | A volume array whose `length` is not an integer from 0 up (only an array behind a proxy, in memory, can report one) | Read as "no volume" when not greater than 0; a bigint or symbol length made `runPreflight` reject | `volumes_present`; echoed as `null` | #11 question 11, review N9 |
-| 4 | The nine observed integers | Any safe integer echoed | Echoed only from -1 to 99,999, otherwise `null`; `binding.generation` can be `null`. Status and reasons unchanged | #11, R1 |
-| 5 | `attachments.volumes` echo | The capped length, any sign or fraction | An integer from 0 to 999, or `null` when the value is not a count; 0 when the field is absent | #11 N4; this revision |
-| 6 | A client with no callable `inspectBoundSandbox` | `provider_unavailable`, `fixture`, one inspection counted | No client: `upstream_seam_missing`, `evidence: "none"`, no inspection | #11, R6 |
-| 7 | When the client's method is read, and what is counted | Read at call time, valid binding only; counted whenever the client was not `null` | Read once, before the binding is checked; counted exactly when invoked | #11, R6 |
-| 8 | A `null` or function `environment`; `null`, array or function `options` | `TypeError`, or read as given | Unconfigured binding (`sandbox_id_missing`); no options | #11, R6 |
-| 9 | `timeoutMs` above 2,147,483,647, `Infinity` included | Node's 1 ms | The 30,000 ms default | #11, R6 |
+| 1 | Absent `autoDestroyAt`, `warmPoolId` or `linkedSandboxId` | Read as not set, no reason | `incompatible`, `metadata_missing` with the key as field; explicit `null` still means not set | #3 second read, fail-open item 2 |
+| 2 | Absent domain/network allow list | Not examined; block-all could yield `ready` | `incompatible`, `metadata_missing`, even with block-all; unknown egress is not called unrestricted | #3 second read, fail-open item 2 |
+| 3 | Volume array with a length that is not a non-negative integer | Could read as empty; bigint/symbol could reject | `volumes_present`, echoed count `null` | #11 question 11 / N9 |
+| 4 | Nine observed integer fields | Any safe integer echoed | Only -1 to 99,999 echoed, otherwise `null`; policy uses the original value, and generation matching is unchanged | #11 R1 |
+| 5 | Volume-count echo | Capped length, including a negative/fractional value; absent field echoed 0 | Integer 0 to 999 for an array with a valid count, otherwise `null` | #11 N4 and PR #12 N1 |
+| 6 | Client with no callable inspection method | `provider_unavailable`, fixture, one inspection counted | `upstream_seam_missing`, evidence none, zero inspections | #11 R6 |
+| 7 | Reading and counting the seam method | Read at call time for a valid binding | Read once before binding validation; exactly one invocation counted when called, under the intact-built-ins assumption below | #11 R6 |
+| 8 | `null`, `undefined` or function environment; `null`, array or function options | Could reject or read supplied properties | Unconfigured binding (`sandbox_id_missing`); no options | #11 R6; PR #12 N3 |
+| 9 | Numeric timeout above 2,147,483,647, including Infinity | Node's 1 ms fallback | Default 30,000 ms; other timeout inputs retain their documented behavior | #11 R6 |
+| 10 | Absent `volumes` | `ready` when all other checks pass; count 0 | `incompatible`, `metadata_missing (volumes)`; count `null`; explicit `null` or `[]` still states no attachment | PR #12 N1 |
+| 11 | Unstated TTL, linked/warm-pool metadata and unreadable allow-list metadata in observed output | `absent`, false or 0 | Unknown is JSON `null`; the affected observed type fields allow `null`. Human TTL/egress counts print `?`. Explicit `null` TTL/attachments remain known absence, and two stated null allow lists have count 0 | PR #12 N2 |
 
-Fixture inputs: twelve of the thirteen observed cases now state the keys of
-rows 1 and 2 as `null`, and render as before; `metadata-missing.json` still
-omits them and now expects seven `metadata_missing` reasons instead of three.
+Fixture inputs: twelve of the thirteen observed cases now explicitly state previously omitted keys from rows 1 and 2 as `null`; keys already carrying values keep those values. `metadata-missing.json` omits four of these five keys (`autoDestroyAt`, `warmPoolId`, `linkedSandboxId`, `networkAllowList`) and retains a stated domain list. It expects seven missing-metadata reasons rather than three. Its status remains incompatible; unknown observed fields now use `null` as described above. All fixtures are synthetic, never live readiness.
 
-PR #11's body has the full input-by-input list for rows 4 to 9.
+PR #11's body preserves the full inherited input-by-input rationale for rows 4 to 9. Outstanding policy choices are not silently settled by retaining those behaviors: R3, public-suffix domain policy, the ten-range limit, alias hashing and non-positive/non-numeric timeout policy remain stated limitations or maintainer decisions.
 
 ### Binding
 
@@ -152,19 +155,9 @@ string outside the set reads `"unrecognised"`. The other six are `null` when
 the value is absent or not a string. Other fields are numbers, booleans, fixed
 literals or `null`.
 
-Observed integers (`resources.cpu`, `memoryGiB`, `diskGiB` and `gpu`, the four
-`lifecycle` intervals and `binding.generation`) are echoed only from -1 to
-99,999. Outside that range, as when the value is not an integer, the field is
-`null`, so `binding.generation` can be `null`. Status and reason codes are
-decided on the value itself and are the same whether or not it is echoed: a
-recorded generation of 100,000 or more that matches the binding is `ready`
-with `binding.generation: null`. An identifier that is itself an integer
-inside that range cannot be told from a reading. The two counts,
-`attachments.volumes` and `exposure.egressAllowListEntries`, are integers from
-0 to 999. `attachments.volumes` is 0 when the field is absent, and `null` when
-it holds anything else that is not an array, or an array whose length is not
-an integer from 0 up. Only an empty array is "no volume": any other present
-value, such an array included, is `incompatible` with `volumes_present`.
+Observed integers (`resources.cpu`, `memoryGiB`, `diskGiB` and `gpu`, the four `lifecycle` intervals and `binding.generation`) are echoed only from -1 to 99,999. Outside that range, as when the value is not an integer, the field is `null`, so `binding.generation` can be `null`. Status and reason codes are decided on the value itself, independently of its echo: a matching recorded generation of 100,000 or more can have `binding.generation: null`. An identifier that is itself an integer inside the echoed range cannot be distinguished from a reading. The two counts, `attachments.volumes` and `exposure.egressAllowListEntries`, are integers from 0 to 999 or `null`. Volumes have count 0 only for an empty array; omission, explicit null, a non-array or a non-count array length has echo `null`. Missing volumes refuse with `metadata_missing`; explicit null still means no attachment; any other value that is not an empty array refuses with `volumes_present`. The egress count is unknown (`null`) if either list is absent or is neither a string nor null; two stated null lists have count 0.
+
+Observed `attachments.linkedSandbox` and `attachments.warmPool` are `null` for missing metadata, false for an explicit null, and true for any other stated value (which the compatibility check refuses). `lifecycle.autoDestroyAt` is `null` for missing metadata, `absent` for an explicit null, and `present` otherwise. These unknown states cannot be used as evidence of safe absence. Human output uses `?` for unknown TTL and allow-list counts. Consumers must still evaluate status, reasons and evidence together.
 
 Three rules behind existing reason codes, all Castles decisions:
 
@@ -174,13 +167,7 @@ Three rules behind existing reason codes, all Castles decisions:
   `egress_allow_list_unsafe`, as is any entry wider than `/8`. The figure 10
   comes from public Daytona documentation and is unverified against the
   provider. Domains must be ASCII, and an IP literal is not a domain.
-- `autoDestroyAt`, `warmPoolId`, `linkedSandboxId`, `domainAllowList` and
-  `networkAllowList` must be present in an `observed` response. An absent
-  key is `incompatible` with `metadata_missing` and the key as its field;
-  `null` means "not set". An unstated allow list is not also reported as
-  `egress_unrestricted`, and block-all does not excuse it. `volumes` may be
-  absent and then reads as none. At `13ab3bc` an absent key read as "not set"
-  for all six.
+- `autoDestroyAt`, `warmPoolId`, `linkedSandboxId`, `volumes`, `domainAllowList` and `networkAllowList` must be stated in an `observed` response. An absent key is `incompatible` with `metadata_missing` and the key as its field; explicit `null` means not set. An unstated allow list is not also reported as `egress_unrestricted`, and block-all does not excuse it. At `13ab3bc` an absent key read as not set for all six.
 
 JSON output is at most 16,384 bytes.
 
@@ -307,14 +294,15 @@ fixtures, and upstream containment and reuse evidence for #5.
 
 ## Produced by #5
 
-**Proposed** in draft PR
-[#7](https://github.com/OpenCoven/coven-castles/pull/7) and not on this
-branch: the report-task fixture, expected-report properties and the
-negative-case catalogue. As of 2026-11-12T05:25Z every review posted on it
-asked for changes, the latest at `b401909` with three blocking findings, and
-its author is pushing fixes, so no head is named here: read the PR. Nothing in
-it is reviewed clean or accepted. These are fixture file formats, not
-interface contracts.
+On `main` since 2026-11-12: the report-task fixture, expected-report
+properties and the negative-case catalogue, in `fixtures/report-task/`. They
+arrived with PR [#7](https://github.com/OpenCoven/coven-castles/pull/7),
+merged at head `302bb4533aaccde8165d8efe596502da286891b0` as
+`b5d7fc14add09fa94a7103031d7d625f710e519c`.
+
+The [PR #7 review](https://github.com/OpenCoven/coven-castles/pull/7#pullrequestreview-5870277806) at that head found no blocking findings and two non-blocking. It was an author-started second read, not independent review. The [comment recording the maintainer's decision](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865) accepted only the #2 artifact, instructed that PR #7 be merged, and left the pinned-fixture-limit decisions open. That historical merge did not accept those limits. These are synthetic fixture formats, not canonical interface contracts.
+
+PR [#13](https://github.com/OpenCoven/coven-castles/pull/13) subsequently added the offline harness and refusal-only smoke script, independently reviewed by `rv13-1b8a60bf` at `53c821b03bf56cd2fd5b96b6a820843ae21145c9` in [review 5913853029](https://github.com/OpenCoven/coven-castles/pull/13#pullrequestreview-5913853029), and merged as `ecd360702e0d5d11f3acfc5899847ab4eb2df702`. Its [handoff on #5](https://github.com/OpenCoven/coven-castles/issues/5#issuecomment-6904261609) records the exact offline checks and remaining capability/authorization gates. The independent offline review and merge supply no live qualification or closure of #5; its runtime, admission and containment gates remain separate.
 
 ## Updating this page
 

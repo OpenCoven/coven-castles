@@ -33,6 +33,8 @@ tests/             offline tests
 fixtures/preflight synthetic inspection cases
 ```
 
+PR #7 added #5's `fixtures/report-task/` and [`acceptance.md`](acceptance.md) on 2026-11-12. At its merge `b5d7fc14add09fa94a7103031d7d625f710e519c`, these were synthetic data and notes without an executable consumer. PR #13 later added `tests/mvp.test.ts` and the refusal-only `scripts/smoke.ts`, merged as `ecd360702e0d5d11f3acfc5899847ab4eb2df702`. The offline suite now exercises the corpus and refusal boundaries; it supplies no real admission, provider or containment evidence.
+
 There is no live path. A fully configured `castles check` reports
 `unavailable` with `upstream_seam_missing` and makes zero provider calls,
 because the read-only seam it needs does not exist upstream yet. Everything

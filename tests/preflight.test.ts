@@ -5069,10 +5069,10 @@ test("absent key: an explicit null still reads as not set, as at 13ab3bc", async
 
 // --- The deadline timer --------------------------------------------------------
 //
-// Single-edit mutation at this revision: deleting `clearTimeout(timer)` in
-// `inspectOnce` left every result unchanged and was noticed only because the
-// suite then never finished (a stated deadline up to 2^31-1 ms kept the
-// process alive). This pins it directly.
+// Deleting `clearTimeout(timer)` leaves individual results unchanged but
+// keeps the full suite alive. The earlier "an answered check leaves no
+// deadline timer behind" subprocess test also catches it when run alone.
+// This test checks every created timer directly for each inspected outcome.
 
 test("the deadline timer is cleared once the inspection settles, whatever the outcome", async () => {
   const fixture = loadFixtureCase(casePath("ready"));

@@ -14,9 +14,7 @@ Each `cases/*.json` file carries:
 - `inspection` — what the client seam returns for that case
 - `expect` — status, reason codes and the number of inspection calls
 
-Every observed case states `autoDestroyAt`, `warmPoolId`, `linkedSandboxId`
-and both allow lists, as `null` when not set: an absent key is missing
-metadata. `metadata-missing.json` omits them on purpose.
+Observed cases state `autoDestroyAt`, `warmPoolId`, `linkedSandboxId`, `volumes` and both allow lists. Null means not set, and an empty array also states no volume; omission is missing metadata. The deliberately incomplete `metadata-missing.json` omits `autoDestroyAt`, `warmPoolId`, `linkedSandboxId` and `networkAllowList`, while retaining a stated `domainAllowList` and `volumes` array.
 
 The `inspection` shape is `castles.fixture.sandbox-inspection.v1`: the result
 Castles needs from the read-only seam requested in
