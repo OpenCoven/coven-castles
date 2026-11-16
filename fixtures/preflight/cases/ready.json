@@ -37,11 +37,15 @@
       "public": false,
       "networkBlockAll": false,
       "domainAllowList": "fixture.invalid",
+      "networkAllowList": null,
       "autoStopInterval": 15,
       "autoArchiveInterval": 10080,
       "autoDeleteInterval": -1,
       "autoPauseInterval": 0,
+      "autoDestroyAt": null,
       "volumes": [],
+      "warmPoolId": null,
+      "linkedSandboxId": null,
       "labels": {
         "credentialBoundaryVersion": "attempt-reset-v1"
       }

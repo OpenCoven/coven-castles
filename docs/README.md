@@ -1,9 +1,6 @@
 # Documentation index
 
-The outcome issues are the spec:
-[#1](https://github.com/OpenCoven/coven-castles/issues/1) (the epic and the
-rules) and its children #2 to #5. These documents explain and apply them; they
-do not replace them.
+The outcome issues are the spec: [#1](https://github.com/OpenCoven/coven-castles/issues/1) (the epic and the rules) and its children #2 to #5. These documents explain and apply them; they do not replace them.
 
 ## Start here
 
@@ -27,6 +24,8 @@ do not replace them.
 | --- | --- |
 | [`architecture.md`](architecture.md) | What Castles is and is not, the trust boundary, what stays upstream, pinned sources and open upstream dependencies |
 | [`../fixtures/preflight/README.md`](../fixtures/preflight/README.md) | The synthetic preflight fixtures and their format |
+| [`acceptance.md`](acceptance.md) | Owned by #5: acceptance notes and the qualification matrix |
+| [`../fixtures/report-task/README.md`](../fixtures/report-task/README.md) | Owned by #5: the synthetic report-task fixture, the expected-report properties and the negative-case catalogue |
 | [`../.env.example`](../.env.example) | The binding configuration keys and where secrets do and do not live |
 
 ## Templates
@@ -38,21 +37,10 @@ do not replace them.
 | [Shared-file change request](../.github/ISSUE_TEMPLATE/shared-file-change.md) | Asking a steward to change a file you do not own |
 | [Blocker report](../.github/ISSUE_TEMPLATE/blocker.md) | Recording an exact blocking condition, its decision owner and the evidence that would clear it |
 
-The templates set no labels. An issue opened from one gets its `status:` label
-by hand.
-
-## Not on this branch yet
-
-`docs/acceptance.md` (acceptance notes and the qualification matrix) is owned
-by #5 and proposed in draft PR
-[#7](https://github.com/OpenCoven/coven-castles/pull/7). It will be linked here
-by the steward once it lands.
+The templates set no labels. An issue opened from one gets its `status:` label by hand.
 
 ## Keeping these documents true
 
-- Every statement must be true at the revision it ships in. Describe what
-  exists; label anything planned, unverified or blocked as such.
-- When behaviour, a contract or ownership changes, update the document in the
-  same change, through the document's steward.
-- Do not copy the issues wholesale. Link to them, and keep only what a
-  contributor needs in order to act.
+- Every statement must be true at the revision it ships in. Describe what exists; label anything planned, unverified or blocked as such.
+- When behaviour, a contract or ownership changes, update the document in the same change, through the document's steward.
+- Do not copy the issues wholesale. Link to them, and keep only what a contributor needs in order to act.
