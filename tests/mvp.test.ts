@@ -1064,3 +1064,29 @@ test("CFG-04 CFG-05 individual budget omissions, small seconds and an empty targ
   assert.equal(smoke(liveArgs.map(value => value === syntheticBinding.CASTLES_SANDBOX_ID ? "" : value)).reason,
     "exact_target_required");
 });
+
+test("R2 planted controls reject a changed original before evaluating any copy", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-control-source-"));
+  try {
+    mkdirSync(resolve(directory, "tests"));
+    mkdirSync(resolve(directory, "scripts"));
+    for (const name of ["src", "fixtures", "docs", "node_modules"])
+      symlinkSync(resolve(root, name), resolve(directory, name), "dir");
+    writeFileSync(resolve(directory, "package.json"), '{"type":"module"}\n');
+    writeFileSync(resolve(directory, "tests/mvp.test.ts"), readFileSync(resolve(root, "tests/mvp.test.ts")));
+    const marker = resolve(directory, "synthetic-marker");
+    const effect = 'import{writeFileSync as reviewWrite}from"node:fs";\n' +
+      'const reviewStack = Error.stackTraceLimit; Error.stackTraceLimit = 0;\n' +
+      `reviewWrite(${JSON.stringify(marker)}, "synthetic"); Error.stackTraceLimit = reviewStack;\n`;
+    writeFileSync(resolve(directory, "scripts/smoke.ts"), effect + smokeSource());
+    const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--test",
+      "--test-name-pattern=^B2 tripwire controls:", resolve(directory, "tests/mvp.test.ts")], {
+      cwd: directory, encoding: "utf8", timeout: 15_000, maxBuffer: 131_072,
+      env: {PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, TSX_DISABLE_CACHE: "1"},
+    });
+    assert.equal(child.error, undefined);
+    assert.equal(child.signal, null);
+    assert.equal(child.status, 1, "the planted-copy control must reject a changed original");
+    assert.ok(!readdirSync(directory).includes("synthetic-marker"), "unapproved copied source must never evaluate");
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
