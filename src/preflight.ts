@@ -108,9 +108,9 @@ export type Reason = Readonly<{ code: ReasonCode; field?: string }>;
 
 export type ObservedSandbox = Readonly<{
   attachments: Readonly<{
-    linkedSandbox: boolean;
+    linkedSandbox: boolean | null;
     volumes: number | null;
-    warmPool: boolean;
+    warmPool: boolean | null;
   }>;
   binding: Readonly<{
     attemptFence: string;
@@ -119,7 +119,7 @@ export type ObservedSandbox = Readonly<{
     lifecycle: string;
   }>;
   exposure: Readonly<{
-    egressAllowListEntries: number;
+    egressAllowListEntries: number | null;
     networkBlockAll: boolean | null;
     public: boolean | null;
   }>;
@@ -127,7 +127,7 @@ export type ObservedSandbox = Readonly<{
   lifecycle: Readonly<{
     autoArchiveInterval: number | null;
     autoDeleteInterval: number | null;
-    autoDestroyAt: "absent" | "present";
+    autoDestroyAt: "absent" | "present" | null;
     autoPauseInterval: number | null;
     autoStopInterval: number | null;
   }>;
@@ -683,8 +683,8 @@ function evaluateCompatibility(
   // because a client that drops a key it cannot map would otherwise pass
   // the check (second read on #3, fail-open paths item 2). Reading `null` as
   // "not set" is a Castles choice; the owner's comparison would report drift
-  // for it. Any other value fails. `volumes` is not part of this rule: an
-  // absent `volumes` still reads as none.
+  // for it. Any other value fails. The same stated-metadata requirement
+  // applies to `volumes` below: omission cannot establish no attachment.
   if (sandbox.autoDestroyAt === undefined) {
     missing("autoDestroyAt");
   } else if (sandbox.autoDestroyAt !== null) {
@@ -732,9 +732,11 @@ function evaluateCompatibility(
     fail("gpu_present", "gpu");
   }
 
-  // Only an empty array is "no volume". Anything else present is an
-  // attachment, including an array whose length is not a count.
-  if (sandbox.volumes !== undefined && sandbox.volumes !== null) {
+  // Explicit null or an empty array is "no volume". Omission is unknown;
+  // anything else present is an attachment, including a non-count length.
+  if (sandbox.volumes === undefined) {
+    missing("volumes");
+  } else if (sandbox.volumes !== null) {
     if (
       !Array.isArray(sandbox.volumes) ||
       countOf(sandbox.volumes.length) !== 0
@@ -785,14 +787,14 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
   return {
     attachments: {
       linkedSandbox:
-        sandbox.linkedSandboxId !== undefined &&
-        sandbox.linkedSandboxId !== null,
+        sandbox.linkedSandboxId === undefined
+          ? null
+          : sandbox.linkedSandboxId !== null,
       volumes: Array.isArray(sandbox.volumes)
         ? echoedCount(sandbox.volumes.length)
-        : sandbox.volumes === undefined
-          ? 0
-          : null,
-      warmPool: sandbox.warmPoolId !== undefined && sandbox.warmPoolId !== null,
+        : null,
+      warmPool:
+        sandbox.warmPoolId === undefined ? null : sandbox.warmPoolId !== null,
     },
     binding: {
       attemptFence: known(binding.attemptFence, KNOWN.attemptFence) ?? UNRECOGNISED,
@@ -800,11 +802,14 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
       lifecycle: known(binding.lifecycle, KNOWN.bindingLifecycle) ?? UNRECOGNISED,
     },
     exposure: {
-      egressAllowListEntries: Math.min(
-        allowListEntries(sandbox.domainAllowList) +
-          allowListEntries(sandbox.networkAllowList),
-        ECHOED_COUNT_MAX
-      ),
+      egressAllowListEntries: [sandbox.domainAllowList, sandbox.networkAllowList]
+        .every((value) => value === null || typeof value === "string")
+        ? Math.min(
+            allowListEntries(sandbox.domainAllowList) +
+              allowListEntries(sandbox.networkAllowList),
+            ECHOED_COUNT_MAX
+          )
+        : null,
       networkBlockAll:
         typeof sandbox.networkBlockAll === "boolean"
           ? sandbox.networkBlockAll
@@ -816,9 +821,11 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
       autoArchiveInterval: echoedInteger(sandbox.autoArchiveInterval),
       autoDeleteInterval: echoedInteger(sandbox.autoDeleteInterval),
       autoDestroyAt:
-        sandbox.autoDestroyAt === undefined || sandbox.autoDestroyAt === null
-          ? "absent"
-          : "present",
+        sandbox.autoDestroyAt === undefined
+          ? null
+          : sandbox.autoDestroyAt === null
+            ? "absent"
+            : "present",
       autoPauseInterval: echoedInteger(sandbox.autoPauseInterval),
       autoStopInterval: echoedInteger(sandbox.autoStopInterval),
     },
@@ -1142,7 +1149,7 @@ export function renderHuman(value: PreflightResult): string {
     lines.push(
       "observed (as reported through the seam):",
       `  state ${observed.state ?? "?"}; ${observed.resources.cpu ?? "?"} vCPU / ${observed.resources.memoryGiB ?? "?"} GiB RAM / ${observed.resources.diskGiB ?? "?"} GiB disk; snapshot ${observed.image.snapshot ?? "?"}; ${observed.platform.os ?? "?"}/${observed.platform.architecture ?? "?"}; sdk ${observed.sdk.version ?? "?"}`,
-      `  public ${observed.exposure.public ?? "?"}; egress allow-list entries ${observed.exposure.egressAllowListEntries}; auto-stop ${observed.lifecycle.autoStopInterval ?? "?"} min; auto-archive ${observed.lifecycle.autoArchiveInterval ?? "?"} min; auto-delete ${observed.lifecycle.autoDeleteInterval ?? "?"}; ttl ${observed.lifecycle.autoDestroyAt}`,
+      `  public ${observed.exposure.public ?? "?"}; egress allow-list entries ${observed.exposure.egressAllowListEntries ?? "?"}; auto-stop ${observed.lifecycle.autoStopInterval ?? "?"} min; auto-archive ${observed.lifecycle.autoArchiveInterval ?? "?"} min; auto-delete ${observed.lifecycle.autoDeleteInterval ?? "?"}; ttl ${observed.lifecycle.autoDestroyAt ?? "?"}`,
       `  binding generation ${observed.binding.generation ?? "?"}, lifecycle ${observed.binding.lifecycle}, attempt fence ${observed.binding.attemptFence}`
     );
   } else {

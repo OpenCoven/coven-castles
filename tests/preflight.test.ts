@@ -690,10 +690,9 @@ test("a stale generation is reported with the observed metadata, by decision", a
   assert.equal(result.observed?.binding.generation, 9);
 });
 
-test("null TTL and attachment keys read as not set; absent ones are missing metadata, except volumes", async () => {
+test("null TTL and attachment keys read as not set; absent ones are missing metadata", async () => {
   // At 13ab3bc an absent key read as not set as well. This revision makes an
-  // absent autoDestroyAt, warmPoolId or linkedSandboxId missing metadata
-  // (see "absent key: ..." at the end of this file); volumes is unchanged.
+  // absent TTL or attachment key missing metadata, volumes included.
   const keys = ["autoDestroyAt", "volumes", "warmPoolId", "linkedSandboxId"];
   const stated = await withInspection((inspection) => {
     for (const key of keys) {
@@ -710,13 +709,15 @@ test("null TTL and attachment keys read as not set; absent ones are missing meta
   assert.equal(absent.status, "incompatible");
   assert.deepEqual(absent.reasons, [
     { code: "metadata_missing", field: "autoDestroyAt" },
+    { code: "metadata_missing", field: "volumes" },
     { code: "metadata_missing", field: "warmPoolId" },
     { code: "metadata_missing", field: "linkedSandboxId" },
   ]);
   const noVolumes = await withInspection((inspection) => {
     delete inspection.sandbox.volumes;
   });
-  assert.equal(noVolumes.status, "ready");
+  assert.equal(noVolumes.status, "incompatible");
+  assert.deepEqual(noVolumes.reasons, [{ code: "metadata_missing", field: "volumes" }]);
 });
 
 // --- Fixture readiness is never live readiness (review N3) -----------------
@@ -4600,13 +4601,14 @@ test("volumes: anything present that is not an empty array is an attachment, and
   assert.equal(empty.status, "ready");
   assert.equal(empty.observed?.attachments.volumes, 0);
 
-  // Absent reads as none; an explicit null passes too but is echoed as
-  // null, so the two stay distinguishable in output.
+  // Missing metadata refuses with an unknown count. Explicit null still
+  // passes as the seam's stated absence, without inventing a numeric count.
   const absent = await withSandbox((sandbox) => {
     delete sandbox.volumes;
   });
-  assert.equal(absent.status, "ready");
-  assert.equal(absent.observed?.attachments.volumes, 0);
+  assert.equal(absent.status, "incompatible");
+  assert.deepEqual(absent.reasons, [{ code: "metadata_missing", field: "volumes" }]);
+  assert.equal(absent.observed?.attachments.volumes, null);
   const stated = await withSandbox((sandbox) => {
     sandbox.volumes = null;
   });
@@ -4639,18 +4641,21 @@ test("observed attachments, TTL and exposure report what the seam stated, field 
       { linkedSandbox: true, volumes: 0, warmPool: true }
     );
   }
-  for (const value of [undefined, null]) {
+  for (const [value, attachment, ttl] of [
+    [undefined, null, null],
+    [null, false, "absent"],
+  ] as const) {
     const result = await withSandbox((sandbox) => {
       sandbox.linkedSandboxId = value;
       sandbox.warmPoolId = value;
       sandbox.autoDestroyAt = value;
     });
     assert.deepEqual(result.observed?.attachments, {
-      linkedSandbox: false,
+      linkedSandbox: attachment,
       volumes: 0,
-      warmPool: false,
+      warmPool: attachment,
     });
-    assert.equal(result.observed?.lifecycle.autoDestroyAt, "absent");
+    assert.equal(result.observed?.lifecycle.autoDestroyAt, ttl);
   }
   for (const value of ["2030-01-01T00:00:00Z", "", 0, false]) {
     const result = await withSandbox((sandbox) => {
@@ -4966,7 +4971,7 @@ test("absent key: an absent autoDestroyAt is missing metadata, not \"no TTL\"", 
   });
   assert.equal(result.status, "incompatible");
   assert.deepEqual(result.reasons, [{ code: "metadata_missing", field: "autoDestroyAt" }]);
-  assert.equal(result.observed?.lifecycle.autoDestroyAt, "absent");
+  assert.equal(result.observed?.lifecycle.autoDestroyAt, null);
 });
 
 test("absent key: an absent warmPoolId is missing metadata, not \"no warm pool\"", async () => {
@@ -4975,7 +4980,7 @@ test("absent key: an absent warmPoolId is missing metadata, not \"no warm pool\"
   });
   assert.equal(result.status, "incompatible");
   assert.deepEqual(result.reasons, [{ code: "metadata_missing", field: "warmPoolId" }]);
-  assert.equal(result.observed?.attachments.warmPool, false);
+  assert.equal(result.observed?.attachments.warmPool, null);
 });
 
 test("absent key: an absent linkedSandboxId is missing metadata, not \"no linked sandbox\"", async () => {
@@ -4984,7 +4989,7 @@ test("absent key: an absent linkedSandboxId is missing metadata, not \"no linked
   });
   assert.equal(result.status, "incompatible");
   assert.deepEqual(result.reasons, [{ code: "metadata_missing", field: "linkedSandboxId" }]);
-  assert.equal(result.observed?.attachments.linkedSandbox, false);
+  assert.equal(result.observed?.attachments.linkedSandbox, null);
 });
 
 test("absent key: with block-all set, absent allow lists are missing metadata, not \"no list\"", async () => {
@@ -5001,7 +5006,7 @@ test("absent key: with block-all set, absent allow lists are missing metadata, n
     { code: "metadata_missing", field: "domainAllowList" },
     { code: "metadata_missing", field: "networkAllowList" },
   ]);
-  assert.equal(result.observed?.exposure.egressAllowListEntries, 0);
+  assert.equal(result.observed?.exposure.egressAllowListEntries, null);
 });
 
 test("absent key: each allow list is judged on its own, and an unstated list is not called unrestricted", async () => {
