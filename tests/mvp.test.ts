@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import nodeTest, { after } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { runsAsProgram, smokeRefusal, type SmokeRefusal } from "../scripts/smoke.ts";
+import type { SmokeRefusal } from "../scripts/smoke.ts";
 import { createFixtureInspectionClient, isLiveReady, loadFixtureCase, renderHuman, renderJson,
   runPreflight, type SandboxInspectionClient } from "../src/preflight.ts";
 
@@ -19,11 +19,10 @@ function test(name: string, fn: () => void | Promise<void>) {
   return nodeTest(name, fn);
 }
 /**
- * scripts/smoke.ts is also imported into this process: smokeRefusal is called
- * directly. A planted process.exit(0) there ends this file early with exit
- * code 0, and the runner then reports only the tests it saw, as a pass. That
- * is how edit S6 of rv5b-7a31c9e4 escaped once smokeRefusal ran here with a
- * large budget. Any exit before the last test has finished fails the file.
+ * The candidate is never imported at run time into this test process. Its
+ * library calls run in children with a required completion envelope instead.
+ * This listener is an additional check on exits after this harness starts;
+ * the separate copied-harness regression covers candidate import-time exits.
  */
 function guardEarlyExit(registerAfter: (fn: () => void) => void) {
   let finished = false;
@@ -486,11 +485,56 @@ after(() => rmSync(tripwireDirectory, {recursive: true, force: true}));
 // Absolute, so a smoke run can start in any working directory.
 const guarded = ["--import", import.meta.resolve("tsx"), "--import", pathToFileURL(tripwire).href];
 
+/** Candidate evaluation stays outside the process that owns the test assertions. */
+function smokeLibrary(
+  args: string[], environment: Readonly<Record<string, string | undefined>>, main?: unknown, entryCheck = false,
+  moduleUrl = pathToFileURL(resolve(root, "scripts/smoke.ts")).href,
+): {result: SmokeRefusal | boolean; reads: string[]} {
+  if (moduleUrl === pathToFileURL(resolve(root, "scripts/smoke.ts")).href)
+    assert.deepEqual(scriptProblems(smokeSource()), [], "smoke source must match its proposed fingerprint before import");
+  const completion = randomBytes(16).toString("hex");
+  const input = {args, environment, main, entryCheck};
+  const program = `
+    const input = ${JSON.stringify(input)};
+    const reads = [];
+    const allowed = new Set(["CASTLES_PROFILE", "CASTLES_SANDBOX_ID", "CASTLES_OWNER_AGENT_ID", "CASTLES_SANDBOX_GENERATION"]);
+    const environment = new Proxy(input.environment, {get(target, key) {
+      if (!allowed.has(key)) throw new Error("synthetic unexpected environment key");
+      reads.push(key); return target[key];
+    }});
+    const candidate = await import(${JSON.stringify(moduleUrl)});
+    const result = input.entryCheck ? candidate.runsAsProgram(input.main) : candidate.smokeRefusal(input.args, environment);
+    process.stdout.write(JSON.stringify({completion: ${JSON.stringify(completion)}, result, reads}) + "\\n");
+  `;
+  const child = spawnSync(process.execPath, [...guarded, "--input-type=module", "--eval", program], {
+    cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
+    env: {PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, TSX_DISABLE_CACHE: "1"},
+  });
+  assert.equal(child.error, undefined, "library subprocess must finish before its deadline");
+  assert.equal(child.signal, null);
+  assert.equal(child.status, 0, "library evaluation must complete");
+  assert.equal(child.stderr, "");
+  assert.ok(child.stdout.endsWith("\n"), "library completion envelope is required");
+  const envelope = JSON.parse(child.stdout);
+  assert.equal(child.stdout, JSON.stringify(envelope) + "\n", "one exact completion line, no extra output");
+  assert.equal(envelope.completion, completion, "candidate evaluation did not produce its completion envelope");
+  return {result: envelope.result, reads: envelope.reads};
+}
+function smokeRefusal(args: string[], environment: Readonly<Record<string, string | undefined>>): SmokeRefusal {
+  assert.deepEqual(scriptProblems(smokeSource()), [], "smoke source must match its proposed fingerprint before evaluation");
+  return smokeLibrary(args, environment).result as SmokeRefusal;
+}
+function runsAsProgram(main: unknown): boolean {
+  assert.deepEqual(scriptProblems(smokeSource()), []);
+  return smokeLibrary([], {}, main, true).result as boolean;
+}
+
 function smoke(args: string[], binding: Record<string, string> = syntheticBinding) {
   return smokeRun([process.execPath, ...guarded, "scripts/smoke.ts", ...args], binding);
 }
 /** Runs one smoke invocation, given as a full command line, and requires the refusal contract. */
 function smokeRun(command: string[], binding: Record<string, string> = syntheticBinding, cwd = root) {
+  assert.deepEqual(scriptProblems(smokeSource()), [], "smoke source must match its proposed fingerprint before execution");
   const child = spawnSync(command[0], command.slice(1), {
     cwd, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
     env: { PATH: process.env.PATH, TSX_DISABLE_CACHE: "1", ...binding },
@@ -500,6 +544,7 @@ function smokeRun(command: string[], binding: Record<string, string> = synthetic
   assert.equal(child.status, 1, "every current smoke invocation must refuse");
   assert.equal(child.stderr, "");
   const result: SmokeRefusal = JSON.parse(child.stdout);
+  assert.equal(child.stdout, JSON.stringify(result) + "\n", "exactly one JSON line, no whitespace or other output");
   assert.equal(result.schema, "castles.smoke-refusal.v1");
   assert.equal(result.status, "blocked");
   assert.equal(result.evidence, "none");
@@ -522,14 +567,15 @@ test("B1 smoke refuses however it is invoked as the program", () => {
     symlinkSync(resolve(root, "scripts/smoke.ts"), resolve(directory, "link.ts"));
     symlinkSync(resolve(root, "scripts/smoke.ts"), resolve(directory, "smoke-link"));
     symlinkSync(resolve(root, "scripts"), resolve(directory, "aliased-scripts"));
-    const node = [process.execPath, "--import", "tsx"];
+    const node = [process.execPath, ...guarded];
+    const tsx = [tsxBin, "--import", pathToFileURL(tripwire).href];
     const spellings: [string, string[]][] = [
       ["exact relative path", [...node, "scripts/smoke.ts"]],
       ["no extension", [...node, "scripts/smoke"]],
       ["dot segments", [...node, "./scripts/../scripts/smoke.ts"]],
       ["absolute path", [...node, resolve(root, "scripts/smoke.ts")]],
-      ["the tsx binary, no extension", [tsxBin, "scripts/smoke"]],
-      ["the tsx binary", [tsxBin, "scripts/smoke.ts"]],
+      ["the tsx binary, no extension", [...tsx, "scripts/smoke"]],
+      ["the tsx binary", [...tsx, "scripts/smoke.ts"]],
       ["a symlink to the script", [...node, resolve(directory, "link.ts")]],
       ["an extensionless symlink", [...node, resolve(directory, "smoke-link")]],
       ["a path through a symlinked directory", [...node, resolve(directory, "aliased-scripts/smoke.ts")]],
@@ -545,7 +591,8 @@ test("B1 only Node's explicit false skips the refusal, so a Node without import.
   for (const main of [true, undefined, null, 0, "", "false", {}]) assert.equal(runsAsProgram(main), true, String(main));
 });
 test("B1 importing the smoke module is side-effect free", () => {
-  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval",
+  assert.deepEqual(scriptProblems(smokeSource()), []);
+  const child = spawnSync(process.execPath, [...guarded, "--input-type=module", "--eval",
     "const m = await import('./scripts/smoke.ts'); process.stdout.write(typeof m.smokeRefusal);"], {
     cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
     env: {PATH: process.env.PATH, TSX_DISABLE_CACHE: "1", ...syntheticBinding},
@@ -608,15 +655,9 @@ test("CFG-08 complete-looking inputs and forged authorization still refuse", () 
 });
 
 test("CFG-07 smoke consumes only binding keys and never echoes credential canaries", () => {
-  const read: string[] = [];
-  const environment = new Proxy(syntheticBinding, {get(target, key: string) {
-    assert.ok(Object.hasOwn(target, key), "no credential or unrelated environment read");
-    read.push(key);
-    return target[key as keyof typeof syntheticBinding];
-  }});
-  const result = smokeRefusal(liveArgs, environment);
-  assert.equal(result.reason, "canonical_capabilities_unavailable");
-  assert.ok(read.length > 0);
+  const library = smokeLibrary(liveArgs, syntheticBinding);
+  assert.equal((library.result as SmokeRefusal).reason, "canonical_capabilities_unavailable");
+  assert.deepEqual([...new Set(library.reads)].sort(), Object.keys(syntheticBinding).sort());
   const canary = `synthetic-canary-${randomBytes(16).toString("hex")}`;
   const child = spawnSync(process.execPath, [...guarded, "scripts/smoke.ts", ...liveArgs], {
     cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
@@ -645,9 +686,12 @@ test("CFG-10 smoke refuses arbitrary directory arguments and preserves existing 
  * or second output channel; one environment read, of the binding keys; one
  * output; exit code 1. A script that needs more changes this test on purpose.
  */
+/** A changed program needs a deliberate fingerprint update and new exact-SHA review. */
+const SMOKE_SOURCE_SHA256 = "03e10fa1823c0d823c8f5ea95f2316d31f238e4497534fc014eccd56ce2f18e5";
 const SCRIPT_IMPORTS = new Set(["node:util", "../src/profile.ts"]);
 function scriptProblems(source: string): string[] {
   const problems: string[] = [];
+  if (sha(Buffer.from(source)) !== SMOKE_SOURCE_SHA256) problems.push("refusal source fingerprint changed");
   for (const match of source.matchAll(/\b(?:import|export)\s+(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/g))
     if (!SCRIPT_IMPORTS.has(match[1])) problems.push("import " + match[1]);
   const forbidden: [string, RegExp][] = [
@@ -698,7 +742,8 @@ const largestBudget = ["--live", "--sandbox-id", syntheticBinding.CASTLES_SANDBO
 
 test("B2 scan: every file under scripts/ imports, reads and prints nothing beyond the refusal", () => {
   const files = scriptFiles(resolve(root, "scripts"));
-  assert.ok(files.includes("smoke.ts"));
+  assert.deepEqual(files, ["smoke.ts"], "no dormant, nested or helper scripts outside the refusal source approval");
+  assert.ok(lstatSync(resolve(root, "scripts/smoke.ts")).isFile(), "the approved entry is a regular file");
   for (const file of files) {
     assert.match(file, /\.ts$/, "only TypeScript is scanned");
     assert.deepEqual(scriptProblems(readFileSync(resolve(root, "scripts", file), "utf8")), [], file);
@@ -958,5 +1003,22 @@ test("R1 an import-time exit cannot make the copied MVP harness pass", () => {
     assert.equal(child.error, undefined);
     assert.equal(child.signal, null);
     assert.equal(child.status, 1, "candidate module evaluation must not bypass parent test assertions");
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
+
+
+test("R1 a library exit or extra output cannot impersonate completed evaluation", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-completion-"));
+  try {
+    const moduleUrl = pathToFileURL(resolve(directory, "candidate.mjs")).href;
+    for (const source of ['process["exit"](0);', 'process.reallyExit(0);',
+      'process.stdout.write("{}\\n"); process.exit(0);',
+      'process.stdout.write(" "); export function smokeRefusal() { return {}; }']) {
+      writeFileSync(resolve(directory, "candidate.mjs"), source);
+      assert.throws(() => smokeLibrary([], {}, undefined, false, moduleUrl),
+        /completion|Unexpected|JSON|one exact/, source);
+    }
+    writeFileSync(resolve(directory, "candidate.mjs"), 'export function smokeRefusal() { return {synthetic:true}; }');
+    assert.deepEqual(smokeLibrary([], {}, undefined, false, moduleUrl), {result: {synthetic:true}, reads: []});
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
