@@ -586,9 +586,10 @@ test("B1 smoke refuses however it is invoked as the program", () => {
     }
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
-test("B1 only Node's explicit false skips the refusal, so a Node without import.meta.main fails closed", () => {
+test("B1 main detection uses Node's flag or the canonical loader resolution", () => {
   assert.equal(runsAsProgram(false), false);
-  for (const main of [true, undefined, null, 0, "", "false", {}]) assert.equal(runsAsProgram(main), true, String(main));
+  for (const main of [true, null, 0, "", "false", {}]) assert.equal(runsAsProgram(main), true, String(main));
+  assert.equal(runsAsProgram(undefined), false, "an eval library import has no program entry");
 });
 test("B1 importing the smoke module is side-effect free", () => {
   assert.deepEqual(scriptProblems(smokeSource()), []);
@@ -687,8 +688,8 @@ test("CFG-10 smoke refuses arbitrary directory arguments and preserves existing 
  * output; exit code 1. A script that needs more changes this test on purpose.
  */
 /** A changed program needs a deliberate fingerprint update and new exact-SHA review. */
-const SMOKE_SOURCE_SHA256 = "03e10fa1823c0d823c8f5ea95f2316d31f238e4497534fc014eccd56ce2f18e5";
-const SCRIPT_IMPORTS = new Set(["node:util", "../src/profile.ts"]);
+const SMOKE_SOURCE_SHA256 = "5071ea6e7c6f917d3fc7695539ced9ddcb5fdcbff7c5e7f1253552a2bace7627";
+const SCRIPT_IMPORTS = new Set(["node:util", "node:path", "node:url", "../src/profile.ts"]);
 function scriptProblems(source: string): string[] {
   const problems: string[] = [];
   if (sha(Buffer.from(source)) !== SMOKE_SOURCE_SHA256) problems.push("refusal source fingerprint changed");
@@ -740,7 +741,7 @@ const plant = (source: string, edits: [string, string][]) => edits.reduce((text,
 const largestBudget = ["--live", "--sandbox-id", syntheticBinding.CASTLES_SANDBOX_ID,
   "--max-spend-usd", "999999.99", "--max-seconds", "900"];
 
-test("B2 scan: every file under scripts/ imports, reads and prints nothing beyond the refusal", () => {
+test("B2 source approval: only the pinned refusal script is allowed", () => {
   const files = scriptFiles(resolve(root, "scripts"));
   assert.deepEqual(files, ["smoke.ts"], "no dormant, nested or helper scripts outside the refusal source approval");
   assert.ok(lstatSync(resolve(root, "scripts/smoke.ts")).isFile(), "the approved entry is a regular file");

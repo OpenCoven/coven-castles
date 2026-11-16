@@ -1,5 +1,7 @@
 /** Refusal-only operator entrypoint. No live implementation or provider capability. */
 import { parseArgs } from "node:util";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { BINDING_ENVIRONMENT_KEYS, parseBinding } from "../src/profile.ts";
 
 type RefusalReason = "unsupported_arguments" | "explicit_opt_in_required" |
@@ -53,18 +55,16 @@ export function smokeRefusal(
   return refuse("canonical_capabilities_unavailable");
 }
 
-/**
- * Whether this module is the program being run. Node answers that itself in
- * `import.meta.main`: true for the entry module however it was named (no
- * extension, a symlink, the tsx binary, a path through a symlinked
- * directory), false when it is imported. Comparing paths cannot answer it,
- * because Node resolves the entry's symlinks and extension and `argv` keeps
- * neither. Only an explicit `false` skips the refusal: on a Node without
- * `import.meta.main` the script still refuses, and so does an import, so
- * the failure is loud rather than a silent exit 0.
- */
+/** Node's main flag when present; otherwise use the loader's canonical resolution. */
 export function runsAsProgram(main: unknown): boolean {
-  return main !== false;
+  if (main !== undefined) return main !== false;
+  if (!process.argv[1]) return false;
+  try {
+    return import.meta.resolve(pathToFileURL(resolve(process.argv[1])).href) === import.meta.url;
+  } catch {
+    // An entry that cannot be resolved is never a reason to report success.
+    return true;
+  }
 }
 
 if (runsAsProgram((import.meta as { main?: unknown }).main)) {
