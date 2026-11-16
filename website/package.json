@@ -1,0 +1,7 @@
+{
+  "name": "coven-castles-docs",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "24.x" },
+  "scripts": { "build": "node build.mjs", "test": "node --test verify.test.mjs" }
+}
