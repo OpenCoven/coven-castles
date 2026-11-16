@@ -15,34 +15,48 @@ theme.addEventListener('click', () => {
   reflectTheme();
 });
 const menu = one('#menu-toggle');
+const sidebar = one('#sidebar');
+const navigationDialog = one('#navigation-dialog');
 const narrow = matchMedia('(max-width: 767px)');
 function reflectSidebar() {
   const hidden = narrow.matches && menu.getAttribute('aria-expanded') !== 'true';
-  const sidebar = one('#sidebar');
   if (hidden && sidebar.contains(document.activeElement)) menu.focus();
   sidebar.inert = hidden;
   if (hidden) sidebar.setAttribute('aria-hidden', 'true');
   else sidebar.removeAttribute('aria-hidden');
 }
 function closeMenu() {
+  const wasOpen = navigationDialog.open;
+  if (wasOpen) navigationDialog.close();
+  navigationDialog.after(sidebar);
   document.body.classList.remove('nav-open');
-  one('#nav-backdrop').hidden = true;
   menu.setAttribute('aria-expanded', 'false');
   menu.setAttribute('aria-label', 'Open navigation');
   reflectSidebar();
+  if (wasOpen) {
+    if (narrow.matches) menu.focus();
+    else sidebar.querySelector('a[aria-current="page"]')?.focus();
+  }
 }
 menu.addEventListener('click', () => {
-  const open = menu.getAttribute('aria-expanded') !== 'true';
-  document.body.classList.toggle('nav-open', open);
-  one('#nav-backdrop').hidden = !open;
-  menu.setAttribute('aria-expanded', String(open));
-  menu.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+  if (!narrow.matches || navigationDialog.open) return;
+  document.body.classList.add('nav-open');
+  menu.setAttribute('aria-expanded', 'true');
+  menu.setAttribute('aria-label', 'Close navigation');
   reflectSidebar();
+  navigationDialog.append(sidebar);
+  navigationDialog.showModal();
+  one('#nav-close').focus();
 });
 narrow.addEventListener('change', closeMenu);
 reflectSidebar();
-one('#nav-backdrop').addEventListener('click', closeMenu);
-document.addEventListener('keydown', event => { if (event.key === 'Escape') closeMenu(); });
+one('#nav-close').addEventListener('click', closeMenu);
+navigationDialog.addEventListener('cancel', event => { event.preventDefault(); closeMenu(); });
+navigationDialog.addEventListener('click', event => {
+  if (event.target !== navigationDialog) return;
+  const bounds = sidebar.getBoundingClientRect();
+  if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) closeMenu();
+});
 all('.copy').forEach(button => button.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(button.closest('figure').querySelector('code').textContent);
@@ -96,7 +110,10 @@ all('.search-trigger').forEach(button => button.addEventListener('click', openSe
 one('#search-close').addEventListener('click', () => dialog.close());
 dialog.addEventListener('click', event => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } });
 input.addEventListener('input', search);
-input.addEventListener('keydown', event => { if (event.key === 'ArrowDown') { event.preventDefault(); results.querySelector('a')?.focus(); } });
+input.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { event.preventDefault(); dialog.close(); }
+  else if (event.key === 'ArrowDown') { event.preventDefault(); results.querySelector('a')?.focus(); }
+});
 results.addEventListener('keydown', event => {
   const links = [...results.querySelectorAll('a')]; const position = links.indexOf(document.activeElement);
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const next = position + (event.key === 'ArrowDown' ? 1 : -1); if (next < 0) input.focus(); else links[Math.min(next, links.length - 1)]?.focus(); }
