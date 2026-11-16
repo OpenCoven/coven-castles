@@ -66,8 +66,9 @@ export function runsAsProgram(main: unknown): boolean {
   const argument = process.argv[1];
   if (!argument) return false;
   const entry = pathToFileURL(resolve(argument)).href;
+  const module = import.meta.resolve(import.meta.url);
   return [entry, `${entry}.ts`].some(candidate => {
-    try { return import.meta.resolve(candidate) === import.meta.url; }
+    try { return import.meta.resolve(candidate) === module; }
     catch { return false; }
   });
 }

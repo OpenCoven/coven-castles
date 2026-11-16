@@ -578,6 +578,8 @@ test("B1 smoke refuses however it is invoked as the program", () => {
     symlinkSync(resolve(root, "scripts/smoke.ts"), resolve(directory, "link.ts"));
     symlinkSync(resolve(root, "scripts/smoke.ts"), resolve(directory, "smoke-link"));
     symlinkSync(resolve(root, "scripts"), resolve(directory, "aliased-scripts"));
+    symlinkSync(resolve(root, "src"), resolve(directory, "src"));
+    writeFileSync(resolve(directory, "package.json"), '{"type":"module"}\n');
     const node = [process.execPath, ...guarded];
     const spellings: [string, string[]][] = [
       ["exact relative path", [...node, "scripts/smoke.ts"]],
@@ -589,6 +591,8 @@ test("B1 smoke refuses however it is invoked as the program", () => {
       ["a symlink to the script", [...node, resolve(directory, "link.ts")]],
       ["an extensionless symlink", [...node, resolve(directory, "smoke-link")]],
       ["a path through a symlinked directory", [...node, resolve(directory, "aliased-scripts/smoke.ts")]],
+      ["a preserved symlinked main module", [process.execPath, "--preserve-symlinks-main", ...guarded,
+        resolve(directory, "aliased-scripts/smoke.ts")]],
     ];
     for (const [label, command] of spellings) {
       assert.equal(smokeRun(command).reason, "explicit_opt_in_required", label);
