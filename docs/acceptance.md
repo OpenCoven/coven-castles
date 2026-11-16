@@ -327,4 +327,4 @@ Rules for filling this in:
 | Stop/start checks | Separate explicit authorization on an exclusively assigned sandbox | Epic maintainer; the canonical lifecycle owner executes |
 | Independent R4 review | A genuinely independent reviewer names the exact candidate SHA and its retained evidence | Epic maintainer |
 
-Next executable action: a second read of the exact candidate by a different session, then independent R4 review. The owning upstream maintainers deliver the missing canonical contracts. #5 and the epic stay open; nothing here is merged or accepted without the maintainer's separate decision. 
+Next executable action: a second read of the exact candidate by a different session, then independent R4 review. The owning upstream maintainers deliver the missing canonical contracts. #5 and the epic stay open; nothing here is merged or accepted without the maintainer's separate decision.
