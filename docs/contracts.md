@@ -1,18 +1,12 @@
 # Contracts between lanes
 
-A lane hands work to the next lane as a **contract at an exact revision**, not
-as "what is on main". This page lists each contract a lane produces, its
-standing, and who consumes it.
+A lane hands work to the next lane as a **contract at an exact revision**, not as "what is on main". This page lists each contract a lane produces, its standing, and who consumes it.
 
-These are client contracts. None of them is authority: holding a binding, a
-result or a sandbox ID authorizes nothing.
+These are client contracts. None of them is authority: holding a binding, a result or a sandbox ID authorizes nothing.
 
 ## Standing
 
-#1's rule is that "a gate opens on a linked, reviewed capability at an exact
-revision", and that a maintainer confirms acceptance before closure. #1 uses
-"reviewed" and "accepted" without defining them. The three standings below are
-this page's shorthand, an **addition to #1**.
+#1's rule is that "a gate opens on a linked, reviewed capability at an exact revision", and that a maintainer confirms acceptance before closure. #1 uses "reviewed" and "accepted" without defining them. The three standings below are this page's shorthand, an **addition to #1**.
 
 | Standing | Meaning |
 | --- | --- |
@@ -20,26 +14,11 @@ this page's shorthand, an **addition to #1**.
 | **reviewed** | That exact SHA has had the review its producing issue's Review row names (maintainer review for #2; independent review for #3 and #4, and for any `risk:r4` change), by someone other than the author; the review is linked and no blocking finding is open. Under #1 this opens the consumer's gate. |
 | **accepted** | The maintainer has confirmed acceptance of that SHA in a comment. #1 requires this before closure, for the #2 artifact that #3 consumes, and for the #2 to #4 revisions behind #5's live qualification. |
 
-**Proposed addition, awaiting a maintainer decision:** only **accepted** opens
-a consumer's gate, for every lane. The reason is that every worker posts from
-one GitHub account and the reviewers so far were started by authoring
-sessions, so a review here has been a second read rather than an independent
-one. Until the maintainer decides, #1's wording applies as quoted above.
-[`coordination.md`](coordination.md#lanes-and-gates) and `AGENTS.md` say the
-same.
+**Proposed addition, awaiting a maintainer decision:** only **accepted** opens a consumer's gate, for every lane. The reason is that every worker posts from one GitHub account and the reviewers so far were started by authoring sessions, so a review here has been a second read rather than an independent one. Until the maintainer decides, #1's wording applies as quoted above. [`coordination.md`](coordination.md#lanes-and-gates) and `AGENTS.md` say the same.
 
-Still undecided on 2026-11-12. That day the maintainer accepted the #2
-contract at an exact SHA (see [Produced by #2](#produced-by-2)), and the pull
-request that carries this proposal,
-[#9](https://github.com/OpenCoven/coven-castles/pull/9), was merged as
-`a4ced7b463edccbe2ddd89ad12645b60f0aacefb`. The
-[comment recording the acceptance and the instruction to merge](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865),
-posted by the coordinating session before the merges, says the decisions
-listed in that pull request's body, the gate rule among them, "remain open;
-merging them is not a decision on those items".
+Still undecided on 2026-11-12. That day the maintainer accepted the #2 contract at an exact SHA (see [Produced by #2](#produced-by-2)), and the pull request that carries this proposal, [#9](https://github.com/OpenCoven/coven-castles/pull/9), was merged as `a4ced7b463edccbe2ddd89ad12645b60f0aacefb`. The [comment recording the acceptance and the instruction to merge](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865), posted by the coordinating session before the merges, says the decisions listed in that pull request's body, the gate rule among them, "remain open; merging them is not a decision on those items".
 
-Any change to a contract after review or acceptance is a new revision and
-starts again as **proposed**.
+Any change to a contract after review or acceptance is a new revision and starts again as **proposed**.
 
 ## Produced by #2
 
@@ -88,9 +67,7 @@ Where: `src/profile.ts` (`Binding`, `parseBinding`). Consumers: #3, #5.
 | `CASTLES_OWNER_AGENT_ID` | The owning service's agent record | Same character rule |
 | `CASTLES_SANDBOX_GENERATION` | Generation recorded on that record | Canonical non-negative integer, at most 9 digits |
 
-Values are exact: no defaults, no trimming, no lookup. The sandbox ID is a
-target, not authorization; ownership is decided by the owning service from its
-authenticated caller.
+Values are exact: no defaults, no trimming, no lookup. The sandbox ID is a target, not authorization; ownership is decided by the owning service from its authenticated caller.
 
 ### Client seam
 
@@ -105,22 +82,13 @@ type SandboxInspectionClient = {
 };
 ```
 
-This single method is the whole provider-facing surface. There is no create,
-start, stop, resize, delete, list or lookup-by-name. The response is treated as
-untrusted input.
+This single method is the whole provider-facing surface. There is no create, start, stop, resize, delete, list or lookup-by-name. The response is treated as untrusted input.
 
-**No live implementation exists.** The upstream read-only seam it needs is
-requested in
-[OpenCoven/coven-agents#296](https://github.com/OpenCoven/coven-agents/issues/296).
-The response shape Castles expects, `castles.fixture.sandbox-inspection.v1`,
-is carried by fixtures only and is a proposal to that issue, not an upstream
-contract. v1 requires the response to echo the agent record it read
-(`binding.agentId`).
+**No live implementation exists.** The upstream read-only seam it needs is requested in [OpenCoven/coven-agents#296](https://github.com/OpenCoven/coven-agents/issues/296). The response shape Castles expects, `castles.fixture.sandbox-inspection.v1`, is carried by fixtures only and is a proposal to that issue, not an upstream contract. v1 requires the response to echo the agent record it read (`binding.agentId`).
 
 ### Result
 
-Where: `src/preflight.ts` (`PreflightResult`, `runPreflight`, `renderJson`).
-Consumers: #3, #5.
+Where: `src/preflight.ts` (`PreflightResult`, `runPreflight`, `renderJson`). Consumers: #3, #5.
 
 Schema `castles.preflight.v1`:
 
@@ -136,24 +104,11 @@ Schema `castles.preflight.v1`:
 | `providerCalls` | `{ inspect }`: 1 if `inspectBoundSandbox` was invoked, otherwise 0 |
 | `upstream` | `{ issue, seam }`: the upstream issue link, and `seam: "missing"` |
 
-Status precedence when several findings apply: `unauthorized` >
-`reconciliation-required` > `incompatible` > `unavailable` > `stopped` >
-`ready`.
+Status precedence when several findings apply: `unauthorized` > `reconciliation-required` > `incompatible` > `unavailable` > `stopped` > `ready`.
 
-`observed` is `null` when the binding is invalid, when no client seam is
-supplied, when the seam refused, or when the echoed agent record, recorded
-sandbox ID or returned sandbox ID differs from the binding. A stale generation
-alone does not withhold it.
+`observed` is `null` when the binding is invalid, when no client seam is supplied, when the seam refused, or when the echoed agent record, recorded sandbox ID or returned sandbox ID differs from the binding. A stale generation alone does not withhold it.
 
-Inside `observed`, `state`, `target`, `image.snapshot`, `platform.os`,
-`platform.architecture`, `binding.lifecycle` and `binding.attemptFence` each
-carry a value from a fixed set or `"unrecognised"`; `sdk.version` carries a
-`major.minor.patch` version or `"unrecognised"`. The two `binding` fields are
-never `null`: a response in which either is absent or not a string is refused
-whole (`inspection_contract_violation`, `observed: null`), and any other
-string outside the set reads `"unrecognised"`. The other six are `null` when
-the value is absent or not a string. Other fields are numbers, booleans, fixed
-literals or `null`.
+Inside `observed`, `state`, `target`, `image.snapshot`, `platform.os`, `platform.architecture`, `binding.lifecycle` and `binding.attemptFence` each carry a value from a fixed set or `"unrecognised"`; `sdk.version` carries a `major.minor.patch` version or `"unrecognised"`. The two `binding` fields are never `null`: a response in which either is absent or not a string is refused whole (`inspection_contract_violation`, `observed: null`), and any other string outside the set reads `"unrecognised"`. The other six are `null` when the value is absent or not a string. Other fields are numbers, booleans, fixed literals or `null`.
 
 Observed integers (`resources.cpu`, `memoryGiB`, `diskGiB` and `gpu`, the four `lifecycle` intervals and `binding.generation`) are echoed only from -1 to 99,999. Outside that range, as when the value is not an integer, the field is `null`, so `binding.generation` can be `null`. Status and reason codes are decided on the value itself, independently of its echo: a matching recorded generation of 100,000 or more can have `binding.generation: null`. An identifier that is itself an integer inside the echoed range cannot be distinguished from a reading. The two counts, `attachments.volumes` and `exposure.egressAllowListEntries`, are integers from 0 to 999 or `null`. Volumes have count 0 only for an empty array; omission, explicit null, a non-array or a non-count array length has echo `null`. Missing volumes refuse with `metadata_missing`; explicit null still means no attachment; any other value that is not an empty array refuses with `volumes_present`. The egress count is unknown (`null`) if either list is absent or is neither a string nor null; two stated null lists have count 0.
 
@@ -161,35 +116,18 @@ Observed `attachments.linkedSandbox` and `attachments.warmPool` are `null` for m
 
 Three rules behind existing reason codes, all Castles decisions:
 
-- An architecture other than `x86_64`, `amd64`, `aarch64` or `arm64` is
-  `incompatible` with `metadata_missing`. No architecture is pinned upstream.
-- A network allow list with more than 10 entries is `incompatible` with
-  `egress_allow_list_unsafe`, as is any entry wider than `/8`. The figure 10
-  comes from public Daytona documentation and is unverified against the
-  provider. Domains must be ASCII, and an IP literal is not a domain.
+- An architecture other than `x86_64`, `amd64`, `aarch64` or `arm64` is `incompatible` with `metadata_missing`. No architecture is pinned upstream.
+- A network allow list with more than 10 entries is `incompatible` with `egress_allow_list_unsafe`, as is any entry wider than `/8`. The figure 10 comes from public Daytona documentation and is unverified against the provider. Domains must be ASCII, and an IP literal is not a domain.
 - `autoDestroyAt`, `warmPoolId`, `linkedSandboxId`, `volumes`, `domainAllowList` and `networkAllowList` must be stated in an `observed` response. An absent key is `incompatible` with `metadata_missing` and the key as its field; explicit `null` means not set. An unstated allow list is not also reported as `egress_unrestricted`, and block-all does not excuse it. At `13ab3bc` an absent key read as not set for all six.
 
 JSON output is at most 16,384 bytes.
 
 Reason codes at this revision:
 
-- Binding: `sandbox_id_missing`, `sandbox_id_invalid`, `profile_missing`,
-  `unknown_profile`, `owner_binding_missing`, `owner_binding_invalid`,
-  `generation_missing`, `generation_invalid`.
-- Identity and reconciliation: `owner_mismatch`, `unauthenticated`,
-  `binding_mismatch`, `returned_id_mismatch`, `ambiguous_lookup`,
-  `generation_mismatch`, `binding_lifecycle_pending`, `attempt_fence_held`,
-  `credential_boundary_unverified`.
-- Compatibility: `metadata_missing`, `sdk_generation_mismatch`,
-  `public_exposure`, `egress_unrestricted`, `egress_allow_list_unsafe`,
-  `lifecycle_auto_stop`, `lifecycle_auto_archive`, `lifecycle_auto_delete`,
-  `lifecycle_auto_pause`, `lifecycle_ttl`, `image_unqualified`,
-  `target_unsupported`, `resources_out_of_policy`, `gpu_present`,
-  `volumes_present`, `warm_pool_member`, `linked_sandbox_present`,
-  `platform_unsupported`.
-- Availability: `upstream_seam_missing`, `provider_unavailable`,
-  `inspection_contract_violation`, `sandbox_not_found`, `sandbox_destroyed`,
-  `lifecycle_not_settled`, `sandbox_stopped`.
+- Binding: `sandbox_id_missing`, `sandbox_id_invalid`, `profile_missing`, `unknown_profile`, `owner_binding_missing`, `owner_binding_invalid`, `generation_missing`, `generation_invalid`.
+- Identity and reconciliation: `owner_mismatch`, `unauthenticated`, `binding_mismatch`, `returned_id_mismatch`, `ambiguous_lookup`, `generation_mismatch`, `binding_lifecycle_pending`, `attempt_fence_held`, `credential_boundary_unverified`.
+- Compatibility: `metadata_missing`, `sdk_generation_mismatch`, `public_exposure`, `egress_unrestricted`, `egress_allow_list_unsafe`, `lifecycle_auto_stop`, `lifecycle_auto_archive`, `lifecycle_auto_delete`, `lifecycle_auto_pause`, `lifecycle_ttl`, `image_unqualified`, `target_unsupported`, `resources_out_of_policy`, `gpu_present`, `volumes_present`, `warm_pool_member`, `linked_sandbox_present`, `platform_unsupported`.
+- Availability: `upstream_seam_missing`, `provider_unavailable`, `inspection_contract_violation`, `sandbox_not_found`, `sandbox_destroyed`, `lifecycle_not_settled`, `sandbox_stopped`.
 
 ### Readiness predicate
 
@@ -200,36 +138,15 @@ isLiveReady(result) === (result.status === "ready" && result.evidence === "live-
 runPreflight(environment, client | null, options?: { timeoutMs?: number })
 ```
 
-`runPreflight` takes no `evidence` option. Because no live client exists,
-`isLiveReady` is false for every result the library produces at this
-revision.
+`runPreflight` takes no `evidence` option. Because no live client exists, `isLiveReady` is false for every result the library produces at this revision.
 
-A `timeoutMs` that is a number above 2,147,483,647, `Infinity` included, means
-the 30,000 ms default, as no value does: a timer would turn it into 1 ms.
-Every other value is handed to the timer as given. Node then waits 1 ms for a
-number below 1 or `NaN` and converts a value that is not a number; one it
-cannot convert ends the check as `provider_unavailable`. What a non-positive
-or non-numeric timeout should mean is not decided.
+A `timeoutMs` that is a number above 2,147,483,647, `Infinity` included, means the 30,000 ms default, as no value does: a timer would turn it into 1 ms. Every other value is handed to the timer as given. Node then waits 1 ms for a number below 1 or `NaN` and converts a value that is not a number; one it cannot convert ends the check as `provider_unavailable`. What a non-positive or non-numeric timeout should mean is not decided.
 
-An `environment` that is `null`, `undefined`, a primitive or a function is
-reported as `sandbox_id_missing`. `options` that are `null`, a primitive, a
-function or an array are ignored. Any other object is read, whatever built
-it, so an array can be an `environment`. The client's `inspectBoundSandbox`
-property is read once, before the binding is validated, and nothing else is
-read from the client or from the method.
+An `environment` that is `null`, `undefined`, a primitive or a function is reported as `sandbox_id_missing`. `options` that are `null`, a primitive, a function or an array are ignored. Any other object is read, whatever built it, so an array can be an `environment`. The client's `inspectBoundSandbox` property is read once, before the binding is validated, and nothing else is read from the client or from the method.
 
-These hold for plain values. A property whose read throws, on the
-`environment`, the `options` or a response held in memory, still makes
-`runPreflight` reject with the caller's own error; only a throwing read of
-the client's property is caught. They also assume the realm's built-ins were
-intact when `src/preflight.ts` was loaded: the module takes
-`Function.prototype.call` and `bind` once, at load, to invoke the seam
-method, so code that replaced them before the import decides how the method
-is invoked. Code that runs first in the same realm could already decide the
-outcome at `13ab3bc` (by replacing `Promise.race`, for example).
+These hold for plain values. A property whose read throws, on the `environment`, the `options` or a response held in memory, still makes `runPreflight` reject with the caller's own error; only a throwing read of the client's property is caught. They also assume the realm's built-ins were intact when `src/preflight.ts` was loaded: the module takes `Function.prototype.call` and `bind` once, at load, to invoke the seam method, so code that replaced them before the import decides how the method is invoked. Code that runs first in the same realm could already decide the outcome at `13ab3bc` (by replacing `Promise.race`, for example).
 
-**Consumers must gate on this, never on `status` alone.** A fixture replay can
-report `status: "ready"`; it is not readiness.
+**Consumers must gate on this, never on `status` alone.** A fixture replay can report `status: "ready"`; it is not readiness.
 
 ### CLI and exit codes
 
@@ -256,49 +173,27 @@ corepack pnpm test
 corepack pnpm typecheck
 ```
 
-`test` runs `tsx --test tests/*.test.ts`, so a new `tests/<name>.test.ts` is
-picked up without a manifest change. Three tests depend on the Node version:
-two run the CLI under Node's permission model, and one network control also
-needs `--allow-net`. On Node 24.22.0 the first two run and only the network
-control is skipped; the README lists the versions. Requests to change the
-script, add a script or widen `tsconfig.json` go to the #2 steward.
+`test` runs `tsx --test tests/*.test.ts`, so a new `tests/<name>.test.ts` is picked up without a manifest change. Three tests depend on the Node version: two run the CLI under Node's permission model, and one network control also needs `--allow-net`. On Node 24.22.0 the first two run and only the network control is skipped; the README lists the versions. Requests to change the script, add a script or widen `tsconfig.json` go to the #2 steward.
 
 ### Source pins and mutation owners
 
-Where: `src/profile.ts` (`SOURCE_PINS`, `MUTATION_OWNERS`). Consumers: #3, #4,
-#5.
+Where: `src/profile.ts` (`SOURCE_PINS`, `MUTATION_OWNERS`). Consumers: #3, #4, #5.
 
 Where: `src/profile.ts` also exports `OUTSIDE_LISTED_MUTATIONS`.
 
-Eighteen `repo@sha:path` references into
-`OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180`.
-`MUTATION_OWNERS` has ten rows naming the existing upstream owner of each
-sandbox mutation found at the pin: eight for the persistent agent sandbox and
-two for the owner's separate, short-lived diagnostic sandbox.
-`OUTSIDE_LISTED_MUTATIONS` names two operations that are not lifecycle
-mutations (command execution inside a sandbox, snapshot creation). Castles
-performs none of these. The table is a reading of the pinned files, not a
-proof that no other call site exists upstream.
+Eighteen `repo@sha:path` references into `OpenCoven/coven-agents@3a4f3ff4130860d0abda1d2207b43b2f9d372180`. `MUTATION_OWNERS` has ten rows naming the existing upstream owner of each sandbox mutation found at the pin: eight for the persistent agent sandbox and two for the owner's separate, short-lived diagnostic sandbox. `OUTSIDE_LISTED_MUTATIONS` names two operations that are not lifecycle mutations (command execution inside a sandbox, snapshot creation). Castles performs none of these. The table is a reading of the pinned files, not a proof that no other call site exists upstream.
 
 ## Produced by #3
 
-Nothing yet. #3 has published an investigation comment, not an interface. When
-it does, this section lists the run, attempt and operation references, the
-result and receipt shape, the cancellation interface and the runtime manifest
-hashes, with their standing and SHA.
+Nothing yet. #3 has published an investigation comment, not an interface. When it does, this section lists the run, attempt and operation references, the result and receipt shape, the cancellation interface and the runtime manifest hashes, with their standing and SHA.
 
 ## Produced by #4
 
-Nothing yet. Expected: observe, export and cancel client behaviour, recovery
-fixtures, and upstream containment and reuse evidence for #5.
+Nothing yet. Expected: observe, export and cancel client behaviour, recovery fixtures, and upstream containment and reuse evidence for #5.
 
 ## Produced by #5
 
-On `main` since 2026-11-12: the report-task fixture, expected-report
-properties and the negative-case catalogue, in `fixtures/report-task/`. They
-arrived with PR [#7](https://github.com/OpenCoven/coven-castles/pull/7),
-merged at head `302bb4533aaccde8165d8efe596502da286891b0` as
-`b5d7fc14add09fa94a7103031d7d625f710e519c`.
+On `main` since 2026-11-12: the report-task fixture, expected-report properties and the negative-case catalogue, in `fixtures/report-task/`. They arrived with PR [#7](https://github.com/OpenCoven/coven-castles/pull/7), merged at head `302bb4533aaccde8165d8efe596502da286891b0` as `b5d7fc14add09fa94a7103031d7d625f710e519c`.
 
 The [PR #7 review](https://github.com/OpenCoven/coven-castles/pull/7#pullrequestreview-5870277806) at that head found no blocking findings and two non-blocking. It was an author-started second read, not independent review. The [comment recording the maintainer's decision](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-6816836865) accepted only the #2 artifact, instructed that PR #7 be merged, and left the pinned-fixture-limit decisions open. That historical merge did not accept those limits. These are synthetic fixture formats, not canonical interface contracts.
 
@@ -306,6 +201,4 @@ PR [#13](https://github.com/OpenCoven/coven-castles/pull/13) subsequently added 
 
 ## Updating this page
 
-The lane that produces a contract updates its section in the same change that
-changes the contract, through the #2 steward (this file is shared). Record the
-new SHA and reset the standing to **proposed**.
+The lane that produces a contract updates its section in the same change that changes the contract, through the #2 steward (this file is shared). Record the new SHA and reset the standing to **proposed**.

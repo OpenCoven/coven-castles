@@ -1,9 +1,6 @@
 # Documentation index
 
-The outcome issues are the spec:
-[#1](https://github.com/OpenCoven/coven-castles/issues/1) (the epic and the
-rules) and its children #2 to #5. These documents explain and apply them; they
-do not replace them.
+The outcome issues are the spec: [#1](https://github.com/OpenCoven/coven-castles/issues/1) (the epic and the rules) and its children #2 to #5. These documents explain and apply them; they do not replace them.
 
 ## Start here
 
@@ -40,14 +37,10 @@ do not replace them.
 | [Shared-file change request](../.github/ISSUE_TEMPLATE/shared-file-change.md) | Asking a steward to change a file you do not own |
 | [Blocker report](../.github/ISSUE_TEMPLATE/blocker.md) | Recording an exact blocking condition, its decision owner and the evidence that would clear it |
 
-The templates set no labels. An issue opened from one gets its `status:` label
-by hand.
+The templates set no labels. An issue opened from one gets its `status:` label by hand.
 
 ## Keeping these documents true
 
-- Every statement must be true at the revision it ships in. Describe what
-  exists; label anything planned, unverified or blocked as such.
-- When behaviour, a contract or ownership changes, update the document in the
-  same change, through the document's steward.
-- Do not copy the issues wholesale. Link to them, and keep only what a
-  contributor needs in order to act.
+- Every statement must be true at the revision it ships in. Describe what exists; label anything planned, unverified or blocked as such.
+- When behaviour, a contract or ownership changes, update the document in the same change, through the document's steward.
+- Do not copy the issues wholesale. Link to them, and keep only what a contributor needs in order to act.
