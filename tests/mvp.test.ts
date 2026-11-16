@@ -33,7 +33,7 @@ function guardEarlyExit(registerAfter: (fn: () => void) => void) {
   const exiting = process as typeof process & { reallyExit: (code: number) => never };
   const reallyExit = exiting.reallyExit.bind(process);
   Object.defineProperty(process, "reallyExit", {configurable: false, writable: false,
-    value: (code: number) => reallyExit(!finished && (code ?? process.exitCode ?? 0) === 0 ? 1 : code)});
+    value: (code: number) => reallyExit(finished ? code : 1)});
   process.on("exit", code => {
     if (finished || code !== 0) return;
     process.stderr.write("the test process exited before its tests finished\n");
@@ -555,7 +555,8 @@ test("R1 import-time exits cannot pass an MVP file that never reaches its tests"
     cpSync(resolve(root, "package.json"), resolve(directory, "package.json"));
     symlinkSync(resolve(root, "node_modules"), resolve(directory, "node_modules"));
     const source = readFileSync(resolve(directory, "scripts/smoke.ts"), "utf8");
-    for (const effect of ["process.exit(0);", "process.reallyExit(0);",
+    for (const effect of ["process.exit(0);", "process.reallyExit(0);", "process.reallyExit(256);",
+      'process.reallyExit("0");', "process.reallyExit(NaN);", "process.reallyExit(0.5);",
       'const p = process; p["stdout"]["write"](JSON.stringify({status:"re"+"ady"})+"\\n"); p["exit"](0);']) {
       writeFileSync(resolve(directory, "scripts/smoke.ts"), effect + "\n" + source);
       const child = spawnSync(process.execPath, ["--import", "tsx", "--test",
@@ -779,8 +780,8 @@ const PLANTED: [string, [string, string][]][] = [
 const REFLECTIVE_PLANTED: [string, [string, string][]][] = [
   ["R2 environment descriptor", [[MAIN_LINE,
     '  const {env: e} = process; void Object.getOwnPropertyDescriptor(e, "DAYTONA_API_KEY")?.value;\n' + MAIN_LINE]]],
-  ["R2 stack-blinded write", [[MAIN_LINE,
-    '  const depth = Error.stackTraceLimit; try { Error.stackTraceLimit = 0; process["getBuiltinModule"]("node:fs").appendFileSync("synthetic-review-marker.log", "x"); } finally { Error.stackTraceLimit = depth; }\n' + MAIN_LINE]]],
+  ["R2 stack-blinded write", [[UTIL_IMPORT, UTIL_IMPORT + '\nimport{appendFileSync}from"node:fs";'], [MAIN_LINE,
+    '  const depth = Error.stackTraceLimit; try { Error.stackTraceLimit = 0; appendFileSync("synthetic-review-marker.log", "x"); } finally { Error.stackTraceLimit = depth; }\n' + MAIN_LINE]]],
   ["R2 prepared stack", [[MAIN_LINE,
     '  const prepare = Error.prepareStackTrace; try { Error.prepareStackTrace = () => ""; const {env: e} = process; void e.DAYTONA_API_KEY; } finally { Error.prepareStackTrace = prepare; }\n' + MAIN_LINE]]],
   ["R2 process report", [[MAIN_LINE,

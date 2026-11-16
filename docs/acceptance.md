@@ -194,7 +194,7 @@ Items with only one case, which is not enough to carry them:
 Rules in #1 and #5 with no case, recorded as a decision rather than left silent:
 
 - "No local model, desktop/VNC, browser automation or swarm" (#1): nothing in the client can start one, and there is no surface to search until #3 publishes its runtime manifest. To be added against that manifest.
-- "Run tests against production user data" (#5 scope 2): CFG-10 covers the path side. Whether data is production data cannot be decided by a test; it is an operator authorization recorded in the live handoff.
+- "Never run tests against production user data" (#5 scope 2): CFG-10 covers the path side. Before any live qualification, the operator must verify that the explicitly supplied inputs are neutral synthetic or non-production data. This document grants no authorization to use production user data; a path check cannot establish data provenance.
 
 ## Catalogue coverage
 
@@ -323,4 +323,4 @@ Rules for filling this in:
 | Stop/start checks | Separate explicit authorization on an exclusively assigned sandbox | Epic maintainer; the canonical lifecycle owner executes |
 | Independent R4 review | A genuinely independent reviewer names the exact candidate SHA and its retained evidence | Epic maintainer |
 
-Next executable action: a second read of the exact candidate by a different session, then independent R4 review. The owning upstream maintainers deliver the missing canonical contracts. #5 and the epic stay open; nothing here is merged or accepted without the maintainer's separate decision. 
+Next executable action: a second read of the exact candidate by a different session, then independent R4 review. The owning upstream maintainers deliver the missing canonical contracts. #5 and the epic stay open; nothing here is merged or accepted without the maintainer's separate decision.
