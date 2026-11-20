@@ -233,9 +233,33 @@ function hasOnly(value: UnknownRecord, keys: readonly string[]): boolean {
 const PLAIN_DEPTH = 8;
 /** More entries than any v1 array carries. */
 const PLAIN_ARRAY_MAX = 1_000;
+/**
+ * More values than any v1 answer holds, counted across the whole copy. The
+ * deadline covers the client's call, not this copy, so the copy has its own
+ * bound: a graph of shared references is refused before it is walked
+ * (third read rv18b-f2bd3f93, finding 4).
+ */
+const PLAIN_VALUES_MAX = 10_000;
 /** What `{}` and `[]` inherit from, taken once at load. */
 const PLAIN_OBJECT_BASE = Object.getPrototypeOf({});
 const PLAIN_ARRAY_BASE = Object.getPrototypeOf([]);
+
+/**
+ * One own, enumerable key's value, read exactly once, or null when the key
+ * is absent or not enumerable. A getter runs once; a read that throws is not
+ * caught.
+ */
+function readOwn(value: object, key: string): { value: unknown } | null {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (descriptor === undefined || descriptor.enumerable !== true) {
+    return null;
+  }
+  return {
+    value: Object.hasOwn(descriptor, "value")
+      ? descriptor.value
+      : (value as Record<string, unknown>)[key],
+  };
+}
 
 /**
  * A plain copy of an answer, or null when it is not plain data. An answer
@@ -247,7 +271,15 @@ const PLAIN_ARRAY_BASE = Object.getPrototypeOf([]);
  * and every later read then see one fixed value. A read that throws is not
  * caught here: the caller's error comes back, as documented.
  */
-function plainCopy(value: unknown, depth = 0): { value: unknown } | null {
+function plainCopy(
+  value: unknown,
+  depth: number,
+  budget: { left: number }
+): { value: unknown } | null {
+  budget.left -= 1;
+  if (budget.left < 0) {
+    return null;
+  }
   if (typeof value === "function") {
     return null;
   }
@@ -262,16 +294,8 @@ function plainCopy(value: unknown, depth = 0): { value: unknown } | null {
   }
   const keys = Object.getOwnPropertyNames(value);
   const readOnce = (key: string): { value: unknown } | null => {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor?.enumerable) {
-      return null;
-    }
-    return plainCopy(
-      "value" in descriptor
-        ? descriptor.value
-        : (value as Record<string, unknown>)[key],
-      depth + 1
-    );
+    const entry = readOwn(value, key);
+    return entry === null ? null : plainCopy(entry.value, depth + 1, budget);
   };
   if (Array.isArray(value)) {
     if (Object.getPrototypeOf(value) !== PLAIN_ARRAY_BASE) {
@@ -299,14 +323,17 @@ function plainCopy(value: unknown, depth = 0): { value: unknown } | null {
   if (base !== PLAIN_OBJECT_BASE && base !== null) {
     return null;
   }
-  const copy: Record<string, unknown> = {};
+  // A copy with no base object, so an absent key reads as absent even when
+  // the shared base object has been given that key (third read
+  // rv18b-f2bd3f93, finding 5).
+  const copy: Record<string, unknown> = Object.create(null);
   for (const key of keys) {
     const entry = readOnce(key);
     if (entry === null) {
       return null;
     }
-    // defineProperty, not assignment, so a key that names the base object
-    // stays an own key and the strict-key check refuses it.
+    // defineProperty, not assignment, so every key stays an own data key
+    // and the strict-key check sees it.
     Object.defineProperty(copy, key, {
       configurable: true,
       enumerable: true,
@@ -560,16 +587,18 @@ function refused(status: PreflightStatus, code: ReasonCode): Inspection {
 const VIOLATION = refused("unavailable", "inspection_contract_violation");
 
 /**
- * Upstream's non-200 refusals. The body is not read: the status decides.
- * Pending maintainer decision (coven-castles#2): 403 is a missing
+ * Upstream's non-200 refusals. The status decides, and the body is neither
+ * read nor copied (third read rv18b-f2bd3f93, finding 3).
+ * Maintainer decision (coven-castles#2, 2026-11-20): 403 is a missing
  * subscription or a refused origin, and 404 is a missing agent or another
  * tenant's, which upstream makes indistinguishable; both refuse as
  * `owner_mismatch`. 429 (rate limited, with retry-after) and 503 (provider,
  * runner or abuse control unavailable) refuse as `provider_unavailable`,
  * and Castles never retries. So does 500, upstream's retryable internal
  * error (second read rv18-7c3e91a4, finding 4). Every other status is a
- * contract violation. Known imprecision, pending the same decision: a 403
- * for a missing subscription reads as `owner_mismatch`.
+ * contract violation, the gateway statuses 502 and 504 included. Known and
+ * accepted imprecision: a 403 for a missing subscription reads as
+ * `owner_mismatch`.
  */
 const HTTP_REFUSALS: ReadonlyMap<number, Inspection> = new Map([
   [401, refused("unauthorized", "unauthenticated")],
@@ -641,8 +670,98 @@ const POLICY_KEYS = [
   "target",
 ];
 
-function isPolicy(value: unknown): value is UnknownRecord {
-  return isRecord(value) && hasOnly(value, POLICY_KEYS);
+const HARNESS_KEYS = ["id", "package", "version"];
+const RESOURCE_KEYS = ["cpu", "diskGib", "memoryGib"];
+const PIN_MAX = 256;
+const POLICY_TARGET_MAX = 64;
+const HARNESSES_MAX = 16;
+const RESOURCE_MAX = 4_096;
+
+function isPin(value: unknown, max = PIN_MAX): boolean {
+  return typeof value === "string" && value.length >= 1 && value.length <= max;
+}
+
+function isResource(value: unknown): boolean {
+  const count = countOf(value);
+  return count !== null && count <= RESOURCE_MAX;
+}
+
+/**
+ * The policy has v1's shape (third read rv18b-f2bd3f93, finding 1). The six
+ * fields Castles does not read are always checked: an answer upstream's
+ * schema refuses is a contract violation, not a policy Castles can score.
+ * On an observed answer the two fields Castles reads, `sdkVersion` and
+ * `credentialBoundaryVersion`, keep their own reason codes; a refusal has no
+ * such codes, so `complete` checks them here too.
+ */
+function isPolicy(value: unknown, complete: boolean): value is UnknownRecord {
+  if (!isRecord(value) || !hasOnly(value, POLICY_KEYS)) {
+    return false;
+  }
+  const { harnesses, resources } = value;
+  return (
+    isPin(value.adapterVersion) &&
+    isPin(value.capabilityContractVersion) &&
+    isPin(value.snapshotName) &&
+    isPin(value.target, POLICY_TARGET_MAX) &&
+    Array.isArray(harnesses) &&
+    harnesses.length <= HARNESSES_MAX &&
+    harnesses.every(
+      (harness) =>
+        isRecord(harness) &&
+        hasOnly(harness, HARNESS_KEYS) &&
+        isPin(harness.id) &&
+        isPin(harness.package) &&
+        isPin(harness.version)
+    ) &&
+    isRecord(resources) &&
+    hasOnly(resources, RESOURCE_KEYS) &&
+    isResource(resources.cpu) &&
+    isResource(resources.diskGib) &&
+    isResource(resources.memoryGib) &&
+    (!complete ||
+      (isPin(value.sdkVersion) && isPin(value.credentialBoundaryVersion)))
+  );
+}
+
+/** v1's identifier rule for the record's agent and sandbox IDs. */
+const V1_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
+
+function isV1Identifier(value: unknown): boolean {
+  return typeof value === "string" && V1_IDENTIFIER.test(value);
+}
+
+/**
+ * A refusal's record matches v1 exactly (third read rv18b-f2bd3f93, finding
+ * 2). An observed record keeps the type check in `parseRecord`: there an
+ * unknown lifecycle or fence refuses with its own reason code.
+ */
+function isV1Record(record: ObservedEnvelope["record"]): boolean {
+  return (
+    isV1Identifier(record.agentId) &&
+    (record.sandboxId === null || isV1Identifier(record.sandboxId)) &&
+    (KNOWN.bindingLifecycle as readonly string[]).includes(record.lifecycle) &&
+    FENCE_ECHO.has(record.fence)
+  );
+}
+
+/**
+ * A refusal about another agent, or about a sandbox other than the
+ * configured one, is never read as this binding's (third read
+ * rv18b-f2bd3f93, finding 2). A null recorded ID discloses nothing and is
+ * not compared.
+ */
+function foreignRecord(
+  record: ObservedEnvelope["record"],
+  binding: Binding
+): Inspection | null {
+  if (record.agentId !== binding.agentId) {
+    return refused("unauthorized", "owner_mismatch");
+  }
+  if (record.sandboxId !== null && record.sandboxId !== binding.sandboxId) {
+    return refused("unauthorized", "binding_mismatch");
+  }
+  return null;
 }
 
 function parseRecord(value: unknown): ObservedEnvelope["record"] | null {
@@ -668,30 +787,45 @@ function parseRecord(value: unknown): ObservedEnvelope["record"] | null {
   };
 }
 
-function parseBody(body: unknown): Inspection {
+function parseBody(body: unknown, binding: Binding): Inspection {
   if (!isRecord(body) || body.version !== INSPECTION_CONTRACT_VERSION) {
     return VIOLATION;
   }
   switch (body.outcome) {
     // Each refusal must carry the keys v1 requires for it (second read
-    // rv18-7c3e91a4, finding 5); its record and policy are checked, never
-    // disclosed.
-    case "not_found":
-      return hasOnly(body, ["outcome", "policy", "record", "version"]) &&
-        parseRecord(body.record) !== null &&
-        isPolicy(body.policy)
-        ? refused("unavailable", "sandbox_not_found")
-        : VIOLATION;
+    // rv18-7c3e91a4, finding 5), in v1's exact shape, and must be about this
+    // binding (third read rv18b-f2bd3f93, finding 2). Its record and policy
+    // are checked, never disclosed.
+    case "not_found": {
+      const record = parseRecord(body.record);
+      if (
+        !hasOnly(body, ["outcome", "policy", "record", "version"]) ||
+        record === null ||
+        !isV1Record(record) ||
+        !isPolicy(body.policy, true)
+      ) {
+        return VIOLATION;
+      }
+      return (
+        foreignRecord(record, binding) ??
+        refused("unavailable", "sandbox_not_found")
+      );
+    }
     case "ambiguous": {
       const record = parseRecord(body.record);
       if (
         !hasOnly(body, ["outcome", "reason", "record", "version"]) ||
         record === null ||
+        !isV1Record(record) ||
         (AMBIGUOUS_FROM_DATABASE.has(body.reason) && record.sandboxId !== null)
       ) {
         return VIOLATION;
       }
-      return AMBIGUOUS.get(body.reason) ?? VIOLATION;
+      const mapped = AMBIGUOUS.get(body.reason);
+      if (mapped === undefined) {
+        return VIOLATION;
+      }
+      return foreignRecord(record, binding) ?? mapped;
     }
     case "unauthorized":
       return hasOnly(body, ["outcome", "version"])
@@ -718,7 +852,7 @@ function parseBody(body: unknown): Inspection {
     !hasOnly(observed, OBSERVED_KEYS) ||
     !isRecord(observed.identity) ||
     !hasOnly(observed.identity, IDENTITY_KEYS) ||
-    !isPolicy(policy)
+    !isPolicy(policy, false)
   ) {
     return VIOLATION;
   }
@@ -728,22 +862,53 @@ function parseBody(body: unknown): Inspection {
   };
 }
 
-/** The answer's HTTP status first; only a 200 has a body worth reading. */
-function parseInspection(received: unknown): Inspection {
-  const plain = plainCopy(received);
-  if (plain === null) {
+/**
+ * The answer's HTTP status first; only a 200 has a body worth reading. The
+ * answer itself must be a plain object whose only keys are `status` and
+ * `body`, checked without reading the body. The status is read once; the
+ * body of a 200 is then copied as plain data, and any other body is never
+ * touched (third read rv18b-f2bd3f93, finding 3).
+ */
+function parseInspection(received: unknown, binding: Binding): Inspection {
+  if (
+    typeof received !== "object" ||
+    received === null ||
+    Array.isArray(received)
+  ) {
     return VIOLATION;
   }
-  const answer = plain.value;
-  if (!isRecord(answer) || integer(answer.status) === null) {
+  const base = Object.getPrototypeOf(received);
+  if (
+    (base !== PLAIN_OBJECT_BASE && base !== null) ||
+    Object.getOwnPropertySymbols(received).length > 0
+  ) {
     return VIOLATION;
   }
-  const status = answer.status as number;
+  const keys = Object.getOwnPropertyNames(received);
+  if (
+    !keys.every(
+      (key) =>
+        (key === "body" || key === "status") &&
+        Object.getOwnPropertyDescriptor(received, key)?.enumerable === true
+    )
+  ) {
+    return VIOLATION;
+  }
+  const status = integer(readOwn(received, "status")?.value);
+  if (status === null) {
+    return VIOLATION;
+  }
   const refusal = HTTP_REFUSALS.get(status);
   if (refusal) {
     return refusal;
   }
-  return status === 200 ? parseBody(answer.body) : VIOLATION;
+  if (status !== 200) {
+    return VIOLATION;
+  }
+  const body = plainCopy(readOwn(received, "body")?.value, 1, {
+    left: PLAIN_VALUES_MAX,
+  });
+  return body === null ? VIOLATION : parseBody(body.value, binding);
 }
 
 // --- Evaluation -------------------------------------------------------------
@@ -785,7 +950,7 @@ function evaluateCompatibility(
     missing("networkBlockAll");
   }
   // Upstream withholds the raw lists, so Castles' own per-entry rules cannot
-  // run (pending maintainer decision, coven-castles#2). What it can check:
+  // run (maintainer decision, coven-castles#2, 2026-11-20). What it checks:
   // the domain list equals the owner's configured policy, which upstream
   // compares exactly; the owner policy sets no network list and no outbound
   // proxy, so either one is drift. Block-all excuses neither. Each
@@ -848,7 +1013,8 @@ function evaluateCompatibility(
   } else if (autoPause !== profile.lifecycle.autoPauseInterval) {
     fail("lifecycle_auto_pause", "autoPauseInterval");
   }
-  // Pending maintainer decision (coven-agents#322): upstream reports the
+  // Accepted for now by the maintainer (coven-castles#2, 2026-11-20),
+  // pending coven-agents#322: upstream reports the
   // TTL, warm pool and linked sandbox as booleans and volumes as a count,
   // and folds "the provider did not report it" into false or 0. Castles
   // accepts the fold for now. A value that is not a boolean (or, for
@@ -1107,8 +1273,9 @@ async function inspectOnce(
   }
   // Parsed outside the try: a response whose read throws rejects with the
   // caller's own error, as documented, rather than reading as a provider
-  // failure.
-  return parseInspection(response);
+  // failure. The deadline does not cover this parse; the copy's size bound
+  // does.
+  return parseInspection(response, binding);
 }
 
 export type PreflightOptions = Readonly<{ timeoutMs?: number }>;
@@ -1206,7 +1373,7 @@ export async function runPreflight(
     findings.add("unauthorized", "binding_mismatch", "record.sandboxId");
     identityHeld = false;
   }
-  // Pending maintainer decision (coven-castles#2): upstream's own label and
+  // Maintainer decision (coven-castles#2, 2026-11-20): upstream's own label and
   // configuration checks refuse with existing codes. A sandbox whose
   // ownership labels or configuration do not match is not this binding's.
   if (identity.ownershipLabels !== true) {

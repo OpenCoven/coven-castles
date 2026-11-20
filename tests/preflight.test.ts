@@ -5397,8 +5397,9 @@ test("v1 review: a key strict checking cannot see by enumeration still refuses t
     assert.deepEqual(codes(result), ["inspection_contract_violation"], label);
     assert.equal(result.observed, null, label);
   }
-  // A null-prototype object is plain, as JSON parsing in another realm or a
-  // schema library can produce it.
+  // An object with no base is plain, as some schema libraries produce it.
+  // JSON parsed in another realm is not: its objects carry that realm's own
+  // base object and are refused, which fails closed.
   const bare = await v1Answer((a) => {
     a.body.observed = Object.assign(Object.create(null), a.body.observed);
   });

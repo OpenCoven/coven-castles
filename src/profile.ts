@@ -234,8 +234,8 @@ export const SUPPORTED_PROFILE = Object.freeze({
   /**
    * Upstream sandbox-inspection v1 withholds the raw allow lists, so Castles'
    * earlier per-entry rules (plain ASCII domains only; at most ten IPv4
-   * ranges no wider than /8) cannot run. Pending maintainer decision
-   * (coven-castles#2), egress is restricted when:
+   * ranges no wider than /8) cannot run. By maintainer decision
+   * (coven-castles#2, 2026-11-20), egress is restricted when:
    *
    * - the domain allow list equals the owner's configured policy, as
    *   upstream compares it (exact string equality; both absent match);
