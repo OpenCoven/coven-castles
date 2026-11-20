@@ -177,8 +177,11 @@ test("run: the runtime manifest file is the pinned manifest, byte for byte", () 
   // table live outside the main contract file, so each has its own hash.
   assert.deepEqual(
     Object.keys(RUNTIME_MANIFEST.contracts).sort(),
-    ["inspection", "run", "runBinding", "runErrors"]
+    ["inspection", "run", "runBinding", "runErrors", "runLimits"]
   );
+  // Read of the fixes rv19b-d029b92a, point 4: the limits RUN_CONTRACT
+  // mirrors are defined in upstream's contract descriptor.
+  assert.equal(RUNTIME_MANIFEST.contracts.runLimits.path, "packages/agent-contracts/contract-descriptor.ts");
   assert.equal(RUNTIME_MANIFEST.contracts.runBinding.path, "packages/agent-contracts/src/sandbox-binding.ts");
   assert.equal(RUNTIME_MANIFEST.contracts.runErrors.path, "lib/runner/transport.ts");
   for (const contract of Object.values(RUNTIME_MANIFEST.contracts)) {
@@ -444,7 +447,7 @@ test("run: dispatch parity fails closed on a missing or partial observation", ()
 
 // --- runTask: the only path that can reach the run client --------------------
 
-test("run ADM-04/ADM-11: the run gates name every capability missing at the pin", () => {
+test("run: the run gates name every capability missing at the pin", () => {
   assert.deepEqual(
     RUN_GATES.map((gate) => [gate.capability, gate.status]),
     [
@@ -458,15 +461,21 @@ test("run ADM-04/ADM-11: the run gates name every capability missing at the pin"
       ["runtime_verification", "missing"],
     ]
   );
+  // Read of the fixes rv19b-d029b92a, point 5: the runtime gate is owned by
+  // the #2 issue, not one pull request.
+  assert.equal(
+    RUN_GATES.find((gate) => gate.capability === "runtime_verification")?.issue,
+    "https://github.com/OpenCoven/coven-castles/issues/2"
+  );
   for (const gate of RUN_GATES) {
     assert.match(
       gate.issue,
-      /^https:\/\/github\.com\/OpenCoven\/coven(?:-agents|-castles)?\/(?:issues|pull)\/\d+$/u
+      /^https:\/\/github\.com\/OpenCoven\/coven(?:-agents|-castles)?\/issues\/\d+$/u
     );
   }
 });
 
-test("run: a ready, parity-meeting binding is blocked by the missing gates and never calls the run client", async () => {
+test("run ADM-11: a ready, parity-meeting binding is blocked by the missing gates, names each one, and never calls the run client", async () => {
   const inspection = inspectionClient(readyInspection());
   const runs = runClient();
   const result = await runTask(
@@ -677,6 +686,10 @@ test("run: snapshot evidence and instants are checked to the pinned schema (seco
     ["file path too long", (r) => (r.fileEvidence = [{ ...file, path: "p".repeat(1_025) }])],
     ["file byte length negative", (r) => (r.fileEvidence = [{ ...file, byteLength: -1 }])],
     ["file with an extra key", (r) => (r.fileEvidence = [{ ...file, digest: "a" }])],
+    ["command startedAt impossible", (r) => (r.commandEvidence = [{ ...command, startedAt: "2026-02-30T00:00:00Z" }])],
+    ["command completedAt not an instant", (r) => (r.commandEvidence = [{ ...command, completedAt: "soon" }])],
+    ["file occurredAt impossible", (r) => (r.fileEvidence = [{ ...file, occurredAt: "2026-11-20T25:00:00Z" }])],
+    ["file occurredAt null", (r) => (r.fileEvidence = [{ ...file, occurredAt: null }])],
     ["an impossible date", (r) => (r.createdAt = "2026-02-30T00:00:00Z")],
     ["an impossible hour", (r) => (r.startedAt = "2026-11-20T24:00:00Z")],
     ["an offset instead of Z", (r) => (r.createdAt = "2026-11-20T00:00:00+00:00")],
@@ -686,7 +699,7 @@ test("run: snapshot evidence and instants are checked to the pinned schema (seco
   }
 });
 
-test("run ADM-04/ADM-09: each pinned refusal maps to one Castles code", () => {
+test("run ADM-09: each pinned refusal maps to one Castles code", () => {
   const table: [number, string, string, string][] = [
     [400, "invalid_request", "refused", "request_rejected"],
     [400, "unsupported_media_type", "refused", "request_rejected"],
