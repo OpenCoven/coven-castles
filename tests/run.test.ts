@@ -692,6 +692,8 @@ test("run: snapshot evidence and instants are checked to the pinned schema (seco
     ["file occurredAt null", (r) => (r.fileEvidence = [{ ...file, occurredAt: null }])],
     ["an impossible date", (r) => (r.createdAt = "2026-02-30T00:00:00Z")],
     ["an impossible hour", (r) => (r.startedAt = "2026-11-20T24:00:00Z")],
+    // Read rv19c-bf3de2ed, finding 1: the run-level completedAt check.
+    ["run completedAt impossible", (r) => (r.completedAt = "2026-04-31T00:00:00Z")],
     ["an offset instead of Z", (r) => (r.createdAt = "2026-11-20T00:00:00+00:00")],
   ];
   for (const [label, edit] of cases) {
@@ -699,7 +701,7 @@ test("run: snapshot evidence and instants are checked to the pinned schema (seco
   }
 });
 
-test("run ADM-09: each pinned refusal maps to one Castles code", () => {
+test("run: each pinned refusal maps to one Castles code (ADM-09 for the operation_conflict row)", () => {
   const table: [number, string, string, string][] = [
     [400, "invalid_request", "refused", "request_rejected"],
     [400, "unsupported_media_type", "refused", "request_rejected"],
