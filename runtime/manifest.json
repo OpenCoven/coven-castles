@@ -1,0 +1,57 @@
+{
+  "schema": "castles.runtime-manifest.v1",
+  "bootstrap": "snapshot-verification-only",
+  "decision": "https://github.com/OpenCoven/coven-agents/issues/300",
+  "upstream": {
+    "repository": "OpenCoven/coven-agents",
+    "revision": "0696af127207fb82cce734cd8c4ffa437d6f3502"
+  },
+  "snapshotName": "coven-agents-copilot-2",
+  "harness": {
+    "id": "copilot",
+    "package": "@github/copilot",
+    "version": "1.0.80"
+  },
+  "adapterVersion": "daytona-adapter-v1",
+  "capabilityContractVersion": "hosted-v1",
+  "credentialBoundaryVersion": "attempt-reset-v1",
+  "sdkVersion": "0.231.1",
+  "contracts": {
+    "inspection": {
+      "path": "packages/agent-contracts/src/sandbox-inspection.ts",
+      "sha256": "ee64a48644a08cae72cd0c40eb5094b97ff52ee122122c82482515a268f5f5b0",
+      "version": 1
+    },
+    "run": {
+      "apiVersion": "1.0",
+      "path": "packages/agent-contracts/src/index.ts",
+      "sha256": "59ce690c306e526386c57f26124d64c8c939c1109b573ebed277b18c86325611"
+    },
+    "runBinding": {
+      "path": "packages/agent-contracts/src/sandbox-binding.ts",
+      "sha256": "7aba60bd589b25e6673877b358ae6d1db5410ad82926d3f091b77c298a13e79f"
+    },
+    "runErrors": {
+      "path": "lib/runner/transport.ts",
+      "sha256": "9e09413fd933306374d2eb67d2023ba3e8cb12baaab56ead025cb7421feb531e"
+    },
+    "runLimits": {
+      "path": "packages/agent-contracts/contract-descriptor.ts",
+      "sha256": "3392085782a1e9bd4f9783ede099b4ecc21bf2b0ac47308edf6ac60701da6dca"
+    }
+  },
+  "measuredInGuest": false,
+  "provenance": {
+    "measured": [
+      "observed.snapshot: provider metadata, read by the owner, not from inside the guest"
+    ],
+    "sourcePolicy": [
+      "snapshotName",
+      "harness",
+      "adapterVersion",
+      "capabilityContractVersion",
+      "credentialBoundaryVersion",
+      "sdkVersion"
+    ]
+  }
+}

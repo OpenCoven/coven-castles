@@ -3271,6 +3271,7 @@ test("every file under src/ passes the capability scan", () => {
     "cli.ts",
     "preflight.ts",
     "profile.ts",
+    "run.ts",
   ]);
   assert.deepEqual(scanSources(files), []);
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
