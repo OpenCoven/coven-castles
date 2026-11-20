@@ -229,6 +229,94 @@ function hasOnly(value: UnknownRecord, keys: readonly string[]): boolean {
   return Object.keys(value).every((key) => keys.includes(key));
 }
 
+/** Deeper than any v1 answer nests; a deeper value is not v1. */
+const PLAIN_DEPTH = 8;
+/** More entries than any v1 array carries. */
+const PLAIN_ARRAY_MAX = 1_000;
+/** What `{}` and `[]` inherit from, taken once at load. */
+const PLAIN_OBJECT_BASE = Object.getPrototypeOf({});
+const PLAIN_ARRAY_BASE = Object.getPrototypeOf([]);
+
+/**
+ * A plain copy of an answer, or null when it is not plain data. An answer
+ * held in memory is not JSON: a key can be non-enumerable, inherited or a
+ * symbol, and a getter can answer differently on each read (second read
+ * rv18-7c3e91a4, findings 2 and 3). Only plain objects (one with no base
+ * included) and plain arrays are copied, every own key must be an
+ * enumerable string, and each value is read exactly once. Strict-key checks
+ * and every later read then see one fixed value. A read that throws is not
+ * caught here: the caller's error comes back, as documented.
+ */
+function plainCopy(value: unknown, depth = 0): { value: unknown } | null {
+  if (typeof value === "function") {
+    return null;
+  }
+  if (typeof value !== "object" || value === null) {
+    return { value };
+  }
+  if (depth >= PLAIN_DEPTH) {
+    return null;
+  }
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    return null;
+  }
+  const keys = Object.getOwnPropertyNames(value);
+  const readOnce = (key: string): { value: unknown } | null => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable) {
+      return null;
+    }
+    return plainCopy(
+      "value" in descriptor
+        ? descriptor.value
+        : (value as Record<string, unknown>)[key],
+      depth + 1
+    );
+  };
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== PLAIN_ARRAY_BASE) {
+      return null;
+    }
+    const { length } = value;
+    if (
+      !Number.isSafeInteger(length) ||
+      length > PLAIN_ARRAY_MAX ||
+      keys.length !== length + 1
+    ) {
+      return null;
+    }
+    const items: unknown[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const item = readOnce(String(index));
+      if (item === null) {
+        return null;
+      }
+      items.push(item.value);
+    }
+    return { value: items };
+  }
+  const base = Object.getPrototypeOf(value);
+  if (base !== PLAIN_OBJECT_BASE && base !== null) {
+    return null;
+  }
+  const copy: Record<string, unknown> = {};
+  for (const key of keys) {
+    const entry = readOnce(key);
+    if (entry === null) {
+      return null;
+    }
+    // defineProperty, not assignment, so a key that names the base object
+    // stays an own key and the strict-key check refuses it.
+    Object.defineProperty(copy, key, {
+      configurable: true,
+      enumerable: true,
+      value: entry.value,
+      writable: true,
+    });
+  }
+  return { value: copy };
+}
+
 function alias(prefix: "own" | "sbx", value: string | undefined): string | null {
   if (value === undefined) {
     return null;
@@ -250,12 +338,11 @@ function alias(prefix: "own" | "sbx", value: string | undefined): string | null 
  * Sources, all in coven-agents
  * `packages/agent-contracts/src/sandbox-inspection.ts` at the pinned
  * revision: sandbox states are upstream's seven coarse states; binding
- * lifecycles and configuration identities are its enums. The attempt-fence
- * set is Castles' own vocabulary for upstream's three fence values.
+ * lifecycles and configuration identities are its enums. `FENCE_ECHO` maps
+ * upstream's three fence values to Castles' own vocabulary.
  */
 const UNRECOGNISED = "unrecognised";
 const KNOWN = Object.freeze({
-  attemptFence: ["clear", "attempt_outstanding", "cleanup_required"],
   bindingLifecycle: [
     "unprovisioned",
     "provisioning",
@@ -479,15 +566,29 @@ const VIOLATION = refused("unavailable", "inspection_contract_violation");
  * tenant's, which upstream makes indistinguishable; both refuse as
  * `owner_mismatch`. 429 (rate limited, with retry-after) and 503 (provider,
  * runner or abuse control unavailable) refuse as `provider_unavailable`,
- * and Castles never retries. Every other status is a contract violation.
+ * and Castles never retries. So does 500, upstream's retryable internal
+ * error (second read rv18-7c3e91a4, finding 4). Every other status is a
+ * contract violation. Known imprecision, pending the same decision: a 403
+ * for a missing subscription reads as `owner_mismatch`.
  */
 const HTTP_REFUSALS: ReadonlyMap<number, Inspection> = new Map([
   [401, refused("unauthorized", "unauthenticated")],
   [403, refused("unauthorized", "owner_mismatch")],
   [404, refused("unauthorized", "owner_mismatch")],
   [429, refused("unavailable", "provider_unavailable")],
+  [500, refused("unavailable", "provider_unavailable")],
   [503, refused("unavailable", "provider_unavailable")],
 ]);
+
+/** v1's database-decided ambiguity never discloses the recorded ID. */
+const AMBIGUOUS_FROM_DATABASE: ReadonlySet<unknown> = new Set([
+  "generation_mismatch",
+  "no_recorded_sandbox",
+  "pending_lifecycle",
+  "sandbox_id_mismatch",
+]);
+
+const UNAVAILABLE_SOURCES: ReadonlySet<unknown> = new Set(["database", "provider"]);
 
 /** Upstream's ambiguous reasons, each mapped to an existing Castles code. */
 const AMBIGUOUS: ReadonlyMap<unknown, Inspection> = new Map([
@@ -540,6 +641,10 @@ const POLICY_KEYS = [
   "target",
 ];
 
+function isPolicy(value: unknown): value is UnknownRecord {
+  return isRecord(value) && hasOnly(value, POLICY_KEYS);
+}
+
 function parseRecord(value: unknown): ObservedEnvelope["record"] | null {
   if (!isRecord(value) || !hasOnly(value, RECORD_KEYS)) {
     return null;
@@ -568,20 +673,33 @@ function parseBody(body: unknown): Inspection {
     return VIOLATION;
   }
   switch (body.outcome) {
+    // Each refusal must carry the keys v1 requires for it (second read
+    // rv18-7c3e91a4, finding 5); its record and policy are checked, never
+    // disclosed.
     case "not_found":
-      return hasOnly(body, ["outcome", "policy", "record", "version"])
+      return hasOnly(body, ["outcome", "policy", "record", "version"]) &&
+        parseRecord(body.record) !== null &&
+        isPolicy(body.policy)
         ? refused("unavailable", "sandbox_not_found")
         : VIOLATION;
-    case "ambiguous":
-      return hasOnly(body, ["outcome", "reason", "record", "version"])
-        ? (AMBIGUOUS.get(body.reason) ?? VIOLATION)
-        : VIOLATION;
+    case "ambiguous": {
+      const record = parseRecord(body.record);
+      if (
+        !hasOnly(body, ["outcome", "reason", "record", "version"]) ||
+        record === null ||
+        (AMBIGUOUS_FROM_DATABASE.has(body.reason) && record.sandboxId !== null)
+      ) {
+        return VIOLATION;
+      }
+      return AMBIGUOUS.get(body.reason) ?? VIOLATION;
+    }
     case "unauthorized":
       return hasOnly(body, ["outcome", "version"])
         ? refused("unauthorized", "owner_mismatch")
         : VIOLATION;
     case "unavailable":
-      return hasOnly(body, ["outcome", "source", "version"])
+      return hasOnly(body, ["outcome", "source", "version"]) &&
+        UNAVAILABLE_SOURCES.has(body.source)
         ? refused("unavailable", "provider_unavailable")
         : VIOLATION;
     case "observed":
@@ -600,8 +718,7 @@ function parseBody(body: unknown): Inspection {
     !hasOnly(observed, OBSERVED_KEYS) ||
     !isRecord(observed.identity) ||
     !hasOnly(observed.identity, IDENTITY_KEYS) ||
-    !isRecord(policy) ||
-    !hasOnly(policy, POLICY_KEYS)
+    !isPolicy(policy)
   ) {
     return VIOLATION;
   }
@@ -612,7 +729,12 @@ function parseBody(body: unknown): Inspection {
 }
 
 /** The answer's HTTP status first; only a 200 has a body worth reading. */
-function parseInspection(answer: unknown): Inspection {
+function parseInspection(received: unknown): Inspection {
+  const plain = plainCopy(received);
+  if (plain === null) {
+    return VIOLATION;
+  }
+  const answer = plain.value;
   if (!isRecord(answer) || integer(answer.status) === null) {
     return VIOLATION;
   }
@@ -955,8 +1077,9 @@ async function inspectOnce(
 ): Promise<Inspection> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let response: unknown;
   try {
-    const response = await Promise.race([
+    response = await Promise.race([
       Promise.resolve().then(() =>
         inspect(
           {
@@ -971,7 +1094,6 @@ async function inspectOnce(
         timer = setTimeout(() => reject(new Error("deadline")), timeoutMs);
       }),
     ]);
-    return parseInspection(response);
   } catch {
     // The original error can carry a provider URL, identifier, or credential.
     return {
@@ -983,6 +1105,10 @@ async function inspectOnce(
     clearTimeout(timer);
     controller.abort();
   }
+  // Parsed outside the try: a response whose read throws rejects with the
+  // caller's own error, as documented, rather than reading as a provider
+  // failure.
+  return parseInspection(response);
 }
 
 export type PreflightOptions = Readonly<{ timeoutMs?: number }>;
@@ -1163,9 +1289,8 @@ export function isLiveReady(value: PreflightResult): boolean {
 /**
  * Bounded by construction: every string is a literal, an alias, a member of
  * a fixed set, or a strict three-part version; every observed number is a
- * count from 0 to 999 or an integer inside `ECHOED_INTEGER`. The egress
- * count is the length of arrays this module builds itself; the volume count
- * goes through `echoedCount`.
+ * count from 0 to 999 or an integer inside `ECHOED_INTEGER`. The volume
+ * count goes through `echoedCount`.
  */
 export function renderJson(value: PreflightResult): string {
   return `${JSON.stringify(value, null, 2)}\n`;

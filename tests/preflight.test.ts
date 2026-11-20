@@ -1083,7 +1083,6 @@ test("Q11: an array whose length is not an integer from 0 up is an attachment, n
     ["false", false],
     ["true", true],
     ["an object", {}],
-    ["a boxed 0", Object(0)],
     ["a symbol", Symbol("length")],
   ];
   for (const [label, length] of lengths) {
@@ -1094,6 +1093,12 @@ test("Q11: an array whose length is not an integer from 0 up is an attachment, n
     assert.deepEqual(result.reasons, [{ code: "volumes_present", field: "volumes" }], label);
     assert.equal(result.observed?.attachments.volumes, null, label);
   }
+  // A boxed number is not plain data, so the whole answer is refused, and
+  // it is never "no volume" either (v1 review tests).
+  const boxed = await withSandbox((sandbox) => {
+    sandbox.volumes = Object(0);
+  });
+  assert.deepEqual(codes(boxed), ["inspection_contract_violation"]);
   for (const length of [null, undefined]) {
     const result = await withSandbox((sandbox) => {
       sandbox.volumes = length;
@@ -1354,12 +1359,20 @@ test("inspection parsing: a wrong version, an unknown outcome or a mistyped reco
 
 test("inspection parsing: each refusal outcome maps to one status and code, and needs the version", async () => {
   const table: [Record<string, unknown>, string, string][] = [
-    [{ outcome: "not_found" }, "unavailable", "sandbox_not_found"],
-    [{ outcome: "ambiguous", reason: "no_recorded_sandbox" }, "reconciliation-required", "ambiguous_lookup"],
+    [
+      {
+        outcome: "not_found",
+        policy: v1Ready().body.policy,
+        record: { ...V1_DB_RECORD, sandboxId: "fixture-sandbox-0001" },
+      },
+      "unavailable",
+      "sandbox_not_found",
+    ],
+    [{ outcome: "ambiguous", reason: "no_recorded_sandbox", record: V1_DB_RECORD }, "reconciliation-required", "ambiguous_lookup"],
     [{ outcome: "unavailable", source: "provider" }, "unavailable", "provider_unavailable"],
     [{ outcome: "unauthorized" }, "unauthorized", "owner_mismatch"],
     // A reason v1 does not define is not read, and not echoed.
-    [{ outcome: "ambiguous", reason: CANARY }, "unavailable", "inspection_contract_violation"],
+    [{ outcome: "ambiguous", reason: CANARY, record: V1_DB_RECORD }, "unavailable", "inspection_contract_violation"],
     // v1's unauthorized outcome has no reason: an extra key is a violation.
     [{ outcome: "unauthorized", reason: "owner_mismatch" }, "unavailable", "inspection_contract_violation"],
   ];
@@ -2532,7 +2545,9 @@ test("N5 limit: a property whose read throws still rejects with the caller's err
   const options = Object.defineProperty({}, "timeoutMs", { get: raise });
   await assert.rejects(runPreflight(fixture.env, client, options), { message: CANARY });
   const inspection = structuredClone(fixture.inspection) as any;
-  Object.defineProperty(inspection.body.observed, "cpu", { get: raise });
+  // Enumerable, as a key a JSON answer could carry: a non-enumerable one is
+  // now refused before it is read (see the v1 review tests).
+  Object.defineProperty(inspection.body.observed, "cpu", { enumerable: true, get: raise });
   await assert.rejects(
     runPreflight(fixture.env, { inspectBoundSandbox: () => Promise.resolve(inspection) }),
     { message: CANARY }
@@ -4388,8 +4403,17 @@ test("observed attachments, TTL and exposure report what the seam stated, field 
 
 test("a credential-boundary check that is not exactly true is not a check", async () => {
   // Upstream withholds the labels and reports its own check of the marker.
+  // An array carrying an extra key is not plain data: the whole answer is
+  // refused (v1 review tests).
+  const odd = await withInspection((inspection) => {
+    inspection.observed.identity.credentialBoundary = Object.assign([], {
+      credentialBoundaryVersion: "attempt-reset-v1",
+    });
+  });
+  assert.deepEqual(codes(odd), ["inspection_contract_violation"]);
   for (const check of [
-    Object.assign([], { credentialBoundaryVersion: "attempt-reset-v1" }),
+    [],
+    ["attempt-reset-v1"],
     "attempt-reset-v1",
     "true",
     1,
@@ -5009,7 +5033,8 @@ test("v1: the HTTP status decides a refusal and its body is never read", async (
       assert.doesNotMatch(renderJson(result) + renderHuman(result), /CANARY/u);
     }
   }
-  for (const status of [0, 100, 201, 204, 302, 400, 409, 413, 422, 500, 502, 599, 600, 200.5, -200, "200", null, undefined]) {
+  // 500 is upstream's retryable internal error: see the v1 review tests.
+  for (const status of [0, 100, 201, 204, 302, 400, 409, 413, 422, 501, 502, 599, 600, 200.5, -200, "200", null, undefined]) {
     const { result } = await v1((answer) => {
       answer.status = status as number;
     });

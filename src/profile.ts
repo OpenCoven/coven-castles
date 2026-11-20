@@ -244,8 +244,14 @@ export const SUPPORTED_PROFILE = Object.freeze({
    *   proxy as drift;
    * - and either a domain list is configured or block-all is true.
    *
-   * The owner's domain rule also accepts a single leading `*.` label, which
-   * Castles used to refuse. That is the one place this is looser.
+   * This is looser than the per-entry rules Castles used to apply (second
+   * read rv18-7c3e91a4, finding 1). The owner's domain rule, read at the
+   * pin, also accepts a single leading `*.` label; all-numeric labels, so IP
+   * literals such as a loopback address; letters that case-fold into ASCII
+   * (the long s U+017F, the Kelvin sign U+212A); and names longer than 253
+   * characters. Castles used to refuse each of these. Castles cannot see
+   * the entries, so such an entry in the owner's policy, copied to the
+   * sandbox, reads as restricted.
    */
   network: Object.freeze({
     domainAllowList: Object.freeze({ basis: "owner-policy-equality" }),
