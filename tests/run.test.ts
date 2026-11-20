@@ -173,6 +173,17 @@ test("run: the runtime manifest file is the pinned manifest, byte for byte", () 
   assert.equal(RUNTIME_MANIFEST.sdkVersion, "0.231.1");
   assert.match(RUNTIME_MANIFEST.contracts.inspection.sha256, /^[0-9a-f]{64}$/u);
   assert.match(RUNTIME_MANIFEST.contracts.run.sha256, /^[0-9a-f]{64}$/u);
+  // Second read rv19-c5e229e6, finding 9: the binding schema and the error
+  // table live outside the main contract file, so each has its own hash.
+  assert.deepEqual(
+    Object.keys(RUNTIME_MANIFEST.contracts).sort(),
+    ["inspection", "run", "runBinding", "runErrors"]
+  );
+  assert.equal(RUNTIME_MANIFEST.contracts.runBinding.path, "packages/agent-contracts/src/sandbox-binding.ts");
+  assert.equal(RUNTIME_MANIFEST.contracts.runErrors.path, "lib/runner/transport.ts");
+  for (const contract of Object.values(RUNTIME_MANIFEST.contracts)) {
+    assert.match(contract.sha256, /^[0-9a-f]{64}$/u);
+  }
   assert.equal(RUNTIME_MANIFEST.measuredInGuest, false);
 });
 
@@ -216,7 +227,7 @@ test("run BST-02: verification is repeatable, pure and reports a comparison, not
   assert.equal(verifyRuntime(frozen).status, "compatible");
 });
 
-test("run BST-01/BST-04: a snapshot, harness or contract mismatch is incompatible and names the field", () => {
+test("run BST-01/BST-04: a snapshot, harness or contract-version mismatch is incompatible and names the field", () => {
   const cases: [string, (value: any) => void][] = [
     ["observedSnapshot", (v) => (v.observedSnapshot = "coven-agents-copilot-3")],
     ["policy.snapshotName", (v) => (v.policy.snapshotName = "coven-agents-copilot-1")],
@@ -296,7 +307,7 @@ test("run: the planned request is exactly the pinned body, bound to the configur
   assert.equal(RUN_CONTRACT.maxTaskLength, 40_000);
 });
 
-test("run OUT-12/ADM-09/ADM-10: the same operation and payload plan identically; any change is a different digest", () => {
+test("run OUT-12/ADM-09: the same operation and payload plan identically; any change to the task is a different digest", () => {
   const base = plan();
   assert.deepEqual(plan(), base);
   const changedTask = planRun(binding(), { operationId: OPERATION, task: `${TASK}!` });
@@ -369,6 +380,7 @@ test("run: the dispatch expectation is the owner's exact configuration at the pi
     memoryGiB: 4,
     networkBlockAll: false,
     state: "started",
+    target: "us",
   });
 });
 
@@ -389,6 +401,31 @@ test("run: a Castles ready the owner would refuse at dispatch fails dispatch par
   assert.deepEqual(checkDispatchParity(control.observed), []);
 });
 
+test("run: every dispatch-parity field refuses on its own (second read rv19-c5e229e6, findings 1 and 3)", async () => {
+  const control = (await readyPreflight()).observed;
+  assert.ok(control);
+  const changes: [string, (o: any) => void][] = [
+    ["state", (o) => (o.state = "stopped")],
+    ["target", (o) => (o.target = "eu")],
+    ["exposure.networkBlockAll", (o) => (o.exposure.networkBlockAll = true)],
+    ["lifecycle.autoStopInterval", (o) => (o.lifecycle.autoStopInterval = 14)],
+    ["lifecycle.autoArchiveInterval", (o) => (o.lifecycle.autoArchiveInterval = 10_081)],
+    ["resources.cpu", (o) => (o.resources.cpu = 3)],
+    ["resources.diskGiB", (o) => (o.resources.diskGiB = 9)],
+    ["resources.memoryGiB", (o) => (o.resources.memoryGiB = 5)],
+  ];
+  for (const [field, change] of changes) {
+    const observed = structuredClone(control) as any;
+    change(observed);
+    assert.deepEqual(checkDispatchParity(observed), [{ code: "dispatch_parity_unmet", field }], field);
+  }
+  // `eu` is a target #2 accepts; the owner's default target is `us`.
+  const eu = await readyPreflight((s) => (s.target = "eu"));
+  assert.equal(eu.status, "ready");
+  assert.deepEqual(checkDispatchParity(eu.observed), [{ code: "dispatch_parity_unmet", field: "target" }]);
+  assert.equal(DISPATCH_EXPECTATION.target, "us");
+});
+
 test("run: dispatch parity fails closed on a missing or partial observation", () => {
   assert.deepEqual(checkDispatchParity(null), [{ code: "dispatch_parity_unmet", field: "observed" }]);
   const partial: any = {
@@ -396,6 +433,7 @@ test("run: dispatch parity fails closed on a missing or partial observation", ()
     lifecycle: { autoArchiveInterval: null, autoStopInterval: 15 },
     resources: { cpu: 2, diskGiB: null, memoryGiB: 4 },
     state: "started",
+    target: "us",
   };
   assert.deepEqual(codes({ reasons: checkDispatchParity(partial) }), [
     "dispatch_parity_unmet",
@@ -406,7 +444,7 @@ test("run: dispatch parity fails closed on a missing or partial observation", ()
 
 // --- runTask: the only path that can reach the run client --------------------
 
-test("run ADM-11: the run gates name every upstream capability missing at the pin", () => {
+test("run ADM-04/ADM-11: the run gates name every capability missing at the pin", () => {
   assert.deepEqual(
     RUN_GATES.map((gate) => [gate.capability, gate.status]),
     [
@@ -414,10 +452,17 @@ test("run ADM-11: the run gates name every upstream capability missing at the pi
       ["attempt_reference", "missing"],
       ["concurrent_run_denial", "missing"],
       ["familiar_revision", "missing"],
+      // Second read rv19-c5e229e6, finding 5: BST-03 needs a compatible
+      // runtime verification before a run, and the accepted #2 seam cannot
+      // read the inspection v1 policy block it compares.
+      ["runtime_verification", "missing"],
     ]
   );
   for (const gate of RUN_GATES) {
-    assert.match(gate.issue, /^https:\/\/github\.com\/OpenCoven\/coven(?:-agents)?\/issues\/\d+$/u);
+    assert.match(
+      gate.issue,
+      /^https:\/\/github\.com\/OpenCoven\/coven(?:-agents|-castles)?\/(?:issues|pull)\/\d+$/u
+    );
   }
 });
 
@@ -500,6 +545,34 @@ test("run: an invalid request or binding refuses before inspection", async () =>
   assert.deepEqual(runs.calls, []);
 });
 
+test("run: the environment is read once, so preflight inspects exactly the planned binding (second read rv19-c5e229e6, finding 4)", async () => {
+  const reads: Record<string, number> = {};
+  const sandboxes = [SANDBOX, "fixture-sandbox-9999"];
+  const environment: Record<string, string> = {};
+  for (const [key, value] of Object.entries(ENV)) {
+    Object.defineProperty(environment, key, {
+      enumerable: true,
+      get() {
+        reads[key] = (reads[key] ?? 0) + 1;
+        return key === "CASTLES_SANDBOX_ID" ? sandboxes[Math.min(reads[key] - 1, 1)] : value;
+      },
+    });
+  }
+  const requests: unknown[] = [];
+  const inspection: SandboxInspectionClient = {
+    inspectBoundSandbox: (request) => {
+      requests.push(request);
+      return Promise.resolve(readyInspection());
+    },
+  };
+  const result = await runTask(environment, { inspection, runs: runClient().client }, { operationId: OPERATION, task: TASK });
+  assert.equal(result.preflight.status, "ready");
+  assert.deepEqual(requests, [{ agentId: AGENT, expectedGeneration: GENERATION, sandboxId: SANDBOX }]);
+  for (const key of Object.keys(ENV)) {
+    assert.equal(reads[key], 1, key);
+  }
+});
+
 test("run RED-01: no credential, task text or configured ID reaches the result", async () => {
   const runs = runClient();
   const result = await runTask(
@@ -573,7 +646,47 @@ test("run: a 202 outside the pinned snapshot schema is a contract violation", ()
   }
 });
 
-test("run ADM-04/ADM-07/ADM-09: each pinned refusal maps to one Castles code and is never retried", () => {
+test("run: snapshot evidence and instants are checked to the pinned schema (second read rv19-c5e229e6, finding 7)", () => {
+  const command = { command: "rg TODO", exitCode: 0, stderr: "", stdout: "" };
+  const file = { operation: "modify", path: "src/tide.mjs" };
+  const fine = parseRunAnswer(
+    accepted((r) => {
+      r.status = "completed";
+      r.startedAt = "2026-11-20T00:00:01.000Z";
+      r.completedAt = "2026-11-20T00:00:02Z";
+      r.commandEvidence = [
+        command,
+        { ...command, completedAt: "2026-11-20T00:00:02Z", exitCode: null, startedAt: "2026-11-20T00:00:01Z" },
+      ];
+      r.fileEvidence = [file, { ...file, byteLength: 0, occurredAt: "2026-11-20T00:00:01Z", operation: "create" }];
+    }),
+    plan()
+  );
+  assert.equal(fine.kind, "admitted");
+  const violation = { code: "run_contract_violation", kind: "refused", status: "unavailable" };
+  const cases: [string, (run: any) => void][] = [
+    ["command with an extra key", (r) => (r.commandEvidence = [{ ...command, shell: "sh" }])],
+    ["command without stdout", (r) => { const c: any = { ...command }; delete c.stdout; r.commandEvidence = [c]; }],
+    ["command empty", (r) => (r.commandEvidence = [{ ...command, command: "" }])],
+    ["command too long", (r) => (r.commandEvidence = [{ ...command, command: "x".repeat(8_001) }])],
+    ["exit code text", (r) => (r.commandEvidence = [{ ...command, exitCode: "0" }])],
+    ["exit code fractional", (r) => (r.commandEvidence = [{ ...command, exitCode: 0.5 }])],
+    ["stdout too long", (r) => (r.commandEvidence = [{ ...command, stdout: "x".repeat(100_001) }])],
+    ["command completed before it started", (r) => (r.commandEvidence = [{ ...command, completedAt: "2026-11-20T00:00:01Z", startedAt: "2026-11-20T00:00:02Z" }])],
+    ["file operation outside the enum", (r) => (r.fileEvidence = [{ ...file, operation: "rename" }])],
+    ["file path too long", (r) => (r.fileEvidence = [{ ...file, path: "p".repeat(1_025) }])],
+    ["file byte length negative", (r) => (r.fileEvidence = [{ ...file, byteLength: -1 }])],
+    ["file with an extra key", (r) => (r.fileEvidence = [{ ...file, digest: "a" }])],
+    ["an impossible date", (r) => (r.createdAt = "2026-02-30T00:00:00Z")],
+    ["an impossible hour", (r) => (r.startedAt = "2026-11-20T24:00:00Z")],
+    ["an offset instead of Z", (r) => (r.createdAt = "2026-11-20T00:00:00+00:00")],
+  ];
+  for (const [label, edit] of cases) {
+    assert.deepEqual(parseRunAnswer(accepted(edit), plan()), violation, label);
+  }
+});
+
+test("run ADM-04/ADM-09: each pinned refusal maps to one Castles code", () => {
   const table: [number, string, string, string][] = [
     [400, "invalid_request", "refused", "request_rejected"],
     [400, "unsupported_media_type", "refused", "request_rejected"],
@@ -624,7 +737,7 @@ test("run: a refusal outside the pinned error contract is a violation and its te
     ["code on the wrong status", refusal(503, "operation_conflict")],
     ["unknown code", refusal(409, "fixture_unknown")],
     ["unlisted status", refusal(418, "invalid_request")],
-    ["start-route-only code elsewhere", refusal(409, "stale_version")],
+    ["a code the start route never emits", refusal(409, "stale_version")],
     ["error extra key", (() => { const r: any = refusal(401, "unauthorized"); r.body.error.raw = CANARY; return r; })()],
     ["envelope missing requestId", (() => { const r: any = refusal(401, "unauthorized"); delete r.body.requestId; return r; })()],
     ["message empty", (() => { const r: any = refusal(401, "unauthorized"); r.body.error.message = ""; return r; })()],
