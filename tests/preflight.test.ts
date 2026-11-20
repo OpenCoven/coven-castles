@@ -5169,3 +5169,423 @@ test("unstated metadata is echoed as unknown rather than a safe observation", as
   assert.ok(human.includes("ttl ?"));
   assert.ok(human.includes("egress allow-list entries ?"));
 });
+
+// --- Upstream sandbox-inspection v1 (coven-agents 0696af12) ----------------
+// The seam landed upstream (coven-agents #311 and #312). These tests pin the
+// translation from its v1 answer to Castles' reasons. Every value is
+// synthetic, shaped like upstream's strict v1 schema: no answer here was
+// captured from a deployment.
+
+const V1_UPSTREAM_SHA = "0696af127207fb82cce734cd8c4ffa437d6f3502";
+
+/** A synthetic v1 answer that should be ready: HTTP status plus JSON body. */
+function v1Ready(): { body: any; status: number } {
+  return {
+    body: {
+      observed: {
+        autoArchiveInterval: 10_080,
+        autoDeleteInterval: -1,
+        autoDestroyAtConfigured: false,
+        autoPauseInterval: 0,
+        autoStopInterval: 15,
+        cpu: 2,
+        diskGib: 10,
+        domainAllowListConfigured: true,
+        domainAllowListMatchesPolicy: true,
+        gpu: 0,
+        identity: {
+          configuration: "current",
+          credentialBoundary: true,
+          generationLabel: true,
+          ownershipLabels: true,
+        },
+        linkedSandbox: false,
+        memoryGib: 4,
+        networkAllowListConfigured: false,
+        networkBlockAll: false,
+        outboundProxyConfigured: false,
+        public: false,
+        snapshot: "coven-agents-copilot-2",
+        state: "started",
+        target: "us",
+        volumes: 0,
+        warmPool: false,
+      },
+      outcome: "observed",
+      policy: {
+        adapterVersion: "fixture-adapter-1",
+        capabilityContractVersion: "fixture-capability-1",
+        credentialBoundaryVersion: "attempt-reset-v1",
+        harnesses: [],
+        resources: { cpu: 2, diskGib: 10, memoryGib: 4 },
+        sdkVersion: "0.231.1",
+        snapshotName: "coven-agents-copilot-2",
+        target: "us",
+      },
+      record: {
+        agentId: "fixture-agent-0001",
+        fence: "none",
+        generation: 3,
+        lifecycle: "ready",
+        sandboxId: "fixture-sandbox-0001",
+      },
+      version: 1,
+    },
+    status: 200,
+  };
+}
+
+async function v1(
+  edit: (answer: { body: any; status: number }) => void = () => undefined
+) {
+  const answer = v1Ready();
+  edit(answer);
+  const wire = tripwireClient(() => answer);
+  const result = await runPreflight(VALID_ENV, wire.client);
+  return { result, wire };
+}
+
+const V1_DB_RECORD = Object.freeze({
+  agentId: "fixture-agent-0001",
+  fence: "none",
+  generation: 3,
+  lifecycle: "ready",
+  sandboxId: null,
+});
+
+test("v1: a conforming observed answer is ready and asks for exactly the configured binding", async () => {
+  const { result, wire } = await v1();
+  assert.equal(result.status, "ready");
+  assert.deepEqual(result.reasons, []);
+  assert.deepEqual(wire.calls, ["inspectBoundSandbox"]);
+  assert.deepEqual(wire.requests, [
+    {
+      agentId: "fixture-agent-0001",
+      expectedGeneration: 3,
+      sandboxId: "fixture-sandbox-0001",
+    },
+  ]);
+  assert.equal(result.evidence, "fixture");
+  assert.equal(isLiveReady(result), false);
+});
+
+test("v1: the HTTP status decides a refusal and its body is never read", async () => {
+  const refusals: [number, string, string][] = [
+    [401, "unauthorized", "unauthenticated"],
+    // Pending maintainer decision: 403 (no subscription, or origin refused)
+    // and 404 (a missing agent or another tenant's, indistinguishable).
+    [403, "unauthorized", "owner_mismatch"],
+    [404, "unauthorized", "owner_mismatch"],
+    [429, "unavailable", "provider_unavailable"],
+    [503, "unavailable", "provider_unavailable"],
+  ];
+  for (const [status, expected, code] of refusals) {
+    for (const body of [
+      { error: { code: "fixture-error" } },
+      v1Ready().body,
+      CANARY,
+      undefined,
+    ]) {
+      const { result, wire } = await v1((answer) => {
+        answer.status = status;
+        answer.body = body;
+      });
+      assert.equal(result.status, expected, String(status));
+      assert.deepEqual(result.reasons, [{ code }], String(status));
+      assert.equal(result.observed, null, String(status));
+      assert.deepEqual(wire.calls, ["inspectBoundSandbox"]);
+      assert.doesNotMatch(renderJson(result) + renderHuman(result), /CANARY/u);
+    }
+  }
+  for (const status of [0, 100, 201, 204, 302, 400, 409, 413, 422, 500, 502, 599, 600, 200.5, -200, "200", null, undefined]) {
+    const { result } = await v1((answer) => {
+      answer.status = status as number;
+    });
+    assert.equal(result.status, "unavailable", String(status));
+    assert.deepEqual(codes(result), ["inspection_contract_violation"], String(status));
+  }
+  // A bare v1 body, without its HTTP status, is not an answer.
+  const bare = await runPreflight(
+    VALID_ENV,
+    tripwireClient(() => v1Ready().body).client
+  );
+  assert.deepEqual(codes(bare), ["inspection_contract_violation"]);
+});
+
+test("v1: each refusal body maps to an existing Castles reason", async () => {
+  const cases: [Record<string, unknown>, string, string][] = [
+    [{ outcome: "not_found", policy: v1Ready().body.policy, record: { ...V1_DB_RECORD, sandboxId: "fixture-sandbox-0001" } }, "unavailable", "sandbox_not_found"],
+    [{ outcome: "ambiguous", reason: "generation_mismatch", record: V1_DB_RECORD }, "reconciliation-required", "generation_mismatch"],
+    [{ outcome: "ambiguous", reason: "sandbox_id_mismatch", record: V1_DB_RECORD }, "unauthorized", "binding_mismatch"],
+    [{ outcome: "ambiguous", reason: "returned_id_mismatch", record: { ...V1_DB_RECORD, sandboxId: "fixture-sandbox-0001" } }, "reconciliation-required", "returned_id_mismatch"],
+    [{ outcome: "ambiguous", reason: "pending_lifecycle", record: V1_DB_RECORD }, "reconciliation-required", "binding_lifecycle_pending"],
+    [{ outcome: "ambiguous", reason: "no_recorded_sandbox", record: V1_DB_RECORD }, "reconciliation-required", "ambiguous_lookup"],
+    [{ outcome: "unauthorized" }, "unauthorized", "owner_mismatch"],
+    [{ outcome: "unavailable", source: "provider" }, "unavailable", "provider_unavailable"],
+    [{ outcome: "unavailable", source: "database" }, "unavailable", "provider_unavailable"],
+    [{ outcome: "ambiguous", reason: "fixture-reason", record: V1_DB_RECORD }, "unavailable", "inspection_contract_violation"],
+    [{ outcome: "ambiguous", record: V1_DB_RECORD }, "unavailable", "inspection_contract_violation"],
+    [{ outcome: "ready" }, "unavailable", "inspection_contract_violation"],
+  ];
+  for (const [body, status, code] of cases) {
+    const { result, wire } = await v1((answer) => {
+      answer.body = { ...body, version: 1 };
+    });
+    const where = JSON.stringify(body);
+    assert.equal(result.status, status, where);
+    assert.deepEqual(result.reasons, [{ code }], where);
+    assert.equal(result.observed, null, where);
+    assert.deepEqual(wire.calls, ["inspectBoundSandbox"], where);
+  }
+});
+
+test("v1: a version other than 1, or any key v1 does not define, is a contract violation", async () => {
+  const edits: [string, (body: any) => void][] = [
+    ["version 2", (b) => (b.version = 2)],
+    ["version text", (b) => (b.version = "1")],
+    ["version absent", (b) => delete b.version],
+    ["the fixture contract string", (b) => (b.contract = "castles.fixture.sandbox-inspection.v1")],
+    ["body key", (b) => (b.labels = {})],
+    ["record key", (b) => (b.record.name = "fixture-sandbox-0001")],
+    ["observed key", (b) => (b.observed.platform = { architecture: "x86_64", os: "linux" })],
+    ["observed key, a future safety field", (b) => (b.observed.ingressConfigured = true)],
+    ["identity key", (b) => (b.observed.identity.labels = true)],
+    ["policy key", (b) => (b.policy.region = "us")],
+    ["record absent", (b) => delete b.record],
+    ["observed absent", (b) => delete b.observed],
+    ["identity absent", (b) => delete b.observed.identity],
+    ["policy absent", (b) => delete b.policy],
+    ["record.agentId absent", (b) => delete b.record.agentId],
+    ["record.sandboxId absent", (b) => delete b.record.sandboxId],
+    ["record.generation text", (b) => (b.record.generation = "3")],
+    ["record.generation negative", (b) => (b.record.generation = -1)],
+    ["record.lifecycle absent", (b) => delete b.record.lifecycle],
+    ["record.fence absent", (b) => delete b.record.fence],
+  ];
+  for (const [label, edit] of edits) {
+    const { result } = await v1((answer) => edit(answer.body));
+    assert.equal(result.status, "unavailable", label);
+    assert.deepEqual(codes(result), ["inspection_contract_violation"], label);
+    assert.equal(result.observed, null, label);
+  }
+  for (const body of [null, "observed", [], 1]) {
+    const { result } = await v1((answer) => {
+      answer.body = body;
+    });
+    assert.deepEqual(codes(result), ["inspection_contract_violation"], String(body));
+  }
+});
+
+test("v1: the echoed record must be this binding's, and the fence must be clear", async () => {
+  const owner = await v1((a) => (a.body.record.agentId = "fixture-agent-9999"));
+  assert.equal(owner.result.status, "unauthorized");
+  assert.deepEqual(owner.result.reasons, [{ code: "owner_mismatch", field: "record.agentId" }]);
+  assert.equal(owner.result.observed, null);
+  assert.doesNotMatch(renderJson(owner.result), /fixture-agent-9999/u);
+  // Upstream's schema allows a null recorded ID on an observed answer; the
+  // ID is required here, so a null one is a binding mismatch.
+  for (const sandboxId of [null, "fixture-sandbox-9999"]) {
+    const { result } = await v1((a) => (a.body.record.sandboxId = sandboxId));
+    assert.equal(result.status, "unauthorized", String(sandboxId));
+    assert.deepEqual(result.reasons, [{ code: "binding_mismatch", field: "record.sandboxId" }]);
+    assert.equal(result.observed, null);
+    assert.doesNotMatch(renderJson(result), /fixture-sandbox-9999/u);
+  }
+  const stale = await v1((a) => (a.body.record.generation = 9));
+  assert.equal(stale.result.status, "reconciliation-required");
+  assert.deepEqual(stale.result.reasons, [{ code: "generation_mismatch", field: "record.generation" }]);
+  assert.equal(stale.result.observed?.binding.generation, 9);
+  const pending = await v1((a) => (a.body.record.lifecycle = "provisioning"));
+  assert.deepEqual(pending.result.reasons, [{ code: "binding_lifecycle_pending", field: "record.lifecycle" }]);
+  for (const [fence, echoed] of [
+    ["attempt_outstanding", "attempt_outstanding"],
+    ["cleanup_required", "cleanup_required"],
+    ["clear", "unrecognised"],
+    ["fixture-fence", "unrecognised"],
+  ] as const) {
+    const { result } = await v1((a) => (a.body.record.fence = fence));
+    assert.equal(result.status, "reconciliation-required", fence);
+    assert.deepEqual(result.reasons, [{ code: "attempt_fence_held", field: "record.fence" }], fence);
+    assert.equal(result.observed?.binding.attemptFence, echoed, fence);
+  }
+  // Castles' own vocabulary: upstream's "none" is echoed as "clear".
+  assert.equal((await v1()).result.observed?.binding.attemptFence, "clear");
+});
+
+test("v1: upstream's identity checks refuse with existing reasons", async () => {
+  const cases: [string, (body: any) => void, string, { code: string; field: string }, boolean][] = [
+    ["credential boundary false", (b) => (b.observed.identity.credentialBoundary = false), "reconciliation-required", { code: "credential_boundary_unverified", field: "identity.credentialBoundary" }, true],
+    ["credential boundary text", (b) => (b.observed.identity.credentialBoundary = "true"), "reconciliation-required", { code: "credential_boundary_unverified", field: "identity.credentialBoundary" }, true],
+    ["credential boundary version", (b) => (b.policy.credentialBoundaryVersion = "attempt-reset-v0"), "reconciliation-required", { code: "credential_boundary_unverified", field: "policy.credentialBoundaryVersion" }, true],
+    ["generation label false", (b) => (b.observed.identity.generationLabel = false), "reconciliation-required", { code: "generation_mismatch", field: "identity.generationLabel" }, true],
+    ["ownership labels false", (b) => (b.observed.identity.ownershipLabels = false), "unauthorized", { code: "owner_mismatch", field: "identity.ownershipLabels" }, false],
+    ["ownership labels absent", (b) => (b.observed.identity.ownershipLabels = null), "unauthorized", { code: "owner_mismatch", field: "identity.ownershipLabels" }, false],
+    ["configuration mismatch", (b) => (b.observed.identity.configuration = "mismatch"), "unauthorized", { code: "binding_mismatch", field: "identity.configuration" }, false],
+    ["configuration unknown", (b) => (b.observed.identity.configuration = "fixture-config"), "unauthorized", { code: "binding_mismatch", field: "identity.configuration" }, false],
+  ];
+  for (const [label, edit, status, reason, disclosed] of cases) {
+    const { result } = await v1((answer) => edit(answer.body));
+    assert.equal(result.status, status, label);
+    assert.deepEqual(result.reasons, [reason], label);
+    assert.equal(result.observed !== null, disclosed, label);
+  }
+  // A prior configuration is upstream's adoptable older policy, not drift.
+  const prior = await v1((a) => (a.body.observed.identity.configuration = "prior"));
+  assert.equal(prior.result.status, "ready");
+  assert.equal(prior.result.observed?.identity.configuration, "prior");
+});
+
+test("v1: TTL and attachments follow upstream's booleans and count (fold accepted pending coven-agents#322)", async () => {
+  const refusals: [string, unknown, string, string][] = [
+    ["autoDestroyAtConfigured", true, "lifecycle_ttl", "autoDestroyAtConfigured"],
+    ["warmPool", true, "warm_pool_member", "warmPool"],
+    ["linkedSandbox", true, "linked_sandbox_present", "linkedSandbox"],
+    ["volumes", 1, "volumes_present", "volumes"],
+    ["volumes", 1024, "volumes_present", "volumes"],
+    // Not a count: never read as "no volume".
+    ["volumes", -1, "volumes_present", "volumes"],
+    ["volumes", 0.5, "volumes_present", "volumes"],
+    ["volumes", "0", "volumes_present", "volumes"],
+  ];
+  for (const [key, value, code, field] of refusals) {
+    const { result } = await v1((a) => (a.body.observed[key] = value));
+    assert.equal(result.status, "incompatible", `${key}=${String(value)}`);
+    assert.deepEqual(result.reasons, [{ code, field }], `${key}=${String(value)}`);
+  }
+  for (const key of ["autoDestroyAtConfigured", "warmPool", "linkedSandbox", "volumes"]) {
+    for (const edit of [(o: any) => delete o[key], (o: any) => (o[key] = null)]) {
+      const { result } = await v1((a) => edit(a.body.observed));
+      assert.equal(result.status, "incompatible", key);
+      assert.deepEqual(result.reasons, [{ code: "metadata_missing", field: key }], key);
+    }
+  }
+  const none = await v1();
+  assert.deepEqual(none.result.observed?.attachments, {
+    linkedSandbox: false,
+    volumes: 0,
+    warmPool: false,
+  });
+  assert.equal(none.result.observed?.lifecycle.autoDestroyAt, "absent");
+});
+
+test("v1: egress is the owner-policy comparison, and any network list or proxy is unsafe", async () => {
+  const cases: [string, (o: any) => void, string, { code: string; field: string }[]][] = [
+    ["domain list differs from policy", (o) => (o.domainAllowListMatchesPolicy = false), "incompatible", [{ code: "egress_allow_list_unsafe", field: "domainAllowList" }]],
+    ["network list configured", (o) => (o.networkAllowListConfigured = true), "incompatible", [{ code: "egress_allow_list_unsafe", field: "networkAllowList" }]],
+    ["outbound proxy configured", (o) => (o.outboundProxyConfigured = true), "incompatible", [{ code: "egress_allow_list_unsafe", field: "outboundProxy" }]],
+    ["block-all does not excuse a proxy", (o) => { o.networkBlockAll = true; o.outboundProxyConfigured = true; }, "incompatible", [{ code: "egress_allow_list_unsafe", field: "outboundProxy" }]],
+    ["no list and no block-all", (o) => (o.domainAllowListConfigured = false), "incompatible", [{ code: "egress_unrestricted", field: "egress" }]],
+    ["block-all unstated", (o) => (o.networkBlockAll = null), "incompatible", [{ code: "metadata_missing", field: "networkBlockAll" }]],
+    ["comparison unstated", (o) => delete o.domainAllowListMatchesPolicy, "incompatible", [{ code: "metadata_missing", field: "domainAllowListMatchesPolicy" }]],
+    ["proxy unstated", (o) => (o.outboundProxyConfigured = "no"), "incompatible", [{ code: "metadata_missing", field: "outboundProxyConfigured" }]],
+  ];
+  for (const [label, edit, status, reasons] of cases) {
+    const { result } = await v1((a) => edit(a.body.observed));
+    assert.equal(result.status, status, label);
+    assert.deepEqual(result.reasons, reasons, label);
+  }
+  const blockAll = await v1((a) => {
+    a.body.observed.domainAllowListConfigured = false;
+    a.body.observed.networkBlockAll = true;
+  });
+  assert.equal(blockAll.result.status, "ready");
+  assert.deepEqual(blockAll.result.observed?.exposure, {
+    domainAllowListConfigured: false,
+    domainAllowListMatchesPolicy: true,
+    networkAllowListConfigured: false,
+    networkBlockAll: true,
+    outboundProxyConfigured: false,
+    public: false,
+  });
+});
+
+test("v1: upstream's coarse states keep their Castles outcomes", async () => {
+  const states: [string, string, string[]][] = [
+    ["stopped", "stopped", ["sandbox_stopped"]],
+    ["archived", "stopped", ["sandbox_stopped"]],
+    ["destroyed", "unavailable", ["sandbox_destroyed"]],
+    ["transitioning", "unavailable", ["lifecycle_not_settled"]],
+    ["error", "unavailable", ["lifecycle_not_settled"]],
+    ["unknown", "unavailable", ["lifecycle_not_settled"]],
+  ];
+  for (const [state, status, expected] of states) {
+    const { result } = await v1((a) => (a.body.observed.state = state));
+    assert.equal(result.status, status, state);
+    assert.deepEqual(codes(result), expected, state);
+    assert.equal(result.observed?.state, state, state);
+  }
+  const unlisted = await v1((a) => (a.body.observed.state = "paused"));
+  assert.notEqual(unlisted.result.status, "ready");
+  assert.equal(unlisted.result.observed?.state, "unrecognised");
+});
+
+test("v1: renamed resources and the server-selected SDK version are checked", async () => {
+  const { caps, floor } = SUPPORTED_PROFILE.resources;
+  for (const [key, value] of [
+    ["memoryGib", caps.memoryGiB + 1],
+    ["memoryGib", floor.memoryGiB - 1],
+    ["diskGib", caps.diskGiB + 1],
+    ["diskGib", floor.diskGiB - 1],
+  ] as const) {
+    const { result } = await v1((a) => (a.body.observed[key] = value));
+    assert.deepEqual(result.reasons, [{ code: "resources_out_of_policy", field: "resources" }], `${key}=${value}`);
+  }
+  for (const key of ["memoryGib", "diskGib", "cpu"]) {
+    const { result } = await v1((a) => delete a.body.observed[key]);
+    assert.deepEqual(result.reasons, [{ code: "metadata_missing", field: key }], key);
+  }
+  const ready = await v1();
+  assert.deepEqual(ready.result.observed?.resources, {
+    cpu: 2,
+    diskGiB: 10,
+    gpu: 0,
+    matchesTarget: true,
+    memoryGiB: 4,
+  });
+  assert.equal(ready.result.observed?.sdk.version, "0.231.1");
+  for (const version of ["0.230.0", "0.220.0", "0.231.2", 231]) {
+    const { result } = await v1((a) => (a.body.policy.sdkVersion = version));
+    assert.equal(result.status, "incompatible", String(version));
+    assert.deepEqual(result.reasons, [{ code: "sdk_generation_mismatch", field: "policy.sdkVersion" }], String(version));
+  }
+});
+
+test("v1: platform is source policy implied by the qualified snapshot, never an observation", async () => {
+  assert.deepEqual(SUPPORTED_PROFILE.platform, {
+    architecture: "not-pinned",
+    basis: "qualified-snapshot",
+    os: "linux",
+  });
+  const ready = await v1();
+  assert.equal(ready.result.status, "ready");
+  assert.deepEqual(ready.result.observed?.platform, { architecture: null, os: null });
+  assert.equal(JSON.parse(renderJson(ready.result)).sourcePolicy.platform.basis, "qualified-snapshot");
+  // Without the qualified snapshot the platform is unknown, and not ready.
+  for (const snapshot of ["fixture-other-image", null]) {
+    const { result } = await v1((a) => (a.body.observed.snapshot = snapshot));
+    assert.equal(result.status, "incompatible", String(snapshot));
+    assert.deepEqual(
+      codes(result),
+      [snapshot === null ? "metadata_missing" : "image_unqualified"],
+      String(snapshot)
+    );
+  }
+});
+
+test("v1: the profile pins one upstream revision for the contract and the SDK", () => {
+  assert.equal(SUPPORTED_PROFILE.sdk.version, "0.231.1");
+  for (const entry of SOURCE_PINS) {
+    assert.ok(entry.pin.startsWith(`OpenCoven/coven-agents@${V1_UPSTREAM_SHA}:`), entry.pin);
+  }
+  for (const path of [
+    "packages/agent-contracts/src/sandbox-inspection.ts",
+    "lib/runner/sandbox-inspection-http.ts",
+    "lib/runner/transport.ts",
+    "lib/runner/daytona/resource-inspection.ts",
+  ]) {
+    assert.ok(
+      SOURCE_PINS.some((entry) => entry.pin.endsWith(`:${path}`)),
+      path
+    );
+  }
+});
