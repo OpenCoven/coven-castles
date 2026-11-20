@@ -35,9 +35,10 @@ import { parseBinding, type Binding } from "./profile.ts";
  * The owner run route at the traced upstream revision. Sources, all in
  * coven-agents at `revision`: the strict start body and snapshot schemas in
  * `packages/agent-contracts/src/index.ts`, the limits in
- * `packages/agent-contracts/fixtures/agent-runner-v1.json`, the start
- * handler in `lib/runner/http.ts` and the error table in
- * `lib/runner/transport.ts`.
+ * `packages/agent-contracts/contract-descriptor.ts`, the start handler in
+ * `lib/runner/http.ts` and the error table in `lib/runner/transport.ts`.
+ * The manifest hashes every one of these except the start handler, which
+ * was read at the revision, not hashed.
  */
 export const RUN_CONTRACT = Object.freeze({
   apiVersion: "1.0",
@@ -61,8 +62,10 @@ export type RunGate = Readonly<{
 }>;
 
 /**
- * Upstream capabilities a canonically authorized #3 run needs that the
- * pinned revision lacks. Each one blocks the run before the run client is
+ * Capabilities a canonically authorized #3 run needs that the pinned
+ * revision lacks. All but `runtime_verification` are upstream; that one is
+ * Castles #2's, and is still reported with the `upstream_gate_missing`
+ * code, which means "a gate outside #3 is missing". Each one blocks the run before the run client is
  * called. A gate is removed only by a reviewed change that pins the
  * revision delivering it.
  *

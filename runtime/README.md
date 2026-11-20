@@ -8,7 +8,7 @@
   - the adapter, capability-contract and credential-boundary versions;
   - the server-selected SDK version.
 - **Measured fact.** Only the observed snapshot name is measured, and it comes from provider metadata that the owner reads. **Nothing is measured inside the guest**, so a compatible result does not show which harness binary is installed.
-- **Contract hashes.** `contracts` records the SHA-256 of five upstream files at that revision: the sandbox-inspection schema, the run contract, the run's sandbox-binding schema, the runner error table and the contract descriptor that defines the run limits. The owner does not report these hashes at run time. They pin the contract that Castles was written against.
+- **Contract hashes.** `contracts` records the SHA-256 of five upstream files at that revision: the sandbox-inspection schema, the run contract, the run's sandbox-binding schema, the runner error table and the contract descriptor that defines the run limits. The owner does not report these hashes at run time. They pin the contract files Castles was written against. The start handler, which decides which refusal each case gets, was read at the revision but is not hashed.
 
 `verifyRuntime` in `src/run.ts` compares a server-owned report with this manifest:
 
