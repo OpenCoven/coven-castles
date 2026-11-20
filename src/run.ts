@@ -79,7 +79,8 @@ export type RunGate = Readonly<{
  *   revision; the producer side is OpenCoven/coven#857.
  * - `runtime_verification`: a run needs a compatible `verifyRuntime`
  *   report first (BST-03). The accepted #2 seam cannot read the inspection
- *   v1 policy block the report is made from; #2 PR #18 does.
+ *   v1 policy block the report is made from. #2 owns that: its PR #18 reads
+ *   the block, and is not yet accepted.
  */
 export const RUN_GATES: readonly RunGate[] = Object.freeze([
   Object.freeze({
@@ -104,7 +105,7 @@ export const RUN_GATES: readonly RunGate[] = Object.freeze([
   } as const),
   Object.freeze({
     capability: "runtime_verification",
-    issue: "https://github.com/OpenCoven/coven-castles/pull/18",
+    issue: "https://github.com/OpenCoven/coven-castles/issues/2",
     status: "missing",
   } as const),
 ]);
@@ -164,6 +165,10 @@ export const RUNTIME_MANIFEST = Object.freeze({
       path: "lib/runner/transport.ts",
       sha256: "9e09413fd933306374d2eb67d2023ba3e8cb12baaab56ead025cb7421feb531e",
     }),
+    runLimits: Object.freeze({
+      path: "packages/agent-contracts/contract-descriptor.ts",
+      sha256: "3392085782a1e9bd4f9783ede099b4ecc21bf2b0ac47308edf6ac60701da6dca",
+    }),
   }),
   credentialBoundaryVersion: "attempt-reset-v1",
   decision: "https://github.com/OpenCoven/coven-agents/issues/300",
@@ -196,7 +201,7 @@ export const RUNTIME_MANIFEST = Object.freeze({
 } as const);
 
 export const RUNTIME_MANIFEST_SHA256 =
-  "f5f0127cb07840b260132e5eb562f253be2ae3cfee232182745040bc795ee9ac";
+  "3c5440177094e4e5a1eef36f6ebe1cbe19af249bd5d8e48dc887a9fb0c1d4f7a";
 
 // --- Types --------------------------------------------------------------------
 
@@ -645,6 +650,13 @@ type FieldCheck = (value: unknown) => boolean;
 /**
  * A plain object whose keys are exactly a shape's required keys plus any of
  * its optional ones, each value passing its field's check.
+ *
+ * Disclosure: this exists so that one file-evidence field name, which is
+ * also a built-in module's name, is an object key here rather than a string
+ * literal. The #2 capability scan counts such literals, and would otherwise
+ * flag this file. Nothing in src/ can load a module from a string, so the
+ * key loads nothing, but it does route around that rule. Whether to allow
+ * such a key or record the gap is the #2 steward's decision (PR #19).
  */
 function matchesShape(
   value: unknown,

@@ -34,6 +34,10 @@
     "runErrors": {
       "path": "lib/runner/transport.ts",
       "sha256": "9e09413fd933306374d2eb67d2023ba3e8cb12baaab56ead025cb7421feb531e"
+    },
+    "runLimits": {
+      "path": "packages/agent-contracts/contract-descriptor.ts",
+      "sha256": "3392085782a1e9bd4f9783ede099b4ecc21bf2b0ac47308edf6ac60701da6dca"
     }
   },
   "measuredInGuest": false,
