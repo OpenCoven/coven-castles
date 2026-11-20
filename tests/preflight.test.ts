@@ -5301,3 +5301,136 @@ test("v1: the profile pins one upstream revision for the contract and the SDK", 
     );
   }
 });
+
+// --- Second read rv18-7c3e91a4 on PR #18 at f902a80 -------------------------
+// Each test below failed at f902a80. Findings 2 and 3: an answer held in
+// memory is not JSON, so the strict-key check must see every own key and
+// each field must be read once. Finding 4: upstream's 500 is retryable.
+// Finding 5: a refusal must carry the keys v1 requires for it.
+
+/** Runs the ready v1 answer after `edit`, through an in-memory client. */
+async function v1Answer(edit: (answer: any) => unknown) {
+  const answer = v1Ready();
+  const replaced = edit(answer);
+  return runPreflight(
+    VALID_ENV,
+    tripwireClient(() => replaced ?? answer).client
+  );
+}
+
+test("v1 review: a key strict checking cannot see by enumeration still refuses the answer", async () => {
+  const cases: [string, (answer: any) => unknown][] = [
+    [
+      "non-enumerable platform on observed",
+      (a) =>
+        Object.defineProperty(a.body.observed, "platform", {
+          enumerable: false,
+          value: { os: "fixture-os" },
+        }) && undefined,
+    ],
+    [
+      "undefined keys inherited by observed",
+      (a) => {
+        a.body.observed = Object.assign(
+          Object.create({ platform: { os: "fixture-os" } }),
+          a.body.observed
+        );
+      },
+    ],
+    [
+      "symbol key on the body",
+      (a) => {
+        a.body[Symbol("fixture")] = "fixture-extra";
+      },
+    ],
+    [
+      "body that is a class instance",
+      (a) => {
+        class FixtureBody {}
+        a.body = Object.assign(new FixtureBody(), a.body);
+      },
+    ],
+    [
+      "record that is a class instance",
+      (a) => {
+        class FixtureRecord {}
+        a.body.record = Object.assign(new FixtureRecord(), a.body.record);
+      },
+    ],
+    [
+      "identity with a non-enumerable extra key",
+      (a) =>
+        Object.defineProperty(a.body.observed.identity, "fixtureExtra", {
+          enumerable: false,
+          value: true,
+        }) && undefined,
+    ],
+  ];
+  for (const [label, edit] of cases) {
+    const result = await v1Answer(edit);
+    assert.equal(result.status, "unavailable", label);
+    assert.deepEqual(codes(result), ["inspection_contract_violation"], label);
+    assert.equal(result.observed, null, label);
+  }
+  // A null-prototype object is plain, as JSON parsing in another realm or a
+  // schema library can produce it.
+  const bare = await v1Answer((a) => {
+    a.body.observed = Object.assign(Object.create(null), a.body.observed);
+  });
+  assert.equal(bare.status, "ready");
+});
+
+test("v1 review: each field of an answer is read once, so status and output agree", async () => {
+  let reads = 0;
+  const flips = [false, false, true];
+  const result = await v1Answer((a) => {
+    Object.defineProperty(a.body.observed, "public", {
+      enumerable: true,
+      get: () => flips[Math.min(reads++, flips.length - 1)],
+    });
+  });
+  assert.equal(reads, 1);
+  assert.equal(result.status, "ready");
+  assert.equal(result.observed?.exposure.public, false);
+});
+
+test("v1 review: upstream's retryable 500 is provider_unavailable", async () => {
+  const result = await runPreflight(
+    VALID_ENV,
+    tripwireClient(() => ({
+      body: { error: { code: "internal_error", retryable: true } },
+      status: 500,
+    })).client
+  );
+  assert.equal(result.status, "unavailable");
+  assert.deepEqual(codes(result), ["provider_unavailable"]);
+  assert.equal(result.observed, null);
+});
+
+test("v1 review: a refusal without the keys v1 requires for it is a contract violation", async () => {
+  const policy = v1Ready().body.policy;
+  const bound = { ...V1_DB_RECORD, sandboxId: "fixture-sandbox-0001" };
+  const violations: [string, Record<string, unknown>][] = [
+    ["not_found without record or policy", { outcome: "not_found" }],
+    ["not_found without policy", { outcome: "not_found", record: bound }],
+    ["not_found without record", { outcome: "not_found", policy }],
+    ["not_found with a text record", { outcome: "not_found", policy, record: "x" }],
+    ["not_found with a number policy", { outcome: "not_found", policy: 5, record: bound }],
+    ["not_found with an undefined policy key", { outcome: "not_found", policy: { ...policy, fixtureExtra: 1 }, record: bound }],
+    ["not_found with a record key undefined by v1", { outcome: "not_found", policy, record: { ...bound, fixtureExtra: 1 } }],
+    ["ambiguous without record", { outcome: "ambiguous", reason: "no_recorded_sandbox" }],
+    ["returned_id_mismatch without record", { outcome: "ambiguous", reason: "returned_id_mismatch" }],
+    ["database ambiguity disclosing a sandbox ID", { outcome: "ambiguous", reason: "generation_mismatch", record: bound }],
+    ["ambiguous with a mistyped record", { outcome: "ambiguous", reason: "pending_lifecycle", record: { ...V1_DB_RECORD, generation: "3" } }],
+    ["unavailable without source", { outcome: "unavailable" }],
+    ["unavailable from an unknown source", { outcome: "unavailable", source: "zzz" }],
+  ];
+  for (const [label, body] of violations) {
+    const result = await runPreflight(
+      VALID_ENV,
+      tripwireClient(() => ({ body: { ...body, version: 1 }, status: 200 })).client
+    );
+    assert.equal(result.status, "unavailable", label);
+    assert.deepEqual(codes(result), ["inspection_contract_violation"], label);
+  }
+});
