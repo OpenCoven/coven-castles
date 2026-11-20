@@ -5459,3 +5459,197 @@ test("v1 review: a refusal without the keys v1 requires for it is a contract vio
     assert.deepEqual(codes(result), ["inspection_contract_violation"], label);
   }
 });
+
+// Third read rv18b-f2bd3f93 on PR #18, at 51bf206.
+
+test("v1 third read: a policy field Castles does not read must still have v1's shape", async () => {
+  const pin257 = "a".repeat(257);
+  const harness = { id: "fixture-harness", package: "fixture-package", version: "1.0.0" };
+  const edits: [string, (policy: any) => unknown][] = [
+    ["only the two read keys", (p) => {
+      for (const key of ["adapterVersion", "capabilityContractVersion", "harnesses", "resources", "snapshotName", "target"]) delete p[key];
+    }],
+    ["adapterVersion absent", (p) => delete p.adapterVersion],
+    ["adapterVersion empty", (p) => (p.adapterVersion = "")],
+    ["adapterVersion a number", (p) => (p.adapterVersion = 1)],
+    ["capabilityContractVersion too long", (p) => (p.capabilityContractVersion = pin257)],
+    ["snapshotName absent", (p) => delete p.snapshotName],
+    ["snapshotName null", (p) => (p.snapshotName = null)],
+    ["target empty", (p) => (p.target = "")],
+    ["target too long", (p) => (p.target = "u".repeat(65))],
+    ["harnesses absent", (p) => delete p.harnesses],
+    ["harnesses an object", (p) => (p.harnesses = {})],
+    ["harnesses too many", (p) => (p.harnesses = Array.from({ length: 17 }, () => ({ ...harness })))],
+    ["harness with an extra key", (p) => (p.harnesses = [{ ...harness, fixtureExtra: 1 }])],
+    ["harness without a version", (p) => (p.harnesses = [{ id: "x", package: "y" }])],
+    ["harness with a number id", (p) => (p.harnesses = [{ ...harness, id: 1 }])],
+    ["harness that is text", (p) => (p.harnesses = ["x"])],
+    ["resources absent", (p) => delete p.resources],
+    ["resources without cpu", (p) => delete p.resources.cpu],
+    ["resources with an extra key", (p) => (p.resources.gpu = 0)],
+    ["resources cpu above 4096", (p) => (p.resources.cpu = 4097)],
+    ["resources cpu negative", (p) => (p.resources.cpu = -1)],
+    ["resources cpu fractional", (p) => (p.resources.cpu = 2.5)],
+    ["resources cpu text", (p) => (p.resources.cpu = "2")],
+  ];
+  for (const [label, edit] of edits) {
+    const { result } = await v1((a) => void edit(a.body.policy));
+    assert.equal(result.status, "unavailable", label);
+    assert.deepEqual(codes(result), ["inspection_contract_violation"], label);
+    assert.equal(result.observed, null, label);
+  }
+  const accepted: [string, (policy: any) => unknown][] = [
+    ["sixteen harnesses", (p) => (p.harnesses = Array.from({ length: 16 }, () => ({ ...harness })))],
+    ["a 256-character pin", (p) => (p.adapterVersion = "a".repeat(256))],
+    ["resources at the v1 bounds", (p) => (p.resources = { cpu: 0, diskGib: 4096, memoryGib: 4096 })],
+  ];
+  for (const [label, edit] of accepted) {
+    const { result } = await v1((a) => void edit(a.body.policy));
+    assert.equal(result.status, "ready", label);
+  }
+});
+
+test("v1 third read: a refusal's record and policy must match v1 exactly", async () => {
+  const policy = v1Ready().body.policy;
+  const bound = { ...V1_DB_RECORD, sandboxId: "fixture-sandbox-0001" };
+  const violations: [string, Record<string, unknown>][] = [
+    ["not_found with an empty policy", { outcome: "not_found", policy: {}, record: bound }],
+    ["not_found with a policy missing sdkVersion", { outcome: "not_found", policy: { ...policy, sdkVersion: undefined }, record: bound }],
+    ["not_found with a number sdkVersion", { outcome: "not_found", policy: { ...policy, sdkVersion: 231 }, record: bound }],
+    ["not_found with an unknown lifecycle", { outcome: "not_found", policy, record: { ...bound, lifecycle: "zzz" } }],
+    ["not_found with an unknown fence", { outcome: "not_found", policy, record: { ...bound, fence: "zzz" } }],
+    ["not_found with a negative generation", { outcome: "not_found", policy, record: { ...bound, generation: -1 } }],
+    ["not_found with an empty sandbox ID", { outcome: "not_found", policy, record: { ...bound, sandboxId: "" } }],
+    ["not_found with a sandbox ID not an identifier", { outcome: "not_found", policy, record: { ...bound, sandboxId: "-fixture" } }],
+    ["not_found with a sandbox ID too long", { outcome: "not_found", policy, record: { ...bound, sandboxId: "s".repeat(129) } }],
+    ["ambiguous with an unknown lifecycle", { outcome: "ambiguous", reason: "pending_lifecycle", record: { ...V1_DB_RECORD, lifecycle: "zzz" } }],
+    ["ambiguous with an agent ID not an identifier", { outcome: "ambiguous", reason: "no_recorded_sandbox", record: { ...V1_DB_RECORD, agentId: "fixture agent" } }],
+    ["returned_id_mismatch with an unknown fence", { outcome: "ambiguous", reason: "returned_id_mismatch", record: { ...bound, fence: "zzz" } }],
+  ];
+  for (const [label, body] of violations) {
+    const result = await runPreflight(
+      VALID_ENV,
+      tripwireClient(() => ({ body: { ...body, version: 1 }, status: 200 })).client
+    );
+    assert.equal(result.status, "unavailable", label);
+    assert.deepEqual(codes(result), ["inspection_contract_violation"], label);
+  }
+});
+
+test("v1 third read: a refusal about another agent or sandbox is never read as this binding's", async () => {
+  const policy = v1Ready().body.policy;
+  const bound = { ...V1_DB_RECORD, sandboxId: "fixture-sandbox-0001" };
+  const other = "fixture-agent-9999";
+  const cases: [string, Record<string, unknown>, string, string][] = [
+    ["not_found about another agent", { outcome: "not_found", policy, record: { ...bound, agentId: other } }, "unauthorized", "owner_mismatch"],
+    ["not_found about another sandbox", { outcome: "not_found", policy, record: { ...bound, sandboxId: "fixture-sandbox-9999" } }, "unauthorized", "binding_mismatch"],
+    ["returned_id_mismatch about another agent", { outcome: "ambiguous", reason: "returned_id_mismatch", record: { ...bound, agentId: other } }, "unauthorized", "owner_mismatch"],
+    ["returned_id_mismatch about another sandbox", { outcome: "ambiguous", reason: "returned_id_mismatch", record: { ...bound, sandboxId: "fixture-sandbox-9999" } }, "unauthorized", "binding_mismatch"],
+  ];
+  for (const reason of ["generation_mismatch", "no_recorded_sandbox", "pending_lifecycle", "sandbox_id_mismatch"]) {
+    cases.push([`${reason} about another agent`, { outcome: "ambiguous", reason, record: { ...V1_DB_RECORD, agentId: other } }, "unauthorized", "owner_mismatch"]);
+  }
+  for (const [label, body, status, code] of cases) {
+    const result = await runPreflight(
+      VALID_ENV,
+      tripwireClient(() => ({ body: { ...body, version: 1 }, status: 200 })).client
+    );
+    assert.equal(result.status, status, label);
+    assert.deepEqual(codes(result), [code], label);
+    assert.equal(result.observed, null, label);
+  }
+});
+
+test("v1 third read: a non-200 answer's body is never read or copied", async () => {
+  let nested: unknown = 1;
+  for (let level = 0; level < 10; level += 1) nested = { nested };
+  const bodies: [string, () => unknown][] = [
+    ["a throwing getter", () => Object.defineProperty({}, "error", {
+      enumerable: true,
+      get() {
+        throw new Error("fixture: a refusal body must not be read");
+      },
+    })],
+    ["a date", () => ({ when: new Date(0) })],
+    ["ten levels of JSON", () => nested],
+    ["a 1,001-entry array", () => Array.from({ length: 1_001 }, () => 0)],
+  ];
+  const refusals: [number, string, string][] = [
+    [401, "unauthorized", "unauthenticated"],
+    [403, "unauthorized", "owner_mismatch"],
+    [404, "unauthorized", "owner_mismatch"],
+    [429, "unavailable", "provider_unavailable"],
+    [500, "unavailable", "provider_unavailable"],
+    [503, "unavailable", "provider_unavailable"],
+  ];
+  for (const [status, expected, code] of refusals) {
+    for (const [label, body] of bodies) {
+      let bodyReads = 0;
+      const answer = Object.defineProperty({ status }, "body", {
+        enumerable: true,
+        get() {
+          bodyReads += 1;
+          return body();
+        },
+      });
+      const result = await runPreflight(VALID_ENV, tripwireClient(() => answer).client);
+      assert.equal(result.status, expected, `${status} ${label}`);
+      assert.deepEqual(codes(result), [code], `${status} ${label}`);
+      assert.equal(bodyReads, 0, `${status} ${label}`);
+    }
+  }
+  // The answer itself is still strict: a key besides status and body is a
+  // contract violation whatever the status.
+  const extra = await runPreflight(
+    VALID_ENV,
+    tripwireClient(() => ({ body: null, fixtureExtra: 1, status: 401 })).client
+  );
+  assert.deepEqual(codes(extra), ["inspection_contract_violation"]);
+});
+
+test("v1 third read: the copy stops at an overall size limit", async () => {
+  let reads = 0;
+  const shared = (depth: number): unknown => {
+    const node: Record<string, unknown> = {};
+    for (let index = 0; index < 16; index += 1) {
+      Object.defineProperty(node, `k${index}`, {
+        enumerable: true,
+        get() {
+          reads += 1;
+          return depth === 0 ? 0 : child;
+        },
+      });
+    }
+    const child = depth === 0 ? 0 : shared(depth - 1);
+    return node;
+  };
+  // Within the depth limit: 16 + 256 + 4,096 + 65,536 values.
+  const result = await v1Answer((a) => {
+    a.body.observed.identity = shared(3);
+  });
+  assert.equal(result.status, "unavailable");
+  assert.deepEqual(codes(result), ["inspection_contract_violation"]);
+  assert.ok(reads <= 20_000, `read ${reads} values`);
+});
+
+test("v1 third read: an inherited value never fills an absent key", async () => {
+  const baseline = await v1Answer((a) => {
+    delete a.body.observed.public;
+    delete a.body.observed.volumes;
+  });
+  assert.notEqual(baseline.status, "ready");
+  const base = Object.prototype as Record<string, unknown>;
+  Object.defineProperty(base, "public", { configurable: true, value: false });
+  Object.defineProperty(base, "volumes", { configurable: true, value: 0 });
+  try {
+    const polluted = await v1Answer((a) => {
+      delete a.body.observed.public;
+      delete a.body.observed.volumes;
+    });
+    assert.equal(polluted.status, baseline.status);
+    assert.deepEqual(codes(polluted), codes(baseline));
+  } finally {
+    delete base.public;
+    delete base.volumes;
+  }
+});
