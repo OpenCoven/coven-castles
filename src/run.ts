@@ -41,11 +41,13 @@ import { parseBinding, type Binding } from "./profile.ts";
  */
 export const RUN_CONTRACT = Object.freeze({
   apiVersion: "1.0",
+  maxCommandLength: 8_000,
   maxCommandResults: 256,
   maxDetailsLength: 2_000,
+  maxEventOutputLength: 100_000,
   maxFileOperations: 256,
   maxMessageLength: 500,
-  maxOutputLength: 100_000,
+  maxPathLength: 1_024,
   maxRequestIdLength: 128,
   maxTaskLength: 40_000,
   revision: "0696af127207fb82cce734cd8c4ffa437d6f3502",
@@ -64,13 +66,20 @@ export type RunGate = Readonly<{
  * called. A gate is removed only by a reviewed change that pins the
  * revision delivering it.
  *
- * - `read_only_execution`: every owner run at the pin is unrestricted.
- *   Server-selected read-only execution is coven-agents#299, carried by an
- *   unmerged, unreviewed pull request.
+ * - `read_only_execution`: upstream has a read-only execution mode at the
+ *   pin, but the owner run route never selects it, so every owner run is
+ *   unrestricted. Selecting it server-side is coven-agents#299, carried by
+ *   an unmerged, unreviewed pull request.
  * - `attempt_reference`: the public run contract reports no attempt.
- * - `concurrent_run_denial`: a second bound run is queued, not refused.
+ * - `concurrent_run_denial`: a second bound run is refused only while
+ *   another attempt is dispatching or running; one submitted while the
+ *   first is still queued is admitted and queued behind it (read from the
+ *   admission query, not observed).
  * - `familiar_revision`: admission reads no familiar root or identity
  *   revision; the producer side is OpenCoven/coven#857.
+ * - `runtime_verification`: a run needs a compatible `verifyRuntime`
+ *   report first (BST-03). The accepted #2 seam cannot read the inspection
+ *   v1 policy block the report is made from; #2 PR #18 does.
  */
 export const RUN_GATES: readonly RunGate[] = Object.freeze([
   Object.freeze({
@@ -93,6 +102,11 @@ export const RUN_GATES: readonly RunGate[] = Object.freeze([
     issue: "https://github.com/OpenCoven/coven/issues/857",
     status: "missing",
   } as const),
+  Object.freeze({
+    capability: "runtime_verification",
+    issue: "https://github.com/OpenCoven/coven-castles/pull/18",
+    status: "missing",
+  } as const),
 ]);
 
 /**
@@ -103,8 +117,11 @@ export const RUN_GATES: readonly RunGate[] = Object.freeze([
  * bound-sandbox dispatch check (`daytona/sandbox.ts`). A deployment that
  * configures other values is refused here, never admitted: the error is a
  * false refusal, not a false ready. The owner also checks what Castles does
- * not observe at the accepted #2 revision (the domain list, labels, proxy);
- * those stay the owner's decision at dispatch.
+ * not observe at the accepted #2 revision: domain-list equality, the
+ * ownership and configuration labels, an outbound proxy, and a network
+ * allow list (#2 reports one count for both lists, so a network list cannot
+ * be told apart from domain entries). Those stay the owner's decision at
+ * dispatch.
  */
 export const DISPATCH_EXPECTATION = Object.freeze({
   autoArchiveInterval: 10_080,
@@ -114,6 +131,7 @@ export const DISPATCH_EXPECTATION = Object.freeze({
   memoryGiB: 4,
   networkBlockAll: false,
   state: "started",
+  target: "us",
 } as const);
 
 /**
@@ -137,6 +155,14 @@ export const RUNTIME_MANIFEST = Object.freeze({
       apiVersion: "1.0",
       path: "packages/agent-contracts/src/index.ts",
       sha256: "59ce690c306e526386c57f26124d64c8c939c1109b573ebed277b18c86325611",
+    }),
+    runBinding: Object.freeze({
+      path: "packages/agent-contracts/src/sandbox-binding.ts",
+      sha256: "7aba60bd589b25e6673877b358ae6d1db5410ad82926d3f091b77c298a13e79f",
+    }),
+    runErrors: Object.freeze({
+      path: "lib/runner/transport.ts",
+      sha256: "9e09413fd933306374d2eb67d2023ba3e8cb12baaab56ead025cb7421feb531e",
     }),
   }),
   credentialBoundaryVersion: "attempt-reset-v1",
@@ -170,7 +196,7 @@ export const RUNTIME_MANIFEST = Object.freeze({
 } as const);
 
 export const RUNTIME_MANIFEST_SHA256 =
-  "2339fd8a07d9cc01a1fe842bf2e623f83c26d6b68d39c38a61153721e28bb8b6";
+  "f5f0127cb07840b260132e5eb562f253be2ae3cfee232182745040bc795ee9ac";
 
 // --- Types --------------------------------------------------------------------
 
@@ -357,7 +383,7 @@ function plainArray(value: unknown, max: number): unknown[] | null {
 
 const CANONICAL_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u;
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?Z$/u;
 const DIGEST = /^[0-9a-f]{64}$/u;
 
 function isCanonicalUuid(value: unknown): value is string {
@@ -371,6 +397,21 @@ function isBounded(value: unknown, max: number): value is string {
     value.length >= 1 &&
     value.length <= max &&
     value.trim() === value
+  );
+}
+
+/**
+ * A UTC instant in upstream's datetime form that names a real calendar
+ * time: an impossible date such as 30 February is refused, not rolled over.
+ */
+function isInstant(value: unknown): value is string {
+  if (typeof value !== "string" || !ISO_INSTANT.test(value)) {
+    return false;
+  }
+  const time = Date.parse(value);
+  return (
+    !Number.isNaN(time) &&
+    new Date(time).toISOString().slice(0, 19) === value.slice(0, 19)
   );
 }
 
@@ -464,6 +505,7 @@ export function checkDispatchParity(
   const expected = DISPATCH_EXPECTATION;
   const checks: [string, unknown, unknown][] = [
     ["state", observed.state, expected.state],
+    ["target", observed.target, expected.target],
     ["exposure.networkBlockAll", observed.exposure?.networkBlockAll, expected.networkBlockAll],
     ["lifecycle.autoStopInterval", observed.lifecycle?.autoStopInterval, expected.autoStopInterval],
     ["lifecycle.autoArchiveInterval", observed.lifecycle?.autoArchiveInterval, expected.autoArchiveInterval],
@@ -553,9 +595,88 @@ function runError(value: unknown): Map<string, unknown> | null {
   return error;
 }
 
-function evidenceList(value: unknown, max: number): boolean {
+function evidenceList(
+  value: unknown,
+  max: number,
+  isItem: (item: unknown) => boolean
+): boolean {
   const items = plainArray(value, max);
-  return items !== null && items.every((item) => plainEntries(item) !== null);
+  return items !== null && items.every(isItem);
+}
+
+const FILE_OPERATIONS: ReadonlySet<unknown> = new Set(["create", "delete", "modify"]);
+
+/** One command result, to the pinned schema (second read rv19-c5e229e6). */
+function isCommandEvidence(value: unknown): boolean {
+  const entry = strictRecord(
+    value,
+    ["command", "exitCode", "stderr", "stdout"],
+    ["completedAt", "startedAt"]
+  );
+  if (entry === null) {
+    return false;
+  }
+  const exitCode = entry.get("exitCode");
+  const output = (key: string) => {
+    const text = entry.get(key);
+    return typeof text === "string" && text.length <= RUN_CONTRACT.maxEventOutputLength;
+  };
+  const startedAt = entry.get("startedAt");
+  const completedAt = entry.get("completedAt");
+  return (
+    isBounded(entry.get("command"), RUN_CONTRACT.maxCommandLength) &&
+    (exitCode === null ||
+      (typeof exitCode === "number" && Number.isSafeInteger(exitCode))) &&
+    output("stderr") &&
+    output("stdout") &&
+    (!entry.has("startedAt") || isInstant(startedAt)) &&
+    (!entry.has("completedAt") || isInstant(completedAt)) &&
+    // A command cannot complete before it started.
+    !(
+      isInstant(startedAt) &&
+      isInstant(completedAt) &&
+      Date.parse(completedAt) < Date.parse(startedAt)
+    )
+  );
+}
+
+type FieldCheck = (value: unknown) => boolean;
+
+/**
+ * A plain object whose keys are exactly a shape's required keys plus any of
+ * its optional ones, each value passing its field's check.
+ */
+function matchesShape(
+  value: unknown,
+  required: Readonly<Record<string, FieldCheck>>,
+  optional: Readonly<Record<string, FieldCheck>>
+): boolean {
+  const entry = strictRecord(value, Object.keys(required), Object.keys(optional));
+  if (entry === null) {
+    return false;
+  }
+  return (
+    Object.entries(required).every(([key, check]) => check(entry.get(key))) &&
+    Object.entries(optional).every(
+      ([key, check]) => !entry.has(key) || check(entry.get(key))
+    )
+  );
+}
+
+/** One file operation, to the pinned schema. */
+const FILE_EVIDENCE = Object.freeze({
+  optional: Object.freeze({
+    byteLength: (value: unknown) => isCount(value, Number.MAX_SAFE_INTEGER),
+    occurredAt: isInstant,
+  }),
+  required: Object.freeze({
+    operation: (value: unknown) => FILE_OPERATIONS.has(value),
+    path: (value: unknown) => isBounded(value, RUN_CONTRACT.maxPathLength),
+  }),
+});
+
+function isFileEvidence(value: unknown): boolean {
+  return matchesShape(value, FILE_EVIDENCE.required, FILE_EVIDENCE.optional);
 }
 
 const SNAPSHOT_KEYS = [
@@ -582,25 +703,23 @@ function parseAccepted(body: unknown, plan: RunPlan): RunOutcome {
   if (run === null) {
     return VIOLATION;
   }
-  const instantOrNull = (value: unknown) =>
-    value === null || (typeof value === "string" && ISO_INSTANT.test(value));
+  const instantOrNull = (value: unknown) => value === null || isInstant(value);
   const executed = run.has("executedSandbox")
     ? strictRecord(run.get("executedSandbox"), ["bindingDigest", "generation"])
     : undefined;
   if (
     !isCanonicalUuid(run.get("agentId")) ||
     run.get("apiVersion") !== RUN_CONTRACT.apiVersion ||
-    !evidenceList(run.get("commandEvidence"), RUN_CONTRACT.maxCommandResults) ||
-    !evidenceList(run.get("fileEvidence"), RUN_CONTRACT.maxFileOperations) ||
+    !evidenceList(run.get("commandEvidence"), RUN_CONTRACT.maxCommandResults, isCommandEvidence) ||
+    !evidenceList(run.get("fileEvidence"), RUN_CONTRACT.maxFileOperations, isFileEvidence) ||
     !instantOrNull(run.get("completedAt")) ||
     !instantOrNull(run.get("startedAt")) ||
-    typeof run.get("createdAt") !== "string" ||
-    !ISO_INSTANT.test(run.get("createdAt") as string) ||
+    !isInstant(run.get("createdAt")) ||
     (run.has("error") && run.get("error") !== null && runError(run.get("error")) === null) ||
     !isCanonicalUuid(run.get("id")) ||
     !isCanonicalUuid(run.get("operationId")) ||
     typeof run.get("output") !== "string" ||
-    (run.get("output") as string).length > RUN_CONTRACT.maxOutputLength ||
+    (run.get("output") as string).length > RUN_CONTRACT.maxEventOutputLength ||
     !RUN_STATUSES.has(run.get("status")) ||
     !isBounded(run.get("task"), RUN_CONTRACT.maxTaskLength) ||
     executed === null ||
@@ -834,7 +953,7 @@ function result(
  * 1. the #2 binding and the request are checked, with no call;
  * 2. #2 preflight runs (one read-only inspection) and must be `ready`;
  * 3. the observation must meet the owner's exact dispatch configuration;
- * 4. every upstream gate must be present.
+ * 4. every upstream gate must be present, runtime verification included.
  *
  * While any gate is missing the run client is never called, whatever it
  * is: the result is `blocked` and names each missing capability. The one
@@ -857,8 +976,19 @@ export async function runTask(
     return result("refused", [planned.reason]);
   }
   const { requestDigest } = planned.plan;
+  // The environment is read once, by the parse above. Preflight gets the
+  // parsed binding back as a fixed record, so it inspects exactly the
+  // binding the request was planned for (second read rv19-c5e229e6,
+  // finding 4).
+  const { binding } = parsed;
+  const fixed = Object.freeze({
+    CASTLES_OWNER_AGENT_ID: binding.agentId,
+    CASTLES_PROFILE: binding.profile,
+    CASTLES_SANDBOX_GENERATION: String(binding.expectedGeneration),
+    CASTLES_SANDBOX_ID: binding.sandboxId,
+  });
   const preflight = await runPreflight(
-    environment,
+    fixed,
     clients.inspection,
     options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }
   );

@@ -26,6 +26,14 @@
       "apiVersion": "1.0",
       "path": "packages/agent-contracts/src/index.ts",
       "sha256": "59ce690c306e526386c57f26124d64c8c939c1109b573ebed277b18c86325611"
+    },
+    "runBinding": {
+      "path": "packages/agent-contracts/src/sandbox-binding.ts",
+      "sha256": "7aba60bd589b25e6673877b358ae6d1db5410ad82926d3f091b77c298a13e79f"
+    },
+    "runErrors": {
+      "path": "lib/runner/transport.ts",
+      "sha256": "9e09413fd933306374d2eb67d2023ba3e8cb12baaab56ead025cb7421feb531e"
     }
   },
   "measuredInGuest": false,
