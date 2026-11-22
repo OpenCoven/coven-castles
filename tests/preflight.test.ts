@@ -3624,6 +3624,44 @@ test("the src/ registry counts a row only in a table body, and refuses raw HTML 
       "beta.ts: reserved src/ name has no row in docs/ownership.md",
     ], doc);
   }
+  // PR #20 read rv20d-04e82d07: a header and separator with different cell
+  // counts render as a paragraph, not a table; so does a row of another width.
+  for (const doc of [
+    `${without}\n${header}\n| --- | --- |\n${betaYes}\n`,
+    `${without}\n${header}\n| --- | --- | --- | --- |\n| \`src/beta.ts\` | #3 | yes |\n`,
+  ]) {
+    assert.deepEqual(check(doc, "alpha.ts", "beta.ts", "gamma.ts"), [
+      "beta.ts: a src/ row outside a table body in docs/ownership.md",
+      "beta.ts: not listed in docs/ownership.md",
+      "beta.ts: reserved src/ name has no row in docs/ownership.md",
+    ], doc);
+  }
+  // An escaped pipe makes the page and the parser read different cells.
+  assert.ok(
+    check(REGISTRY_FIXTURE.replace(beta, "| `src/beta.ts` | #3 \\| yes | not yet |"), "alpha.ts", "beta.ts", "gamma.ts").includes(
+      "beta.ts: a backslash in a registry row in docs/ownership.md"
+    )
+  );
+  // A reserved name written any other way is refused, not ignored.
+  for (const decoy of [
+    "| ``src/beta.ts`` | #3 | yes | |",
+    "| &#96;src/beta.ts&#96; | #3 | yes | |",
+    "| src/beta.ts | #3 | yes | |",
+    "Note: src/beta.ts is ready.",
+  ]) {
+    assert.ok(
+      check(`${REGISTRY_FIXTURE}\n${decoy}\n`, "alpha.ts", "gamma.ts").includes(
+        "beta.ts: mentioned outside a counted row in docs/ownership.md"
+      ),
+      decoy
+    );
+  }
+  // A src/ code span in a later cell is not a row.
+  assert.ok(
+    check(REGISTRY_FIXTURE.replace("| `src/gamma.ts` | Shared entrypoint |", "| `src/gamma.ts` | Shared entrypoint |\n| `docs/x.md` | see `src/beta.ts` |"), "alpha.ts", "gamma.ts").includes(
+      "beta.ts: a src/ row outside a table body in docs/ownership.md"
+    )
+  );
   // Forms the renderer hides or folds, each refused outright.
   for (const hider of [
     `[x]: /u '\n${betaYes}\n'`,
