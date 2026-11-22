@@ -3496,16 +3496,41 @@ test("the src/ registry admits only a flipped Exists cell, never a new or hidden
   ]);
   // Rows a reader of the rendered page would not see.
   assert.deepEqual(check(`${without}\n\`\`\`\n| \`src/beta.ts\` | #3 | yes | |\n\`\`\`\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+    "docs/ownership.md: code fences and HTML comments are not allowed in the registry document",
     "beta.ts: row inside a code fence or HTML comment in docs/ownership.md",
   ]);
   assert.deepEqual(check(`${without}\n<!--\n| \`src/beta.ts\` | #3 | yes | |\n-->\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+    "docs/ownership.md: code fences and HTML comments are not allowed in the registry document",
     "beta.ts: row inside a code fence or HTML comment in docs/ownership.md",
   ]);
+  // Fence and comment styles a line-by-line parser can misread (PR #20 read
+  // rv20b-73648cb1, F1): the document may hold none at all.
+  const hiders = [
+    "~~~\n| `src/beta.ts` | #3 | yes | |\n~~~",
+    "   ```\n| `src/beta.ts` | #3 | yes | |\n   ```",
+    "````\n```\n| `src/beta.ts` | #3 | yes | |\n````",
+    "a --> b <!-- c\n| `src/beta.ts` | #3 | yes | |\n-->",
+  ];
+  for (const hider of hiders) {
+    assert.ok(
+      check(`${without}\n${hider}\n`, "alpha.ts", "beta.ts", "gamma.ts").includes(
+        "docs/ownership.md: code fences and HTML comments are not allowed in the registry document"
+      ),
+      hider
+    );
+  }
   // Any heading ends a section; only the two named sections list src/ files.
   assert.deepEqual(check(without.replace("## Shared files", "### Aside\n\n| `src/beta.ts` | #3 | yes | |\n\n## Shared files"), "alpha.ts", "beta.ts", "gamma.ts"), [
     "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
   ]);
   assert.deepEqual(check(without.replace("## Shared files", "# Other\n\n| `src/beta.ts` | #3 | yes | |\n\n## Shared files"), "alpha.ts", "beta.ts", "gamma.ts"), [
+    "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
+  ]);
+  // A setext heading and an indented heading also end a section (F2).
+  assert.deepEqual(check(without.replace("## Shared files", "Aside\n-----\n\n| `src/beta.ts` | #3 | yes | |\n\n## Shared files"), "alpha.ts", "beta.ts", "gamma.ts"), [
+    "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
+  ]);
+  assert.deepEqual(check(without.replace("## Shared files", "  ### Aside\n\n| `src/beta.ts` | #3 | yes | |\n\n## Shared files"), "alpha.ts", "beta.ts", "gamma.ts"), [
     "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
   ]);
   assert.deepEqual(check(`${without}\n## Implementation paths\n\n| \`src/beta.ts\` | #3 | yes | |\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
@@ -3514,7 +3539,7 @@ test("the src/ registry admits only a flipped Exists cell, never a new or hidden
   ]);
 });
 
-test("the src/ tree reader refuses a symlink rather than reading it as empty (PR #20 read rv20-8fd6a4b7, N3)", () => {
+test("the capability scan refuses a symlink under src/ rather than reading it as empty (PR #20 read rv20-8fd6a4b7, N3)", () => {
   const directory = mkdtempSync(join(tmpdir(), "castles-src-"));
   const outside = mkdtempSync(join(tmpdir(), "castles-outside-"));
   try {
