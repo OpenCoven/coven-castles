@@ -5654,3 +5654,106 @@ test("v1 third read: an inherited value never fills an absent key", async () => 
     delete base.volumes;
   }
 });
+
+// #322: negotiated detail mode. Synthetic input, never live readiness.
+const DETAIL_OPTIONS = { includeProviderMetadata: true } as const;
+const DETAIL_FIELDS = ["autoDestroyAtConfigured", "warmPool", "linkedSandbox", "volumes"] as const;
+function detailReady() {
+  const answer = v1Ready();
+  answer.body.observed.providerMetadata = {
+    autoDestroyAtConfigured: false, warmPool: false, linkedSandbox: false,
+    volumes: 0, platform: { architecture: null, os: null },
+  };
+  return answer;
+}
+async function detailCase(edit: (answer: any) => void = () => undefined) {
+  const answer = detailReady(); edit(answer);
+  const wire = tripwireClient(() => answer);
+  const result = await runPreflight(VALID_ENV, wire.client, DETAIL_OPTIONS);
+  assert.deepEqual(wire.calls, ["inspectBoundSandbox"]);
+  assert.equal(isLiveReady(result), false);
+  return { result, wire };
+}
+test("#322 detail: negotiation forwards literal true and keeps default v1 strict", async () => {
+  const { result, wire } = await detailCase();
+  assert.equal(result.status, "ready");
+  assert.equal((wire.requests[0] as any).includeProviderMetadata, true);
+  assert.equal(result.observed?.lifecycle.autoDestroyAt, "absent");
+  assert.deepEqual(result.observed?.attachments, { warmPool: false, linkedSandbox: false, volumes: 0 });
+  const unsolicited = tripwireClient(detailReady);
+  const legacy = await runPreflight(VALID_ENV, unsolicited.client);
+  assert.deepEqual(codes(legacy), ["inspection_contract_violation"]);
+});
+for (const field of DETAIL_FIELDS) {
+  test(`#322 detail: unknown ${field} never falls back to legacy absence`, async () => {
+    const { result } = await detailCase(a => a.body.observed.providerMetadata[field] = null);
+    assert.equal(result.status, "incompatible");
+    assert.ok(result.reasons.some(r => r.code === "metadata_missing" && r.field === field));
+    const echoed = JSON.parse(renderJson(result)).observed;
+    assert.equal(field === "autoDestroyAtConfigured" ? echoed.lifecycle.autoDestroyAt : echoed.attachments[field], null);
+  });
+}
+test("#322 detail: all unknown and mixed presence retain every reason and JSON distinction", async () => {
+  const { result } = await detailCase(a => { for (const field of DETAIL_FIELDS) a.body.observed.providerMetadata[field] = null; });
+  assert.equal(result.reasons.filter(r => r.code === "metadata_missing").length, 4);
+  const mixed = await detailCase(a => { a.body.observed.providerMetadata.warmPool = true; a.body.observed.providerMetadata.volumes = null; });
+  assert.ok(codes(mixed.result).includes("warm_pool_member"));
+  assert.ok(codes(mixed.result).includes("metadata_missing"));
+  assert.equal(mixed.result.observed?.attachments.warmPool, true);
+  assert.equal(mixed.result.observed?.attachments.volumes, null);
+});
+for (const [field, code] of [["autoDestroyAtConfigured", "lifecycle_ttl"], ["warmPool", "warm_pool_member"], ["linkedSandbox", "linked_sandbox_present"], ["volumes", "volumes_present"]] as const) {
+  test(`#322 detail: present ${field} overrides legacy absence`, async () => {
+    const { result } = await detailCase(a => a.body.observed.providerMetadata[field] = field === "volumes" ? 1 : true);
+    assert.ok(codes(result).includes(code));
+    assert.notEqual(result.status, "ready");
+  });
+}
+test("#322 detail: validates exact nested shape and count bounds", async () => {
+  const edits: ((a: any) => void)[] = [
+    a => delete a.body.observed.providerMetadata,
+    a => a.body.observed.providerMetadata = null,
+    a => a.body.observed.providerMetadata = [],
+    a => a.body.observed.providerMetadata.extra = false,
+    a => a.body.observed.providerMetadata.platform.extra = null,
+    a => a.body.observed.providerMetadata.platform.os = 1,
+    a => a.body.observed.providerMetadata.platform.os = "",
+    a => a.body.observed.providerMetadata.platform.architecture = "a".repeat(65),
+    a => delete a.body.observed.providerMetadata.platform,
+    a => a.body.version = 2,
+  ];
+  for (const field of DETAIL_FIELDS) edits.push(a => delete a.body.observed.providerMetadata[field]);
+  for (const field of DETAIL_FIELDS.slice(0, 3)) for (const value of ["false", 0, {}, []]) edits.push(a => a.body.observed.providerMetadata[field] = value);
+  for (const value of [-1, 0.5, 1025, "0", false, {}, []]) edits.push(a => a.body.observed.providerMetadata.volumes = value);
+  for (const edit of edits) {
+    const { result } = await detailCase(edit);
+    assert.deepEqual(codes(result), ["inspection_contract_violation"]);
+    assert.equal(result.observed, null);
+  }
+  const maximum = await detailCase(a => a.body.observed.providerMetadata.volumes = 1024);
+  assert.equal(maximum.result.observed?.attachments.volumes, 1024);
+});
+test("#322 detail: invalid negotiation refuses before any inspection", async () => {
+  for (const value of [false, null, 1, "true", {}, []]) {
+    const wire = tripwireClient(detailReady);
+    const result = await runPreflight(VALID_ENV, wire.client, { includeProviderMetadata: value } as any);
+    assert.deepEqual(codes(result), ["inspection_contract_violation"]);
+    assert.deepEqual(wire.calls, []);
+  }
+});
+test("#322 detail: preserves owner, binding, generation and fence classification", async () => {
+  for (const [key, value, code] of [["agentId", "fixture-other-agent", "owner_mismatch"], ["sandboxId", "fixture-other-sandbox", "binding_mismatch"], ["generation", 4, "generation_mismatch"], ["fence", "attempt_outstanding", "attempt_fence_held"]] as const) {
+    const { result } = await detailCase(a => a.body.record[key] = value);
+    assert.ok(codes(result).includes(code));
+    if (key === "agentId" || key === "sandboxId") assert.equal(result.observed, null);
+  }
+});
+test("#322 detail: Codex and Claude CLI policy entries are valid source policy, never installation proof", async () => {
+  const { result } = await detailCase(a => { a.body.policy.harnesses = [
+    { id: "codex", package: "@openai/codex", version: "0.152.1" },
+    { id: "claude", package: "@anthropic-ai/claude-code", version: "2.1.258" },
+  ]; });
+  assert.equal(result.status, "ready");
+  assert.equal(isLiveReady(result), false);
+  assert.deepEqual(result.observed?.platform, { architecture: null, os: null });
+});
