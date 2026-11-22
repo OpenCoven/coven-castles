@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { builtinModules } from "node:module";
@@ -3340,7 +3341,11 @@ test("every file under src/ passes the capability scan", () => {
   // The src/ file list is docs/ownership.md, not a list in this test: a lane
   // that adds its reserved file flips that row's Exists cell to "yes".
   assert.deepEqual(
-    sourceRegistryProblems(files, readFileSync(join(root, "docs", "ownership.md"), "utf8")),
+    sourceRegistryProblems(
+      files,
+      readFileSync(join(root, "docs", "ownership.md"), "utf8"),
+      SRC_RESERVED
+    ),
     []
   );
   assert.deepEqual(scanSources(files), []);
@@ -3369,41 +3374,102 @@ const REGISTRY_FIXTURE = [
   "",
 ].join("\n");
 
+const FIXTURE_RESERVED = ["alpha.ts", "beta.ts", "gamma.ts"] as const;
+
 test("the src/ registry refuses an unlisted, missing, early or unreadable file", () => {
   const files = (...names: string[]) => new Map(names.map((name) => [name, ""]));
-  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), REGISTRY_FIXTURE), []);
-  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts", "stray.ts"), REGISTRY_FIXTURE), [
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), []);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts", "stray.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), [
     "stray.ts: not listed in docs/ownership.md",
   ]);
-  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts", "nested/x.ts"), REGISTRY_FIXTURE), [
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts", "nested/x.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), [
     "nested/x.ts: not listed in docs/ownership.md",
   ]);
-  assert.deepEqual(sourceRegistryProblems(files("gamma.ts"), REGISTRY_FIXTURE), [
+  assert.deepEqual(sourceRegistryProblems(files("gamma.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), [
     "alpha.ts: listed as existing in docs/ownership.md but absent",
   ]);
-  assert.deepEqual(sourceRegistryProblems(files("alpha.ts"), REGISTRY_FIXTURE), [
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), [
     "gamma.ts: listed as existing in docs/ownership.md but absent",
   ]);
-  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "beta.ts", "gamma.ts"), REGISTRY_FIXTURE), [
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "beta.ts", "gamma.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), [
     "beta.ts: present but listed as not yet in docs/ownership.md",
   ]);
   const flipped = REGISTRY_FIXTURE.replace("| `src/beta.ts` | #3 | not yet |", "| `src/beta.ts` | #3 | yes |");
-  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "beta.ts", "gamma.ts"), flipped), []);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "beta.ts", "gamma.ts"), flipped, FIXTURE_RESERVED), []);
   const unreadable = REGISTRY_FIXTURE.replace("| `src/beta.ts` | #3 | not yet |", "| `src/beta.ts` | #3 | soon |");
-  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), unreadable), [
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), unreadable, FIXTURE_RESERVED), [
     "beta.ts: Exists cell in docs/ownership.md is not yes or not yet",
   ]);
   const elsewhere = `${REGISTRY_FIXTURE}\n## Maintainer-owned\n\n| Path | Notes |\n| --- | --- |\n| \`src/delta.ts\` | |\n`;
-  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), elsewhere), [
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), elsewhere, FIXTURE_RESERVED), [
     "delta.ts: listed outside the implementation and shared tables of docs/ownership.md",
   ]);
-  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), `${REGISTRY_FIXTURE}| \`src/alpha.ts\` | #4 | yes | |\n`), [
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), `${REGISTRY_FIXTURE}| \`src/alpha.ts\` | #4 | yes | |\n`, FIXTURE_RESERVED), [
     "alpha.ts: listed more than once in docs/ownership.md",
   ]);
-  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), "# empty\n"), [
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), "# empty\n", FIXTURE_RESERVED), [
     "alpha.ts: not listed in docs/ownership.md",
     "gamma.ts: not listed in docs/ownership.md",
+    "alpha.ts: reserved src/ name has no row in docs/ownership.md",
+    "beta.ts: reserved src/ name has no row in docs/ownership.md",
+    "gamma.ts: reserved src/ name has no row in docs/ownership.md",
   ]);
+});
+
+test("the src/ registry admits only a flipped Exists cell, never a new or hidden row (PR #20 read rv20-8fd6a4b7, N1)", () => {
+  const files = (...names: string[]) => new Map(names.map((name) => [name, ""]));
+  const beta = "| `src/beta.ts` | #3 | not yet | |";
+  const without = REGISTRY_FIXTURE.replace(`${beta}\n`, "");
+  const check = (doc: string, ...names: string[]) =>
+    sourceRegistryProblems(files(...names), doc, FIXTURE_RESERVED);
+  // A new row, even marked yes, needs the steward: the reserved names are fixed here.
+  assert.deepEqual(check(REGISTRY_FIXTURE.replace(beta, `${beta}\n| \`src/new.ts\` | #3 | yes | |`), "alpha.ts", "gamma.ts", "new.ts"), [
+    "new.ts: not a reserved src/ name; adding one needs the #2 steward",
+  ]);
+  assert.deepEqual(check(REGISTRY_FIXTURE.replace(beta, `${beta}\n| \`src/sub/new.ts\` | #3 | yes | |`), "alpha.ts", "gamma.ts", "sub/new.ts"), [
+    "sub/new.ts: not a reserved src/ name; adding one needs the #2 steward",
+  ]);
+  assert.deepEqual(check(without, "alpha.ts", "gamma.ts"), [
+    "beta.ts: reserved src/ name has no row in docs/ownership.md",
+  ]);
+  // Rows a reader of the rendered page would not see.
+  assert.deepEqual(check(`${without}\n\`\`\`\n| \`src/beta.ts\` | #3 | yes | |\n\`\`\`\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+    "beta.ts: row inside a code fence or HTML comment in docs/ownership.md",
+  ]);
+  assert.deepEqual(check(`${without}\n<!--\n| \`src/beta.ts\` | #3 | yes | |\n-->\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+    "beta.ts: row inside a code fence or HTML comment in docs/ownership.md",
+  ]);
+  // Any heading ends a section; only the two named sections list src/ files.
+  assert.deepEqual(check(without.replace("## Shared files", "### Aside\n\n| `src/beta.ts` | #3 | yes | |\n\n## Shared files"), "alpha.ts", "beta.ts", "gamma.ts"), [
+    "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
+  ]);
+  assert.deepEqual(check(without.replace("## Shared files", "# Other\n\n| `src/beta.ts` | #3 | yes | |\n\n## Shared files"), "alpha.ts", "beta.ts", "gamma.ts"), [
+    "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
+  ]);
+  assert.deepEqual(check(`${without}\n## Implementation paths\n\n| \`src/beta.ts\` | #3 | yes | |\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+    "docs/ownership.md: the section ## Implementation paths appears more than once",
+    "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
+  ]);
+});
+
+test("the src/ tree reader refuses a symlink rather than reading it as empty (PR #20 read rv20-8fd6a4b7, N3)", () => {
+  const directory = mkdtempSync(join(tmpdir(), "castles-src-"));
+  const outside = mkdtempSync(join(tmpdir(), "castles-outside-"));
+  try {
+    writeFileSync(join(directory, "a.ts"), "export const a = 1;\n");
+    writeFileSync(join(outside, "planted.ts"), "export const g = globalThis;\n");
+    symlinkSync(join(directory, "a.ts"), join(directory, "b.ts"));
+    symlinkSync(join(outside, "planted.ts"), join(directory, "c.ts"));
+    symlinkSync(outside, join(directory, "linked"));
+    assert.deepEqual(scanSources(readSourceTree(directory)).sort(), [
+      "b.ts: not a regular file",
+      "c.ts: not a regular file",
+      "linked: not a regular file",
+    ]);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+    rmSync(outside, { force: true, recursive: true });
+  }
 });
 
 test("a capability-scan problem names the file, the line and the banned word, once per occurrence", () => {
@@ -3413,6 +3479,12 @@ test("a capability-scan problem names the file, the line and the banned word, on
   assert.deepEqual(scanSources(files), [
     "one.ts:2: contains prototype (banned anywhere in src/, comments and strings included)",
     "one.ts:3: contains window (banned anywhere in src/, comments and strings included)",
+  ]);
+  // Two on one line, and one word on two lines: one problem each (N2).
+  assert.deepEqual(scanSources(new Map([["three.ts", "// prototype and prototype\n// prototype\n"]])), [
+    "three.ts:1: contains prototype (banned anywhere in src/, comments and strings included)",
+    "three.ts:1: contains prototype (banned anywhere in src/, comments and strings included)",
+    "three.ts:2: contains prototype (banned anywhere in src/, comments and strings included)",
   ]);
   assert.deepEqual(scanSources(new Map([["two.ts", 'const s = "\\x41";\n']])), [
     "two.ts:1: contains \\x (banned anywhere in src/, comments and strings included)",
