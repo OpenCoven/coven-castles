@@ -1,0 +1,51 @@
+name: Test
+
+# The offline gates every handoff reports, run at the exact pushed head.
+# No secrets, no credentials, and no network beyond installing the pinned
+# lockfile. A pass here is fixture evidence, never live readiness.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      # actions/setup-node v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+
+      - name: Install (frozen lockfile)
+        run: |
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+
+      - name: Head under test
+        run: git rev-parse HEAD
+
+      - name: Test
+        run: corepack pnpm test
+
+      - name: Typecheck
+        run: corepack pnpm typecheck
+
+      - name: Fixture check exits 3 (a fixture replay, never readiness)
+        run: |
+          set +e
+          corepack pnpm check --fixture fixtures/preflight/cases/ready.json
+          code=$?
+          set -e
+          echo "exit ${code}"
+          test "${code}" -eq 3

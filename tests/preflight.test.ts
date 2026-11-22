@@ -3066,6 +3066,7 @@ const BUILTIN_NAMES = new Set(
 );
 const FORBIDDEN_ANYWHERE =
   /\b(?:globalThis|global|self|window|require|eval|Function|constructor|__proto__|prototype|Reflect|Proxy|fetch|XMLHttpRequest|WebSocket|EventSource|Worker|WebAssembly|Deno|Bun|getBuiltinModule|dlopen|mainModule|createRequire)\b|\bimport\s*\(|\bimport\s*\.|\\u|\\x/u;
+const FORBIDDEN_EVERYWHERE = new RegExp(FORBIDDEN_ANYWHERE.source, "gu");
 const PROCESS_WORD = /(?<![\w$/-]|node:)process(?![\w$])/gu;
 const PROCESS_USE =
   /^process(?:\.env\[key\]|\.exit\(2\)|\.exitCode = |\.loadEnvFile\("\.env\.local"\)|\.stdout\.write\(|\.stderr\.write\(| from "node:process";)/u;
@@ -3129,9 +3130,12 @@ function scanSources(files: ReadonlyMap<string, string>): string[] {
     }
     const code = withoutComments(source);
 
-    const forbidden = FORBIDDEN_ANYWHERE.exec(source);
-    if (forbidden) {
-      problems.push(`${file}: contains ${forbidden[0]}`);
+    // Every occurrence, with its line, so a session can fix them in one pass.
+    for (const forbidden of source.matchAll(FORBIDDEN_EVERYWHERE)) {
+      const line = source.slice(0, forbidden.index).split("\n").length;
+      problems.push(
+        `${file}:${line}: contains ${forbidden[0]} (banned anywhere in src/, comments and strings included)`
+      );
     }
 
     let moduleStatements = 0;
@@ -3240,6 +3244,72 @@ function scanSources(files: ReadonlyMap<string, string>): string[] {
       if (!imported && !source.startsWith(READ_CALL, at)) {
         problems.push(`${file}: readFileSync outside its import and its one call form`);
       }
+    }
+  }
+  return problems;
+}
+
+/**
+ * The src/ file registry is the ownership table in docs/ownership.md, so a
+ * lane adding its reserved file flips one Exists cell rather than editing
+ * this test. Every file under src/ must have exactly one `src/` row:
+ * - in "Implementation paths", with Exists `yes` (it must be present) or
+ *   `not yet` (it must be absent);
+ * - or in "Shared files", where it must be present.
+ * A `src/` row anywhere else, a repeated row or another Exists value is a
+ * problem. It reads text, as the scan does: a table the parser does not
+ * recognise lists nothing, so every file then reads as unlisted.
+ */
+const REGISTRY_ROW = /^\|\s*`src\/([^`]+)`\s*\|(.*)$/u;
+
+function sourceRegistryProblems(
+  files: ReadonlyMap<string, string>,
+  ownership: string
+): string[] {
+  const problems: string[] = [];
+  const rows = new Map<string, "yes" | "not yet" | null>();
+  let section = "";
+  for (const line of ownership.split("\n")) {
+    if (line.startsWith("## ")) {
+      section = line;
+      continue;
+    }
+    const row = REGISTRY_ROW.exec(line);
+    if (!row) {
+      continue;
+    }
+    const name = row[1] ?? "";
+    if (rows.has(name)) {
+      problems.push(`${name}: listed more than once in docs/ownership.md`);
+      continue;
+    }
+    if (section.startsWith("## Implementation paths")) {
+      const exists = (row[2] ?? "").split("|")[1]?.trim();
+      if (exists === "yes" || exists === "not yet") {
+        rows.set(name, exists);
+      } else {
+        problems.push(`${name}: Exists cell in docs/ownership.md is not yes or not yet`);
+        rows.set(name, null);
+      }
+    } else if (section.startsWith("## Shared files")) {
+      rows.set(name, "yes");
+    } else {
+      problems.push(
+        `${name}: listed outside the implementation and shared tables of docs/ownership.md`
+      );
+      rows.set(name, null);
+    }
+  }
+  for (const name of [...files.keys()].sort()) {
+    if (!rows.has(name)) {
+      problems.push(`${name}: not listed in docs/ownership.md`);
+    } else if (rows.get(name) === "not yet") {
+      problems.push(`${name}: present but listed as not yet in docs/ownership.md`);
+    }
+  }
+  for (const [name, exists] of rows) {
+    if (exists === "yes" && !files.has(name)) {
+      problems.push(`${name}: listed as existing in docs/ownership.md but absent`);
     }
   }
   return problems;

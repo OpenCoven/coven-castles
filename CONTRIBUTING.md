@@ -71,6 +71,7 @@ instead is an open proposal in
 corepack pnpm test         # offline tests; no credentials, no IP networking
 corepack pnpm typecheck    # tsc --noEmit
 corepack pnpm check --fixture fixtures/preflight/cases/ready.json
+corepack pnpm scan         # capability scan and src/ registry only
 ```
 
 The last command replays one synthetic case. It prints `status: ready` and
@@ -78,7 +79,15 @@ exits `3`, so pnpm reports it as failed. That is intended: a fixture replay is
 never readiness and never exits `0`. Exit codes are listed in the
 [README](README.md#the-check-command).
 
-Run `test` and `typecheck` before every push.
+Run `test` and `typecheck` before every push, and `scan` after any edit under
+`src/`: it reports each banned word with its file and line. The banned words
+are listed in [`AGENTS.md`](AGENTS.md#before-you-push-what-trips-agents).
+
+The `Test` workflow (`.github/workflows/test.yml`) runs install, test,
+typecheck and the fixture check at every pull request head and every push to
+`main`. Its result is fixture evidence. Report the run with the head SHA it
+checked; it does not replace your own fresh-clone run where a handoff asks
+for one.
 
 ## Test first
 
@@ -162,6 +171,10 @@ acceptance before closure. Proposed additions to #1: you do not review or
 merge your own change, and a reviewer works from a fresh clone at an exact SHA
 and reports findings. The full rules are in
 [`docs/coordination.md`](docs/coordination.md#review).
+
+Every agent session posts as the same shared account, which is also the
+repository's only collaborator. A read started by your own session is a
+second read, never independent review.
 
 ## Scope
 

@@ -30,7 +30,33 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm test        # offline; no credentials, no network
 corepack pnpm typecheck
 corepack pnpm check --fixture fixtures/preflight/cases/ready.json   # exits 3: fixture, never readiness
+corepack pnpm scan        # capability scan and src/ registry only; about a second
 ```
+
+The `Test` workflow runs install, test, typecheck and the fixture check at
+every pull request head. Cite its run and the head SHA in the Checks line; it
+is fixture evidence, like a local run.
+
+## Before you push: what trips agents
+
+- **Banned words in `src/`.** The capability scan fails on these words
+  anywhere in `src/`, comments and strings included: `globalThis`, `global`,
+  `self`, `window`, `require`, `eval`, `Function`, `constructor`,
+  `__proto__`, `prototype`, `Reflect`, `Proxy`, `fetch`, `XMLHttpRequest`,
+  `WebSocket`, `EventSource`, `Worker`, `WebAssembly`, `Deno`, `Bun`,
+  `getBuiltinModule`, `dlopen`, `mainModule`, `createRequire`, plus
+  `import(`, `import.`, and `\u` or `\x` escapes. A Node built-in module's
+  name (`path`, `fs`, `os` ...) may appear in quotes only as an import
+  specifier. Run `corepack pnpm scan`; each problem names the file, line and
+  word. Never weaken the scan to pass it.
+- **A new `src/` file needs its row.** The `src/` file list is
+  [`docs/ownership.md`](docs/ownership.md). When you add your lane's reserved
+  file, flip its Exists cell from `not yet` to `yes` in the same PR. That is a
+  standing handoff from the steward. A file with no row needs a shared-file
+  request first.
+- **Reads from the shared account are second reads.** Every agent session
+  here posts as the same account. A read your session started is never the
+  independent review `risk:r4` needs; say so in the handoff.
 
 Add a failing boundary test before a fix (committing it separately is a
 proposed addition to #1). Report exact commands and results. Enable the secret-scanning hook once per clone:

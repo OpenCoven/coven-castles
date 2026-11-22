@@ -170,6 +170,8 @@ Every result is reported with its class. A higher class is never inferred from a
 
 **Addition to #1:** a check that executes no behaviour (typecheck, a link check, reading pinned source, a documentation-only change) is reported as `static`. That is a label for "no behavioural evidence", not a fourth class, and it never stands in for one of the three.
 
+The `Test` workflow's result at an exact head is fixture evidence (offline tests) plus `static` (typecheck). It is not run by the authoring session, but it is not review either.
+
 `ready` in a fixture run is not readiness. A merged PR is not `verified`. Anything skipped or not run is reported as unverified, never left silently green.
 
 ## Review
@@ -186,6 +188,7 @@ From #1:
 - **Review an exact SHA**, from a fresh clone, never from the author's worktree. If the head moves during review, restart on the new head.
 - **Check claims against the code**, not against the author's table. Where a test is offered as evidence, break the behaviour in a scratch copy and confirm the test fails.
 - **Say how independent the review is.** A reviewer spawned by the author's own session is a useful second read; say so plainly and do not call it independent.
+- **This repository has one collaborator**, the shared account every agent session posts as. Until a second reviewer account exists, no agent read here can be independent review.
 - **On a shared GitHub identity**, post reviews as comments (`gh pr review --comment`). GitHub will not let an account approve its own PR, and an approval would say more than a reviewer on a shared account can mean.
 - **A review is a recommendation, not acceptance.** Whether a review alone opens a gate is the open proposal under [Lanes and gates](#lanes-and-gates).
 

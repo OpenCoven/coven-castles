@@ -50,10 +50,12 @@ Stewardship of the documentation and template paths above is proposed by the pul
 | Path | Notes |
 | --- | --- |
 | `.githooks/pre-commit`, `.gitleaks.toml`, `.github/workflows/secret-scan.yml` | Secret scanning, added by the maintainer on `main`. Request changes from the maintainer. |
+| `.github/workflows/test.yml` | Offline test gates in CI, added under the maintainer's 2026-11-22 decision (#1). Request changes from the maintainer. |
 | `LICENSE` and repository settings, labels, branch protection | Not present or not file-based; maintainer only |
 
 ## Rules that follow from the table
 
+- **This table is the `src/` file registry.** `tests/preflight.test.ts` reads it: every file under `src/` needs exactly one `src/` row, an Implementation row marked `yes` must be present, one marked `not yet` must be absent, and a Shared row must be present. A lane that adds its own reserved `src/` file flips that row's Exists cell to `yes` in the same change. That one cell is a standing handoff from the steward (maintainer decision, 2026-11-22). Any other change to this file still goes through the steward.
 - A new file belongs to the issue whose scope it serves. If it serves more than one lane, it is a shared file: ask the steward, and add it to this table in the same change.
 - Tests live with the lane that owns the behaviour. Do not add another lane's cases to your test file to "help".
 - Fixture directories do not overlap. `fixtures/preflight/` and `fixtures/report-task/` have different owners.
