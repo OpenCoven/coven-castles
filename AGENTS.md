@@ -50,18 +50,26 @@ run, because that run uses the PR's own versions.
   followed by `(` or `.` (spaces allowed), and any backslash followed by `u`
   or `x`, even in a comment. They match as whole words, so `self-contained`
   and `global-scope` fail too. Keep a Node built-in module's name (`path`,
-  `fs`, `os` ...) out of every quoted string, backticks included, except an
-  import specifier: the scan counts them. Run `corepack pnpm scan`; a
+  `fs`, `os`, and also everyday words such as `test`, `url` and `events`)
+  out of any quoted string that is exactly that name, backticks included,
+  except an import specifier: the scan counts them. Run `corepack pnpm scan`; a
   banned-word problem names the file, line and word, and other problems name
   the file. Never weaken the scan to pass it.
 - **A new `src/` file needs its row.** The `src/` file list is
   [`docs/ownership.md`](docs/ownership.md), and the reserved names are fixed
-  in `tests/preflight.test.ts`. When you add your lane's reserved file, flip
-  its Exists cell from `not yet` to `yes` in the same PR. That one-cell edit
-  is a standing handoff proposed with PR #20 and awaiting the maintainer's
-  confirmation; until it is confirmed, say in the PR that you made it. A name
-  that is not reserved needs a shared-file request first.
-- **Independence is about who started the read.** Every agent session posts as the same shared account, so the account says nothing about independence: say who started the read. A read started by the authoring session, or by a session it started, is a second read, never the independent review `risk:r4` needs. A reviewer started separately, who authored none of the change, can be independent with the shared account disclosed, as on PRs #12 and #13.
+  in `tests/preflight.test.ts`. Adding your lane's reserved file means
+  flipping its Exists cell from `not yet` to `yes`. Whether a lane may make
+  that one-cell edit itself is a standing handoff proposed with PR #20 and
+  awaiting the maintainer. Until it is confirmed, ask the #2 steward, as for
+  any shared-file change. A name that is not reserved needs a shared-file
+  request first.
+- **Independence is about who started the read.** Every agent session posts
+  as the same shared account, so the account says nothing about
+  independence: say who started the read. A read started by the authoring
+  session, or by a session it started, is a second read, never the
+  independent review `risk:r4` needs. A reviewer started separately, who
+  authored none of the change, can be independent with the shared account
+  disclosed, as on PRs #12 and #13.
 
 Add a failing boundary test before a fix (committing it separately is a
 proposed addition to #1). Report exact commands and results. Enable the secret-scanning hook once per clone:

@@ -3265,9 +3265,10 @@ function scanSources(files: ReadonlyMap<string, string>): string[] {
  * - in "## Implementation paths", with Exists `yes` (it must be present) or
  *   `not yet` (it must be absent);
  * - or in "## Shared files", where it must be present.
- * Any heading ends a section, and each section may appear once. A row in a
- * code fence or an HTML comment, under any other heading, or repeated, is a
- * problem, as is another Exists value. It reads text, as the scan does: a
+ * Any heading ends a section, setext and indented ones included, and each
+ * section may appear once. The document may hold no code fence or HTML
+ * comment. A row under any other heading, or repeated, is a problem, as is
+ * another Exists value. It reads text, as the scan does: a
  * table the parser does not recognise lists nothing, so every file then
  * reads as unlisted.
  */
@@ -3293,7 +3294,20 @@ function sourceRegistryProblems(
   let section = "";
   let fenced = false;
   let commented = false;
+  // A line-by-line parser cannot follow every fence and comment form a
+  // renderer does, so the registry document may contain none.
+  if (/^\s*(?:`{3,}|~{3,})/mu.test(ownership) || ownership.includes("<!--")) {
+    problems.push("docs/ownership.md: code fences and HTML comments are not allowed in the registry document");
+  }
+  let previous = "";
   for (const line of ownership.split("\n")) {
+    // A setext underline makes the line before it a heading: end the section.
+    if (/^\s{0,3}(?:=+|-+)\s*$/u.test(line) && previous.trim() !== "" && !previous.trimStart().startsWith("|")) {
+      section = "";
+      previous = line;
+      continue;
+    }
+    previous = line;
     if (line.trimStart().startsWith("```")) {
       fenced = !fenced;
       continue;
@@ -3304,7 +3318,7 @@ function sourceRegistryProblems(
     } else if (commented && line.includes("-->")) {
       commented = false;
     }
-    if (!hidden && /^#{1,6}\s/u.test(line)) {
+    if (!hidden && /^\s{0,3}#{1,6}(?:\s|$)/u.test(line)) {
       const named = REGISTRY_SECTIONS.find((heading) => line.startsWith(heading)) ?? "";
       if (named !== "" && seen.has(named)) {
         problems.push(`docs/ownership.md: the section ${named} appears more than once`);
@@ -3382,7 +3396,8 @@ function readSourceTree(source: string = join(root, "src")): Map<string, string>
   const walk = (directory: string, prefix: string) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const relative = `${prefix}${entry.name}`;
-      if (entry.isSymbolicLink() || !(entry.isDirectory() || entry.isFile())) {
+      // Dirent reports a symlink as neither file nor directory.
+      if (!(entry.isDirectory() || entry.isFile())) {
         files.set(relative, NOT_A_REGULAR_FILE);
       } else if (entry.isDirectory()) {
         walk(join(directory, entry.name), `${relative}/`);
