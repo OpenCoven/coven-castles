@@ -3269,8 +3269,11 @@ function scanSources(files: ReadonlyMap<string, string>): string[] {
  * section may appear once. A row counts only as a body row of a table. The
  * document may hold no code fence, HTML or link reference definition. A row
  * anywhere else, under any other heading, or repeated, is a problem, as is
- * another Exists value. This is a tripwire like the scan: it reads lines,
- * not a Markdown tree, and refuses what it cannot model. It reads text, as the scan does: a
+ * another Exists value, as is a reserved name written any other way, a
+ * backslash in a row, or a table whose rows differ in width. This is a
+ * tripwire like the scan: it reads lines, not a Markdown tree, and refuses
+ * what it cannot model. It cannot prove that the rendered page shows what it
+ * counts, so a reviewer still reads the raw diff of docs/ownership.md. It reads text, as the scan does: a
  * table the parser does not recognise lists nothing, so every file then
  * reads as unlisted.
  */
@@ -3315,6 +3318,13 @@ function sourceRegistryProblems(
   // after a blank line or heading, then a separator row, then contiguous
   // rows. Any other line that looks like a src/ row is refused.
   let table: "none" | "header" | "separator" | "body" | "invalid" = "none";
+  let width = 0;
+  const cells = (text: string) => text.trim().replace(/^\|/u, "").replace(/\|$/u, "").split("|").length;
+  // A reserved name written in any other form is refused, not ignored.
+  const mention = new RegExp(
+    `src(?:/|&#47;|&#x2[fF];)(${reserved.map((name) => name.replaceAll(".", "\\.")).join("|")})`,
+    "gu"
+  );
   let boundary = true;
   let previous = "";
   for (const line of ownership.split("\n")) {
@@ -3353,12 +3363,15 @@ function sourceRegistryProblems(
       continue;
     }
     if (line.startsWith("|")) {
+      // Header, separator and every row must have the same number of cells,
+      // or the renderer does not draw a table.
       if (table === "none") {
         table = boundary ? "header" : "invalid";
+        width = cells(line);
       } else if (table === "header") {
-        table = TABLE_SEPARATOR.test(line) ? "separator" : "invalid";
+        table = TABLE_SEPARATOR.test(line) && cells(line) === width ? "separator" : "invalid";
       } else if (table === "separator" || table === "body") {
-        table = "body";
+        table = cells(line) === width ? "body" : "invalid";
       }
     } else {
       table = "none";
@@ -3366,6 +3379,9 @@ function sourceRegistryProblems(
     boundary = line.trim() === "";
     const rowLike = REGISTRY_ROW_LIKE.exec(line);
     if (!rowLike) {
+      for (const found of line.matchAll(mention)) {
+        problems.push(`${found[1] ?? ""}: mentioned outside a counted row in docs/ownership.md`);
+      }
       continue;
     }
     const row = REGISTRY_ROW.exec(line);
@@ -3376,6 +3392,10 @@ function sourceRegistryProblems(
     }
     if (hidden) {
       problems.push(`${name}: row inside a code fence or HTML comment in docs/ownership.md`);
+      rows.set(name, null);
+    } else if (line.includes("\\")) {
+      // An escaped pipe makes the page and this parser read different cells.
+      problems.push(`${name}: a backslash in a registry row in docs/ownership.md`);
       rows.set(name, null);
     } else if (!row || table !== "body") {
       problems.push(`${name}: a src/ row outside a table body in docs/ownership.md`);
@@ -3640,7 +3660,8 @@ test("the src/ registry counts a row only in a table body, and refuses raw HTML 
   assert.ok(
     check(REGISTRY_FIXTURE.replace(beta, "| `src/beta.ts` | #3 \\| yes | not yet |"), "alpha.ts", "beta.ts", "gamma.ts").includes(
       "beta.ts: a backslash in a registry row in docs/ownership.md"
-    )
+    ),
+    "escaped pipe"
   );
   // A reserved name written any other way is refused, not ignored.
   for (const decoy of [
@@ -3658,9 +3679,10 @@ test("the src/ registry counts a row only in a table body, and refuses raw HTML 
   }
   // A src/ code span in a later cell is not a row.
   assert.ok(
-    check(REGISTRY_FIXTURE.replace("| `src/gamma.ts` | Shared entrypoint |", "| `src/gamma.ts` | Shared entrypoint |\n| `docs/x.md` | see `src/beta.ts` |"), "alpha.ts", "gamma.ts").includes(
-      "beta.ts: a src/ row outside a table body in docs/ownership.md"
-    )
+    check(REGISTRY_FIXTURE.replace("| `src/gamma.ts` | Shared entrypoint |", "| `src/gamma.ts` | Shared entrypoint |\n| `docs/x.md` | see `src/delta.ts` |"), "alpha.ts", "gamma.ts").includes(
+      "delta.ts: a src/ row outside a table body in docs/ownership.md"
+    ),
+    "code span in a later cell"
   );
   // Forms the renderer hides or folds, each refused outright.
   for (const hider of [
