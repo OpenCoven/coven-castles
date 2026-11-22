@@ -3499,6 +3499,9 @@ test("the src/ registry admits only a flipped Exists cell, never a new or hidden
   const without = REGISTRY_FIXTURE.replace(`${beta}\n`, "");
   const check = (doc: string, ...names: string[]) =>
     sourceRegistryProblems(files(...names), doc, FIXTURE_RESERVED);
+  const table = (row: string) => `| Path | Owner | Exists | Notes |\n| --- | --- | --- | --- |\n${row}`;
+  const betaYes = "| `src/beta.ts` | #3 | yes | |";
+  const outside = "beta.ts: listed outside the implementation and shared tables of docs/ownership.md";
   // A new row, even marked yes, needs the steward: the reserved names are fixed here.
   assert.deepEqual(check(REGISTRY_FIXTURE.replace(beta, `${beta}\n| \`src/new.ts\` | #3 | yes | |`), "alpha.ts", "gamma.ts", "new.ts"), [
     "new.ts: not a reserved src/ name; adding one needs the #2 steward",
@@ -3535,23 +3538,55 @@ test("the src/ registry admits only a flipped Exists cell, never a new or hidden
     );
   }
   // Any heading ends a section; only the two named sections list src/ files.
-  assert.deepEqual(check(without.replace("## Shared files", "### Aside\n\n| `src/beta.ts` | #3 | yes | |\n\n## Shared files"), "alpha.ts", "beta.ts", "gamma.ts"), [
-    "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
-  ]);
-  assert.deepEqual(check(without.replace("## Shared files", "# Other\n\n| `src/beta.ts` | #3 | yes | |\n\n## Shared files"), "alpha.ts", "beta.ts", "gamma.ts"), [
-    "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
-  ]);
-  // A setext heading and an indented heading also end a section (F2).
-  assert.deepEqual(check(without.replace("## Shared files", "Aside\n-----\n\n| `src/beta.ts` | #3 | yes | |\n\n## Shared files"), "alpha.ts", "beta.ts", "gamma.ts"), [
-    "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
-  ]);
-  assert.deepEqual(check(without.replace("## Shared files", "  ### Aside\n\n| `src/beta.ts` | #3 | yes | |\n\n## Shared files"), "alpha.ts", "beta.ts", "gamma.ts"), [
-    "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
-  ]);
-  assert.deepEqual(check(`${without}\n## Implementation paths\n\n| \`src/beta.ts\` | #3 | yes | |\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+  for (const heading of ["### Aside", "# Other", "#", "  ### Aside", "Aside\n-----", "Aside\n=====", "Aside\n  ---"]) {
+    assert.deepEqual(
+      check(without.replace("## Shared files", `${heading}\n\n${table(betaYes)}\n\n## Shared files`), "alpha.ts", "beta.ts", "gamma.ts"),
+      [outside],
+      heading
+    );
+  }
+  assert.deepEqual(check(`${without}\n## Implementation paths\n\n${table(betaYes)}\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
     "docs/ownership.md: the section ## Implementation paths appears more than once",
     "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
   ]);
+});
+
+test("the src/ registry counts a row only in a table body, and refuses raw HTML and link references (PR #20 read rv20c-42344cbc, F1)", () => {
+  const files = (...names: string[]) => new Map(names.map((name) => [name, ""]));
+  const beta = "| `src/beta.ts` | #3 | not yet | |";
+  const without = REGISTRY_FIXTURE.replace(`${beta}\n`, "");
+  const check = (doc: string, ...names: string[]) =>
+    sourceRegistryProblems(files(...names), doc, FIXTURE_RESERVED);
+  const betaYes = "| `src/beta.ts` | #3 | yes | |";
+  const raw = "docs/ownership.md: raw HTML and link reference definitions are not allowed in the registry document";
+  // A row-like line that is not a body row of a table counts as nothing and is refused.
+  assert.deepEqual(check(REGISTRY_FIXTURE.replace(beta, ` ${beta}`), "alpha.ts", "gamma.ts"), [
+    "beta.ts: a src/ row outside a table body in docs/ownership.md",
+    "beta.ts: reserved src/ name has no row in docs/ownership.md",
+  ]);
+  assert.deepEqual(check(`${without}\n${betaYes}\n`.replace("Shared entrypoint |\n\n", "Shared entrypoint |\n\nSome prose.\n"), "alpha.ts", "beta.ts", "gamma.ts"), [
+    "beta.ts: a src/ row outside a table body in docs/ownership.md",
+    "beta.ts: reserved src/ name has no row in docs/ownership.md",
+  ]);
+  assert.deepEqual(check(`${without}\n> ${betaYes}\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+    "beta.ts: a src/ row outside a table body in docs/ownership.md",
+    "beta.ts: reserved src/ name has no row in docs/ownership.md",
+  ]);
+  // Forms the renderer hides or folds, each refused outright.
+  for (const hider of [
+    `[x]: /u '\n${betaYes}\n'`,
+    `[x]: /u "\n${betaYes}\n"`,
+    `<?\n${betaYes}\n?>`,
+    `<![CDATA[\n${betaYes}\n]]>`,
+    `<!X\n${betaYes}\n>`,
+    `<span title="\n${betaYes}\n">`,
+    `<details>\n\n${betaYes}\n\n</details>`,
+  ]) {
+    assert.ok(check(`${REGISTRY_FIXTURE.replace(beta, ` ${beta}`)}\n${hider}\n`, "alpha.ts", "beta.ts", "gamma.ts").includes(raw), hider);
+  }
+  // The real document holds none of these, and a plain one-cell flip still passes.
+  const flipped = REGISTRY_FIXTURE.replace(beta, betaYes);
+  assert.deepEqual(check(flipped, "alpha.ts", "beta.ts", "gamma.ts"), []);
 });
 
 test("the capability scan refuses a symlink under src/ rather than reading it as empty (PR #20 read rv20-8fd6a4b7, N3)", () => {
