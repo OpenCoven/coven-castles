@@ -3645,7 +3645,8 @@ test("the src/ registry counts a row only in a table body, and refuses raw HTML 
     ], doc);
   }
   // PR #20 read rv20d-04e82d07: a header and separator with different cell
-  // counts render as a paragraph, not a table; so does a row of another width.
+  // counts render as a paragraph, not a table. A body row of another width
+  // still renders (GitHub pads or trims it); the check refuses it anyway.
   for (const doc of [
     `${without}\n${header}\n| --- | --- |\n${betaYes}\n`,
     `${without}\n${header}\n| --- | --- | --- | --- |\n| \`src/beta.ts\` | #3 | yes |\n`,
@@ -3676,6 +3677,19 @@ test("the src/ registry counts a row only in a table body, and refuses raw HTML 
       ),
       decoy
     );
+  }
+  // PR #20 read rv20e-e3e4fcae: any table line may hold only printable ASCII,
+  // with no backslash and no &. That closes escaped pipes in a header, HTML
+  // entities, zero-width and lookalike characters as a class.
+  const plain = "docs/ownership.md: a table line holds a backslash, & or a character outside printable ASCII";
+  for (const doc of [
+    REGISTRY_FIXTURE.replace("| Path | Owner | Exists | Notes |", "| Path | Owner \\| Exists | Notes |"),
+    `${REGISTRY_FIXTURE}| \`src/beta.ts\` | #3 | yes |\n`.replace("| `src/beta.ts` | #3 | yes |", "| `src\u200b/beta.ts` | #3 | yes |"),
+    `${REGISTRY_FIXTURE}| \`src\uff0fbeta.ts\` | #3 | yes | |\n`,
+    `${REGISTRY_FIXTURE}| src&#X2F;beta.ts | #3 | yes | |\n`,
+    `${REGISTRY_FIXTURE}| src&sol;beta.ts | #3 | yes | |\n`,
+  ]) {
+    assert.ok(check(doc, "alpha.ts", "beta.ts", "gamma.ts").includes(plain), doc);
   }
   // A src/ code span in a later cell is not a row.
   assert.ok(
