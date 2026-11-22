@@ -50,7 +50,8 @@ run, because that run uses the PR's own versions.
   followed by `(` or `.` (spaces allowed), and any backslash followed by `u`
   or `x`, even in a comment. They match as whole words, so `self-contained`
   and `global-scope` fail too. Keep a Node built-in module's name (`path`,
-  `fs`, `os`, and also everyday words such as `test`, `url` and `events`)
+  `fs`, `os`, and also everyday words such as `url` and `events`, or `test`
+  because the scan drops the `node:` prefix of `node:test`)
   out of any quoted string that is exactly that name, backticks included,
   except an import specifier: the scan counts them. Run `corepack pnpm scan`; a
   banned-word problem names the file, line and word, and other problems name

@@ -3266,9 +3266,11 @@ function scanSources(files: ReadonlyMap<string, string>): string[] {
  *   `not yet` (it must be absent);
  * - or in "## Shared files", where it must be present.
  * Any heading ends a section, setext and indented ones included, and each
- * section may appear once. The document may hold no code fence or HTML
- * comment. A row under any other heading, or repeated, is a problem, as is
- * another Exists value. It reads text, as the scan does: a
+ * section may appear once. A row counts only as a body row of a table. The
+ * document may hold no code fence, HTML or link reference definition. A row
+ * anywhere else, under any other heading, or repeated, is a problem, as is
+ * another Exists value. This is a tripwire like the scan: it reads lines,
+ * not a Markdown tree, and refuses what it cannot model. It reads text, as the scan does: a
  * table the parser does not recognise lists nothing, so every file then
  * reads as unlisted.
  */
@@ -3281,6 +3283,8 @@ const SRC_RESERVED = [
   "run.ts",
 ] as const;
 const REGISTRY_ROW = /^\|\s*`src\/([^`]+)`\s*\|(.*)$/u;
+const REGISTRY_ROW_LIKE = /`src\/([^`]+)`\s*\|/u;
+const TABLE_SEPARATOR = /^\|(?:\s*:?-{3,}:?\s*\|)+\s*$/u;
 const REGISTRY_SECTIONS = ["## Implementation paths", "## Shared files"] as const;
 
 function sourceRegistryProblems(
@@ -3299,17 +3303,34 @@ function sourceRegistryProblems(
   if (/^\s*(?:`{3,}|~{3,})/mu.test(ownership) || ownership.includes("<!--")) {
     problems.push("docs/ownership.md: code fences and HTML comments are not allowed in the registry document");
   }
+  // The same for every other form that can fold or hide a line when
+  // rendered: raw HTML, processing instructions, declarations, CDATA and
+  // link reference definitions (whose titles may span lines).
+  if (/<(?!!--)[A-Za-z!?/]/u.test(ownership) || /^\s{0,3}\[[^\]]+\]:/mu.test(ownership)) {
+    problems.push(
+      "docs/ownership.md: raw HTML and link reference definitions are not allowed in the registry document"
+    );
+  }
+  // A row counts only as a body row of a table: a header line at column 0
+  // after a blank line or heading, then a separator row, then contiguous
+  // rows. Any other line that looks like a src/ row is refused.
+  let table: "none" | "header" | "separator" | "body" | "invalid" = "none";
+  let boundary = true;
   let previous = "";
   for (const line of ownership.split("\n")) {
     // A setext underline makes the line before it a heading: end the section.
     if (/^\s{0,3}(?:=+|-+)\s*$/u.test(line) && previous.trim() !== "" && !previous.trimStart().startsWith("|")) {
       section = "";
+      table = "none";
+      boundary = true;
       previous = line;
       continue;
     }
     previous = line;
     if (line.trimStart().startsWith("```")) {
       fenced = !fenced;
+      table = "none";
+      boundary = false;
       continue;
     }
     const hidden = fenced || commented || line.includes("<!--");
@@ -3327,13 +3348,28 @@ function sourceRegistryProblems(
         seen.add(named);
         section = named;
       }
+      table = "none";
+      boundary = true;
+      continue;
+    }
+    if (line.startsWith("|")) {
+      if (table === "none") {
+        table = boundary ? "header" : "invalid";
+      } else if (table === "header") {
+        table = TABLE_SEPARATOR.test(line) ? "separator" : "invalid";
+      } else if (table === "separator" || table === "body") {
+        table = "body";
+      }
+    } else {
+      table = "none";
+    }
+    boundary = line.trim() === "";
+    const rowLike = REGISTRY_ROW_LIKE.exec(line);
+    if (!rowLike) {
       continue;
     }
     const row = REGISTRY_ROW.exec(line);
-    if (!row) {
-      continue;
-    }
-    const name = row[1] ?? "";
+    const name = row?.[1] ?? rowLike[1] ?? "";
     if (rows.has(name)) {
       problems.push(`${name}: listed more than once in docs/ownership.md`);
       continue;
@@ -3341,8 +3377,10 @@ function sourceRegistryProblems(
     if (hidden) {
       problems.push(`${name}: row inside a code fence or HTML comment in docs/ownership.md`);
       rows.set(name, null);
+    } else if (!row || table !== "body") {
+      problems.push(`${name}: a src/ row outside a table body in docs/ownership.md`);
     } else if (section === "## Implementation paths") {
-      const exists = (row[2] ?? "").split("|")[1]?.trim();
+      const exists = (row?.[2] ?? "").split("|")[1]?.trim();
       if (exists === "yes" || exists === "not yet") {
         rows.set(name, exists);
       } else {
@@ -3566,12 +3604,26 @@ test("the src/ registry counts a row only in a table body, and refuses raw HTML 
   ]);
   assert.deepEqual(check(`${without}\n${betaYes}\n`.replace("Shared entrypoint |\n\n", "Shared entrypoint |\n\nSome prose.\n"), "alpha.ts", "beta.ts", "gamma.ts"), [
     "beta.ts: a src/ row outside a table body in docs/ownership.md",
+    "beta.ts: not listed in docs/ownership.md",
     "beta.ts: reserved src/ name has no row in docs/ownership.md",
   ]);
   assert.deepEqual(check(`${without}\n> ${betaYes}\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
     "beta.ts: a src/ row outside a table body in docs/ownership.md",
+    "beta.ts: not listed in docs/ownership.md",
     "beta.ts: reserved src/ name has no row in docs/ownership.md",
   ]);
+  // A table needs a blank line or heading before its header, and a separator row.
+  const header = "| Path | Owner | Exists | Notes |";
+  for (const doc of [
+    `${without}\nSome prose.\n${header}\n| --- | --- | --- | --- |\n${betaYes}\n`,
+    `${without}\n${header}\n| not | a | separator | row |\n${betaYes}\n`,
+  ]) {
+    assert.deepEqual(check(doc, "alpha.ts", "beta.ts", "gamma.ts"), [
+      "beta.ts: a src/ row outside a table body in docs/ownership.md",
+      "beta.ts: not listed in docs/ownership.md",
+      "beta.ts: reserved src/ name has no row in docs/ownership.md",
+    ], doc);
+  }
   // Forms the renderer hides or folds, each refused outright.
   for (const hider of [
     `[x]: /u '\n${betaYes}\n'`,
