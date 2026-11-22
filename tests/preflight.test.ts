@@ -5757,3 +5757,31 @@ test("#322 detail: Codex and Claude CLI policy entries are valid source policy, 
   assert.equal(isLiveReady(result), false);
   assert.deepEqual(result.observed?.platform, { architecture: null, os: null });
 });
+test("#322 detail: labelled fixtures, repeatability, redaction and public JSON", async () => {
+  for (const name of ["absence", "unknown"]) {
+    const fixture = loadFixtureCase(join(root, "fixtures", "preflight", "metadata", `${name}.json`));
+    const before = JSON.stringify(fixture);
+    const first = await runPreflight(fixture.env, createFixtureInspectionClient(fixture), DETAIL_OPTIONS);
+    const second = await runPreflight(fixture.env, createFixtureInspectionClient(fixture), DETAIL_OPTIONS);
+    assert.deepEqual(first, second);
+    assert.equal(first.status, fixture.expect.status);
+    assert.deepEqual(first.reasons, fixture.expect.reasons);
+    const json = renderJson(first);
+    assert.deepEqual(JSON.parse(json), first);
+    assert.ok(!json.includes("fixture-agent-0001"));
+    assert.ok(!json.includes("fixture-sandbox-0001"));
+    assert.equal(JSON.stringify(fixture), before);
+    assert.equal(isLiveReady(first), false);
+  }
+});
+test("#322 detail: the plain-data budget and refusal-body guards remain active", async () => {
+  const answer = detailReady();
+  Object.defineProperty(answer.body.observed.providerMetadata, "warmPool", { get: () => new Date() });
+  const result = await runPreflight(VALID_ENV, tripwireClient(() => answer).client, DETAIL_OPTIONS);
+  assert.deepEqual(codes(result), ["inspection_contract_violation"]);
+  let reads = 0;
+  const non200 = { status: 401, get body() { reads++; throw new Error("must not read"); } };
+  const refusal = await runPreflight(VALID_ENV, tripwireClient(() => non200).client, DETAIL_OPTIONS);
+  assert.deepEqual(codes(refusal), ["unauthenticated"]);
+  assert.equal(reads, 0);
+});

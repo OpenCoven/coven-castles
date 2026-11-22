@@ -39,6 +39,7 @@ export type InspectionRequest = Readonly<{
   agentId: string;
   expectedGeneration: number;
   sandboxId: string;
+  includeProviderMetadata?: true;
 }>;
 
 /**
@@ -787,7 +788,38 @@ function parseRecord(value: unknown): ObservedEnvelope["record"] | null {
   };
 }
 
-function parseBody(body: unknown, binding: Binding): Inspection {
+const PROVIDER_METADATA_KEYS = [
+  "autoDestroyAtConfigured", "linkedSandbox", "platform", "volumes", "warmPool",
+];
+
+/** The exact opt-in shape at coven-agents 6dedc26; unknown is explicit null. */
+function isProviderMetadata(value: unknown): value is UnknownRecord {
+  if (!isRecord(value) || !hasOnly(value, PROVIDER_METADATA_KEYS)) {
+    return false;
+  }
+  for (const key of ["autoDestroyAtConfigured", "linkedSandbox", "warmPool"]) {
+    if (value[key] !== null && typeof value[key] !== "boolean") {
+      return false;
+    }
+  }
+  const count = value.volumes;
+  if (count !== null && !(typeof count === "number" && Number.isInteger(count)
+    && count >= 0 && count <= 1024)) {
+    return false;
+  }
+  if (!isRecord(value.platform)) {
+    return false;
+  }
+  const { architecture, os, ...extraPlatformKeys } = value.platform;
+  if (Object.keys(extraPlatformKeys).length !== 0) {
+    return false;
+  }
+  return [architecture, os].every(
+    v => v === null || (typeof v === "string" && v.length >= 1 && v.length <= 64)
+  );
+}
+
+function parseBody(body: unknown, binding: Binding, details: boolean): Inspection {
   if (!isRecord(body) || body.version !== INSPECTION_CONTRACT_VERSION) {
     return VIOLATION;
   }
@@ -849,12 +881,24 @@ function parseBody(body: unknown, binding: Binding): Inspection {
   if (
     record === null ||
     !isRecord(observed) ||
-    !hasOnly(observed, OBSERVED_KEYS) ||
+    !hasOnly(observed, details ? [...OBSERVED_KEYS, "providerMetadata"] : OBSERVED_KEYS) ||
     !isRecord(observed.identity) ||
     !hasOnly(observed.identity, IDENTITY_KEYS) ||
     !isPolicy(policy, false)
   ) {
     return VIOLATION;
+  }
+  // The copy already has no base object. Update only these four own values;
+  // creating an ordinary object here would reintroduce inherited metadata.
+  if (details) {
+    const metadata = observed.providerMetadata;
+    if (!isProviderMetadata(metadata)) {
+      return VIOLATION;
+    }
+    const effective = observed as Record<string, unknown>;
+    for (const key of ["autoDestroyAtConfigured", "linkedSandbox", "volumes", "warmPool"]) {
+      effective[key] = metadata[key];
+    }
   }
   return {
     kind: "observed",
@@ -869,7 +913,7 @@ function parseBody(body: unknown, binding: Binding): Inspection {
  * body of a 200 is then copied as plain data, and any other body is never
  * touched (third read rv18b-f2bd3f93, finding 3).
  */
-function parseInspection(received: unknown, binding: Binding): Inspection {
+function parseInspection(received: unknown, binding: Binding, details: boolean): Inspection {
   if (
     typeof received !== "object" ||
     received === null ||
@@ -908,7 +952,7 @@ function parseInspection(received: unknown, binding: Binding): Inspection {
   const body = plainCopy(readOwn(received, "body")?.value, 1, {
     left: PLAIN_VALUES_MAX,
   });
-  return body === null ? VIOLATION : parseBody(body.value, binding);
+  return body === null ? VIOLATION : parseBody(body.value, binding, details);
 }
 
 // --- Evaluation -------------------------------------------------------------
@@ -1013,12 +1057,9 @@ function evaluateCompatibility(
   } else if (autoPause !== profile.lifecycle.autoPauseInterval) {
     fail("lifecycle_auto_pause", "autoPauseInterval");
   }
-  // Accepted for now by the maintainer (coven-castles#2, 2026-11-20),
-  // pending coven-agents#322: upstream reports the
-  // TTL, warm pool and linked sandbox as booleans and volumes as a count,
-  // and folds "the provider did not report it" into false or 0. Castles
-  // accepts the fold for now. A value that is not a boolean (or, for
-  // volumes, absent or null) is still missing metadata.
+  // Legacy v1 keeps the accepted fold. In negotiated detail mode parsing
+  // replaces these four fields with the validated nullable observations.
+  // Null remains missing metadata; it is never coalesced to legacy absence.
   if (typeof observed.autoDestroyAtConfigured !== "boolean") {
     missing("autoDestroyAtConfigured");
   } else if (observed.autoDestroyAtConfigured) {
@@ -1111,7 +1152,9 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
   return {
     attachments: {
       linkedSandbox: bool(observed.linkedSandbox),
-      volumes: echoedCount(observed.volumes),
+      volumes: observed.providerMetadata !== undefined
+        ? typeof observed.volumes === "number" ? observed.volumes : null
+        : echoedCount(observed.volumes),
       warmPool: bool(observed.warmPool),
     },
     binding: {
@@ -1239,7 +1282,8 @@ function inspectionDeadline(options: unknown): number {
 async function inspectOnce(
   inspect: Inspect,
   binding: Binding,
-  timeoutMs: number
+  timeoutMs: number,
+  details: boolean
 ): Promise<Inspection> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1252,6 +1296,7 @@ async function inspectOnce(
             agentId: binding.agentId,
             expectedGeneration: binding.expectedGeneration,
             sandboxId: binding.sandboxId,
+            ...(details ? { includeProviderMetadata: true as const } : {}),
           },
           { signal: controller.signal }
         )
@@ -1275,10 +1320,10 @@ async function inspectOnce(
   // caller's own error, as documented, rather than reading as a provider
   // failure. The deadline does not cover this parse; the copy's size bound
   // does.
-  return parseInspection(response, binding);
+  return parseInspection(response, binding, details);
 }
 
-export type PreflightOptions = Readonly<{ timeoutMs?: number }>;
+export type PreflightOptions = Readonly<{ timeoutMs?: number; includeProviderMetadata?: true }>;
 
 /**
  * The evidence class is a fact about the client, so it is derived here and
@@ -1326,6 +1371,14 @@ export async function runPreflight(
   const inspect = seamOf(client);
   const evidence = evidenceOf(inspect);
   const findings = new Findings();
+  // Optional literal-true negotiation is strict even for untyped callers.
+  // Other options retain their established timeout behavior.
+  const detailOption = isRecord(options) ? readOwn(options, "includeProviderMetadata") : null;
+  if (detailOption !== null && detailOption.value !== true && detailOption.value !== undefined) {
+    findings.add("unavailable", "inspection_contract_violation");
+    return result(findings, {}, evidence, 0, null);
+  }
+  const details = detailOption?.value === true;
   const parsed = parseBinding(environment);
   if (!parsed.ok) {
     findings.add(
@@ -1346,7 +1399,8 @@ export async function runPreflight(
   const inspection = await inspectOnce(
     inspect,
     binding,
-    inspectionDeadline(options)
+    inspectionDeadline(options),
+    details
   );
   if (inspection.kind === "refused") {
     findings.add(inspection.status, inspection.code);
@@ -1456,8 +1510,8 @@ export function isLiveReady(value: PreflightResult): boolean {
 /**
  * Bounded by construction: every string is a literal, an alias, a member of
  * a fixed set, or a strict three-part version; every observed number is a
- * count from 0 to 999 or an integer inside `ECHOED_INTEGER`. The volume
- * count goes through `echoedCount`.
+ * count from 0 to 1024 or an integer inside `ECHOED_INTEGER`. The volume
+ * count uses the detail contract bound or the legacy `echoedCount` bound.
  */
 export function renderJson(value: PreflightResult): string {
   return `${JSON.stringify(value, null, 2)}\n`;
