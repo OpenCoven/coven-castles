@@ -3269,8 +3269,10 @@ function scanSources(files: ReadonlyMap<string, string>): string[] {
  * section may appear once. A row counts only as a body row of a table. The
  * document may hold no code fence, HTML or link reference definition. A row
  * anywhere else, under any other heading, or repeated, is a problem, as is
- * another Exists value, as is a reserved name written any other way, a
- * backslash in a row, or a table whose rows differ in width. This is a
+ * another Exists value, as is a reserved name spelled as src/ text outside a
+ * counted row, or a table whose rows differ in width. Every table line must
+ * be printable ASCII with no backslash and no &, which rules out escaped
+ * pipes, entities and lookalike characters as a class. This is a
  * tripwire like the scan: it reads lines, not a Markdown tree, and refuses
  * what it cannot model. It cannot prove that the rendered page shows what it
  * counts, so a reviewer still reads the raw diff of docs/ownership.md. It reads text, as the scan does: a
@@ -3319,8 +3321,9 @@ function sourceRegistryProblems(
   // rows. Any other line that looks like a src/ row is refused.
   let table: "none" | "header" | "separator" | "body" | "invalid" = "none";
   let width = 0;
+  let plainReported = false;
   const cells = (text: string) => text.trim().replace(/^\|/u, "").replace(/\|$/u, "").split("|").length;
-  // A reserved name written in any other form is refused, not ignored.
+  // A reserved name spelled as src/ text outside a counted row is refused.
   const mention = new RegExp(
     `src(?:/|&#47;|&#x2[fF];)(${reserved.map((name) => name.replaceAll(".", "\\.")).join("|")})`,
     "gu"
@@ -3362,9 +3365,16 @@ function sourceRegistryProblems(
       boundary = true;
       continue;
     }
+    if (/^\s*\|/u.test(line) && /[^\x20-\x7E]|[\\&]/u.test(line) && !plainReported) {
+      // Escaped pipes, entities and lookalike characters let the page and
+      // this parser read different cells, so a table line refuses them all.
+      problems.push("docs/ownership.md: a table line holds a backslash, & or a character outside printable ASCII");
+      plainReported = true;
+    }
     if (line.startsWith("|")) {
-      // Header, separator and every row must have the same number of cells,
-      // or the renderer does not draw a table.
+      // Header and separator must have the same number of cells or the
+      // renderer draws no table. GitHub pads or trims a body row of another
+      // width; the check refuses one anyway.
       if (table === "none") {
         table = boundary ? "header" : "invalid";
         width = cells(line);
@@ -3664,7 +3674,7 @@ test("the src/ registry counts a row only in a table body, and refuses raw HTML 
     ),
     "escaped pipe"
   );
-  // A reserved name written any other way is refused, not ignored.
+  // A reserved name spelled as src/ text outside a counted row is refused.
   for (const decoy of [
     "| ``src/beta.ts`` | #3 | yes | |",
     "| &#96;src/beta.ts&#96; | #3 | yes | |",
