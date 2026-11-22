@@ -3125,6 +3125,10 @@ function importedNames(clause: string): string[] {
 function scanSources(files: ReadonlyMap<string, string>): string[] {
   const problems: string[] = [];
   for (const [file, source] of files) {
+    if (source === NOT_A_REGULAR_FILE) {
+      problems.push(`${file}: not a regular file`);
+      continue;
+    }
     if (!file.endsWith(".ts")) {
       problems.push(`${file}: not a TypeScript source file`);
       continue;
@@ -3253,26 +3257,62 @@ function scanSources(files: ReadonlyMap<string, string>): string[] {
 /**
  * The src/ file registry is the ownership table in docs/ownership.md, so a
  * lane adding its reserved file flips one Exists cell rather than editing
- * this test. Every file under src/ must have exactly one `src/` row:
- * - in "Implementation paths", with Exists `yes` (it must be present) or
+ * this test. The reserved names themselves are fixed here, in SRC_RESERVED:
+ * the doc may move a reserved file between `not yet` and `yes`, but a new
+ * name needs the #2 steward to add it to that list.
+ *
+ * Every file under src/ must have exactly one visible `src/` row:
+ * - in "## Implementation paths", with Exists `yes` (it must be present) or
  *   `not yet` (it must be absent);
- * - or in "Shared files", where it must be present.
- * A `src/` row anywhere else, a repeated row or another Exists value is a
- * problem. It reads text, as the scan does: a table the parser does not
- * recognise lists nothing, so every file then reads as unlisted.
+ * - or in "## Shared files", where it must be present.
+ * Any heading ends a section, and each section may appear once. A row in a
+ * code fence or an HTML comment, under any other heading, or repeated, is a
+ * problem, as is another Exists value. It reads text, as the scan does: a
+ * table the parser does not recognise lists nothing, so every file then
+ * reads as unlisted.
  */
+const SRC_RESERVED = [
+  "cli.ts",
+  "export.ts",
+  "observe.ts",
+  "preflight.ts",
+  "profile.ts",
+  "run.ts",
+] as const;
 const REGISTRY_ROW = /^\|\s*`src\/([^`]+)`\s*\|(.*)$/u;
+const REGISTRY_SECTIONS = ["## Implementation paths", "## Shared files"] as const;
 
 function sourceRegistryProblems(
   files: ReadonlyMap<string, string>,
-  ownership: string
+  ownership: string,
+  reserved: readonly string[]
 ): string[] {
   const problems: string[] = [];
   const rows = new Map<string, "yes" | "not yet" | null>();
+  const seen = new Set<string>();
   let section = "";
+  let fenced = false;
+  let commented = false;
   for (const line of ownership.split("\n")) {
-    if (line.startsWith("## ")) {
-      section = line;
+    if (line.trimStart().startsWith("```")) {
+      fenced = !fenced;
+      continue;
+    }
+    const hidden = fenced || commented || line.includes("<!--");
+    if (line.includes("<!--")) {
+      commented = !line.includes("-->", line.indexOf("<!--"));
+    } else if (commented && line.includes("-->")) {
+      commented = false;
+    }
+    if (!hidden && /^#{1,6}\s/u.test(line)) {
+      const named = REGISTRY_SECTIONS.find((heading) => line.startsWith(heading)) ?? "";
+      if (named !== "" && seen.has(named)) {
+        problems.push(`docs/ownership.md: the section ${named} appears more than once`);
+        section = "";
+      } else {
+        seen.add(named);
+        section = named;
+      }
       continue;
     }
     const row = REGISTRY_ROW.exec(line);
@@ -3284,7 +3324,10 @@ function sourceRegistryProblems(
       problems.push(`${name}: listed more than once in docs/ownership.md`);
       continue;
     }
-    if (section.startsWith("## Implementation paths")) {
+    if (hidden) {
+      problems.push(`${name}: row inside a code fence or HTML comment in docs/ownership.md`);
+      rows.set(name, null);
+    } else if (section === "## Implementation paths") {
       const exists = (row[2] ?? "").split("|")[1]?.trim();
       if (exists === "yes" || exists === "not yet") {
         rows.set(name, exists);
@@ -3292,7 +3335,7 @@ function sourceRegistryProblems(
         problems.push(`${name}: Exists cell in docs/ownership.md is not yes or not yet`);
         rows.set(name, null);
       }
-    } else if (section.startsWith("## Shared files")) {
+    } else if (section === "## Shared files") {
       rows.set(name, "yes");
     } else {
       problems.push(
@@ -3313,16 +3356,35 @@ function sourceRegistryProblems(
       problems.push(`${name}: listed as existing in docs/ownership.md but absent`);
     }
   }
+  for (const [name, exists] of rows) {
+    if (exists !== null && !reserved.includes(name)) {
+      problems.push(`${name}: not a reserved src/ name; adding one needs the #2 steward`);
+    }
+  }
+  for (const name of reserved) {
+    if (!rows.has(name)) {
+      problems.push(`${name}: reserved src/ name has no row in docs/ownership.md`);
+    }
+  }
   return problems;
 }
 
-/** Every entry under src/, as posix paths relative to src/. */
-function readSourceTree(): Map<string, string> {
+/** What readSourceTree records for an entry that is not a regular file. */
+const NOT_A_REGULAR_FILE = "\0castles: not a regular file\0";
+
+/**
+ * Every entry under src/, as posix paths relative to src/. A symlink or any
+ * other non-regular entry is recorded as NOT_A_REGULAR_FILE and refused by
+ * scanSources, never followed and never read as empty.
+ */
+function readSourceTree(source: string = join(root, "src")): Map<string, string> {
   const files = new Map<string, string>();
   const walk = (directory: string, prefix: string) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const relative = `${prefix}${entry.name}`;
-      if (entry.isDirectory()) {
+      if (entry.isSymbolicLink() || !(entry.isDirectory() || entry.isFile())) {
+        files.set(relative, NOT_A_REGULAR_FILE);
+      } else if (entry.isDirectory()) {
         walk(join(directory, entry.name), `${relative}/`);
       } else if (entry.isFile() && entry.name.endsWith(".ts")) {
         files.set(relative, readFileSync(join(directory, entry.name), "utf8"));
@@ -3332,7 +3394,7 @@ function readSourceTree(): Map<string, string> {
       }
     }
   };
-  walk(join(root, "src"), "");
+  walk(source, "");
   return files;
 }
 
@@ -3759,12 +3821,22 @@ const SCAN_KNOWN_GAPS: readonly (readonly [string, string, string, "first"?])[] 
     "cli.ts",
   ],
   // PR #19 review rv19b-d029b92a, recorded by maintainer decision on
-  // 2026-11-22: the built-in-name rule reads quoted text only, so a built-in
-  // module's name used as an object key passes. #3's matchesShape relies on
-  // this for one field name. Nothing in src/ can load a module from a key.
+  // 2026-11-22. This records the rule's scope, not a new evasion (PR #20
+  // read rv20-8fd6a4b7, N6): the built-in-name rule reads quoted text only,
+  // and src/ already uses such names as bare identifiers. #3's matchesShape
+  // uses one as an object key. A key cannot load a module without a banned
+  // word or a disallowed import.
   [
     "a built-in module's name used as an object key rather than a string literal",
     "const shape = { path: (value: unknown) => typeof value === \"string\" };",
+    "cli.ts",
+  ],
+  // PR #20 read rv20-8fd6a4b7, N5; present on main before it. Quotes are
+  // paired naively, so an apostrophe inside an earlier string shifts the
+  // pairing and a later built-in name in quotes goes uncounted.
+  [
+    "a built-in module's name in quotes, uncounted because an earlier apostrophe shifts the quote pairing",
+    'const a = "it\'s"; const b = "fs";',
     "cli.ts",
   ],
 ];
@@ -3800,7 +3872,7 @@ test("the capability scan is a tripwire, not a proof: these known evasions pass 
     (where === "first" ? prepend : append)(file, text)(files);
     assert.deepEqual(scanSources(files), [], label);
   }
-  assert.equal(SCAN_KNOWN_GAPS.length, 7);
+  assert.equal(SCAN_KNOWN_GAPS.length, 8);
 });
 
 // --- CLI: read-only command, human and JSON, no credentials ----------------

@@ -35,7 +35,9 @@ corepack pnpm scan        # capability scan and src/ registry only; about a seco
 
 The `Test` workflow runs install, test, typecheck and the fixture check at
 every pull request head. Cite its run and the head SHA in the Checks line; it
-is fixture evidence, like a local run.
+is fixture evidence, like a local run. A PR that changes the workflow or the
+`test`, `typecheck`, `check` or `scan` scripts is not evidenced by its own CI
+run, because that run uses the PR's own versions.
 
 ## Before you push: what trips agents
 
@@ -44,19 +46,22 @@ is fixture evidence, like a local run.
   `self`, `window`, `require`, `eval`, `Function`, `constructor`,
   `__proto__`, `prototype`, `Reflect`, `Proxy`, `fetch`, `XMLHttpRequest`,
   `WebSocket`, `EventSource`, `Worker`, `WebAssembly`, `Deno`, `Bun`,
-  `getBuiltinModule`, `dlopen`, `mainModule`, `createRequire`, plus
-  `import(`, `import.`, and `\u` or `\x` escapes. A Node built-in module's
-  name (`path`, `fs`, `os` ...) may appear in quotes only as an import
-  specifier. Run `corepack pnpm scan`; each problem names the file, line and
-  word. Never weaken the scan to pass it.
+  `getBuiltinModule`, `dlopen`, `mainModule`, `createRequire`, plus `import`
+  followed by `(` or `.` (spaces allowed), and any backslash followed by `u`
+  or `x`, even in a comment. They match as whole words, so `self-contained`
+  and `global-scope` fail too. Keep a Node built-in module's name (`path`,
+  `fs`, `os` ...) out of every quoted string, backticks included, except an
+  import specifier: the scan counts them. Run `corepack pnpm scan`; a
+  banned-word problem names the file, line and word, and other problems name
+  the file. Never weaken the scan to pass it.
 - **A new `src/` file needs its row.** The `src/` file list is
-  [`docs/ownership.md`](docs/ownership.md). When you add your lane's reserved
-  file, flip its Exists cell from `not yet` to `yes` in the same PR. That is a
-  standing handoff from the steward. A file with no row needs a shared-file
-  request first.
-- **Reads from the shared account are second reads.** Every agent session
-  here posts as the same account. A read your session started is never the
-  independent review `risk:r4` needs; say so in the handoff.
+  [`docs/ownership.md`](docs/ownership.md), and the reserved names are fixed
+  in `tests/preflight.test.ts`. When you add your lane's reserved file, flip
+  its Exists cell from `not yet` to `yes` in the same PR. That one-cell edit
+  is a standing handoff proposed with PR #20 and awaiting the maintainer's
+  confirmation; until it is confirmed, say in the PR that you made it. A name
+  that is not reserved needs a shared-file request first.
+- **Independence is about who started the read.** Every agent session posts as the same shared account, so the account says nothing about independence: say who started the read. A read started by the authoring session, or by a session it started, is a second read, never the independent review `risk:r4` needs. A reviewer started separately, who authored none of the change, can be independent with the shared account disclosed, as on PRs #12 and #13.
 
 Add a failing boundary test before a fix (committing it separately is a
 proposed addition to #1). Report exact commands and results. Enable the secret-scanning hook once per clone:

@@ -25,22 +25,22 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      # actions/setup-node v7.1.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 24
-
-      - name: Install (frozen lockfile)
-        run: |
-          corepack enable
-          corepack pnpm install --frozen-lockfile
-
       - name: Head under test
         run: |
           echo "head ${HEAD_UNDER_TEST}"
           test "$(git rev-parse HEAD)" = "${HEAD_UNDER_TEST}"
         env:
           HEAD_UNDER_TEST: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # actions/setup-node v7.1.0. The exact Node version the handoffs report.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.0
+
+      - name: Install (frozen lockfile)
+        run: |
+          corepack enable
+          corepack pnpm install --frozen-lockfile
 
       - name: Test
         run: corepack pnpm test

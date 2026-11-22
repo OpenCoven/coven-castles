@@ -170,7 +170,7 @@ Every result is reported with its class. A higher class is never inferred from a
 
 **Addition to #1:** a check that executes no behaviour (typecheck, a link check, reading pinned source, a documentation-only change) is reported as `static`. That is a label for "no behavioural evidence", not a fourth class, and it never stands in for one of the three.
 
-The `Test` workflow's result at an exact head is fixture evidence (offline tests) plus `static` (typecheck). It is not run by the authoring session, but it is not review either.
+The `Test` workflow's result at an exact head is fixture evidence (offline tests) plus `static` (typecheck). It is not review. On `pull_request` the workflow file and the `package.json` scripts it calls come from the PR itself, so a PR that changes `.github/workflows/test.yml` or the `test`, `typecheck`, `check` or `scan` scripts is not evidenced by its own CI run.
 
 `ready` in a fixture run is not readiness. A merged PR is not `verified`. Anything skipped or not run is reported as unverified, never left silently green.
 
@@ -188,7 +188,7 @@ From #1:
 - **Review an exact SHA**, from a fresh clone, never from the author's worktree. If the head moves during review, restart on the new head.
 - **Check claims against the code**, not against the author's table. Where a test is offered as evidence, break the behaviour in a scratch copy and confirm the test fails.
 - **Say how independent the review is.** A reviewer spawned by the author's own session is a useful second read; say so plainly and do not call it independent.
-- **This repository has one collaborator**, the shared account every agent session posts as. Until a second reviewer account exists, no agent read here can be independent review.
+- **The account does not show independence.** Every agent session posts as the same shared account, so the account says nothing about independence: say who started the read. A read started by the authoring session, or by a session it started, is a second read, never the independent review `risk:r4` needs. A reviewer started separately, who authored none of the change, can be independent with the shared account disclosed, as on PRs #12 and #13.
 - **On a shared GitHub identity**, post reviews as comments (`gh pr review --comment`). GitHub will not let an account approve its own PR, and an approval would say more than a reviewer on a shared account can mean.
 - **A review is a recommendation, not acceptance.** Whether a review alone opens a gate is the open proposal under [Lanes and gates](#lanes-and-gates).
 
@@ -199,6 +199,8 @@ Some files are edited by every lane eventually: the CLI entrypoint, package mani
 1. Open a request with the **Shared-file change request** issue template, or comment on the steward's issue, saying which file, what change and why.
 2. Wait for the steward to make the change or to hand the file over explicitly in a handoff block.
 3. Do not edit it concurrently "to save time". Two lanes editing one manifest is the collision these rules exist to prevent.
+
+**Proposed with PR #20, awaiting the maintainer's confirmation:** one standing exception. A lane that adds its own reserved `src/` file flips that file's Exists cell in [`ownership.md`](ownership.md) to `yes` in the same change, without a request. The reserved names are fixed in `tests/preflight.test.ts`, so the exception cannot add a name.
 
 ## The live sandbox
 

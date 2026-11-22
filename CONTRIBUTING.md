@@ -87,7 +87,8 @@ The `Test` workflow (`.github/workflows/test.yml`) runs install, test,
 typecheck and the fixture check at every pull request head and every push to
 `main`. Its result is fixture evidence. Report the run with the head SHA it
 checked; it does not replace your own fresh-clone run where a handoff asks
-for one.
+for one. A PR that changes the workflow or those scripts is not evidenced by
+its own CI run.
 
 ## Test first
 
@@ -172,9 +173,7 @@ merge your own change, and a reviewer works from a fresh clone at an exact SHA
 and reports findings. The full rules are in
 [`docs/coordination.md`](docs/coordination.md#review).
 
-Every agent session posts as the same shared account, which is also the
-repository's only collaborator. A read started by your own session is a
-second read, never independent review.
+Every agent session posts as the same shared account, so the account says nothing about independence: say who started the read. A read started by the authoring session, or by a session it started, is a second read, never the independent review `risk:r4` needs. A reviewer started separately, who authored none of the change, can be independent with the shared account disclosed, as on PRs #12 and #13.
 
 ## Scope
 
