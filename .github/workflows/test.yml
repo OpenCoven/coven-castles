@@ -17,9 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # actions/checkout v7.0.1
+      # actions/checkout v7.0.1. On a pull request, check out the exact head
+      # commit, not GitHub's merge with the base, so the result is evidence
+      # for the SHA a handoff names.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       # actions/setup-node v7.1.0
@@ -33,7 +36,11 @@ jobs:
           corepack pnpm install --frozen-lockfile
 
       - name: Head under test
-        run: git rev-parse HEAD
+        run: |
+          echo "head ${HEAD_UNDER_TEST}"
+          test "$(git rev-parse HEAD)" = "${HEAD_UNDER_TEST}"
+        env:
+          HEAD_UNDER_TEST: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Test
         run: corepack pnpm test
