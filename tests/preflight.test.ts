@@ -3267,16 +3267,86 @@ function readSourceTree(): Map<string, string> {
 
 test("every file under src/ passes the capability scan", () => {
   const files = readSourceTree();
-  assert.deepEqual([...files.keys()].sort(), [
-    "cli.ts",
-    "preflight.ts",
-    "profile.ts",
-  ]);
+  // The src/ file list is docs/ownership.md, not a list in this test: a lane
+  // that adds its reserved file flips that row's Exists cell to "yes".
+  assert.deepEqual(
+    sourceRegistryProblems(files, readFileSync(join(root, "docs", "ownership.md"), "utf8")),
+    []
+  );
   assert.deepEqual(scanSources(files), []);
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   assert.deepEqual(manifest.dependencies ?? {}, {});
   assert.deepEqual(manifest.optionalDependencies ?? {}, {});
   assert.deepEqual(manifest.peerDependencies ?? {}, {});
+});
+
+const REGISTRY_FIXTURE = [
+  "# Path ownership (synthetic, for the registry test)",
+  "",
+  "## Implementation paths",
+  "",
+  "| Path | Owner | Exists | Notes |",
+  "| --- | --- | --- | --- |",
+  "| `src/alpha.ts` | #2 | yes | |",
+  "| `src/beta.ts` | #3 | not yet | |",
+  "| `tests/alpha.test.ts` | #2 | yes | not under src/, so not checked here |",
+  "",
+  "## Shared files, stewarded by #2",
+  "",
+  "| Path | Why it is shared |",
+  "| --- | --- |",
+  "| `src/gamma.ts` | Shared entrypoint |",
+  "",
+].join("\n");
+
+test("the src/ registry refuses an unlisted, missing, early or unreadable file", () => {
+  const files = (...names: string[]) => new Map(names.map((name) => [name, ""]));
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), REGISTRY_FIXTURE), []);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts", "stray.ts"), REGISTRY_FIXTURE), [
+    "stray.ts: not listed in docs/ownership.md",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts", "nested/x.ts"), REGISTRY_FIXTURE), [
+    "nested/x.ts: not listed in docs/ownership.md",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("gamma.ts"), REGISTRY_FIXTURE), [
+    "alpha.ts: listed as existing in docs/ownership.md but absent",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts"), REGISTRY_FIXTURE), [
+    "gamma.ts: listed as existing in docs/ownership.md but absent",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "beta.ts", "gamma.ts"), REGISTRY_FIXTURE), [
+    "beta.ts: present but listed as not yet in docs/ownership.md",
+  ]);
+  const flipped = REGISTRY_FIXTURE.replace("| `src/beta.ts` | #3 | not yet |", "| `src/beta.ts` | #3 | yes |");
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "beta.ts", "gamma.ts"), flipped), []);
+  const unreadable = REGISTRY_FIXTURE.replace("| `src/beta.ts` | #3 | not yet |", "| `src/beta.ts` | #3 | soon |");
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), unreadable), [
+    "beta.ts: Exists cell in docs/ownership.md is not yes or not yet",
+  ]);
+  const elsewhere = `${REGISTRY_FIXTURE}\n## Maintainer-owned\n\n| Path | Notes |\n| --- | --- |\n| \`src/delta.ts\` | |\n`;
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), elsewhere), [
+    "delta.ts: listed outside the implementation and shared tables of docs/ownership.md",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), `${REGISTRY_FIXTURE}| \`src/alpha.ts\` | #4 | yes | |\n`), [
+    "alpha.ts: listed more than once in docs/ownership.md",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), "# empty\n"), [
+    "alpha.ts: not listed in docs/ownership.md",
+    "gamma.ts: not listed in docs/ownership.md",
+  ]);
+});
+
+test("a capability-scan problem names the file, the line and the banned word, once per occurrence", () => {
+  const files = new Map([
+    ["one.ts", 'export const a = 1;\n// the prototype of a thing\nexport const b = 2; // window\n'],
+  ]);
+  assert.deepEqual(scanSources(files), [
+    "one.ts:2: contains prototype (banned anywhere in src/, comments and strings included)",
+    "one.ts:3: contains window (banned anywhere in src/, comments and strings included)",
+  ]);
+  assert.deepEqual(scanSources(new Map([["two.ts", 'const s = "\\x41";\n']])), [
+    "two.ts:1: contains \\x (banned anywhere in src/, comments and strings included)",
+  ]);
 });
 
 type Plant = (files: Map<string, string>) => void;
@@ -3546,6 +3616,15 @@ const SCAN_KNOWN_GAPS: readonly (readonly [string, string, string, "first"?])[] 
     'const a = "/*"; const p = process\nconst b = "*/";\nconst other = (p as any).env.DAYTONA_API_KEY;',
     "cli.ts",
   ],
+  // PR #19 review rv19b-d029b92a, recorded by maintainer decision on
+  // 2026-11-22: the built-in-name rule reads quoted text only, so a built-in
+  // module's name used as an object key passes. #3's matchesShape relies on
+  // this for one field name. Nothing in src/ can load a module from a key.
+  [
+    "a built-in module's name used as an object key rather than a string literal",
+    "const shape = { path: (value: unknown) => typeof value === \"string\" };",
+    "cli.ts",
+  ],
 ];
 
 test("the capability scan reports each known way of reaching a capability", () => {
@@ -3579,7 +3658,7 @@ test("the capability scan is a tripwire, not a proof: these known evasions pass 
     (where === "first" ? prepend : append)(file, text)(files);
     assert.deepEqual(scanSources(files), [], label);
   }
-  assert.equal(SCAN_KNOWN_GAPS.length, 6);
+  assert.equal(SCAN_KNOWN_GAPS.length, 7);
 });
 
 // --- CLI: read-only command, human and JSON, no credentials ----------------
