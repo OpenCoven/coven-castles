@@ -81,3 +81,10 @@ test('local search covers every page and links only to generated pages and headi
   const css = await readFile(new URL('assets/style.css', root), 'utf8');
   for (const [, asset] of css.matchAll(/url\(['"]?(\/[^)'"\s]+)['"]?\)/g)) await readFile(new URL(asset.slice(1), root));
 });
+
+test('qualification distinguishes upstream delivery from Castles integration', async () => {
+  const html = await readFile(new URL('qualification/index.html', root), 'utf8');
+  assert.match(html, /Review and accept Castles’ integration.*issues\/2/);
+  assert.match(html, /upstream capability was delivered.*issues\/296/);
+  assert.doesNotMatch(html, /canonical owner, tracked in/);
+});
