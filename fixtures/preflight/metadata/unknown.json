@@ -1,0 +1,99 @@
+{
+  "fixture": "SYNTHETIC FIXTURE - invented values, not provider evidence",
+  "case": "metadata-unknown",
+  "env": {
+    "CASTLES_PROFILE": "castles.daytona-private-linux.v1",
+    "CASTLES_SANDBOX_ID": "fixture-sandbox-0001",
+    "CASTLES_OWNER_AGENT_ID": "fixture-agent-0001",
+    "CASTLES_SANDBOX_GENERATION": "3"
+  },
+  "inspection": {
+    "status": 200,
+    "body": {
+      "version": 1,
+      "outcome": "observed",
+      "record": {
+        "agentId": "fixture-agent-0001",
+        "fence": "none",
+        "generation": 3,
+        "lifecycle": "ready",
+        "sandboxId": "fixture-sandbox-0001"
+      },
+      "observed": {
+        "autoArchiveInterval": 10080,
+        "autoDeleteInterval": -1,
+        "autoDestroyAtConfigured": false,
+        "autoPauseInterval": 0,
+        "autoStopInterval": 15,
+        "cpu": 2,
+        "diskGib": 10,
+        "domainAllowListConfigured": true,
+        "domainAllowListMatchesPolicy": true,
+        "gpu": 0,
+        "identity": {
+          "configuration": "current",
+          "credentialBoundary": true,
+          "generationLabel": true,
+          "ownershipLabels": true
+        },
+        "linkedSandbox": false,
+        "memoryGib": 4,
+        "networkAllowListConfigured": false,
+        "networkBlockAll": false,
+        "outboundProxyConfigured": false,
+        "public": false,
+        "snapshot": "coven-agents-copilot-2",
+        "state": "started",
+        "target": "us",
+        "volumes": 0,
+        "warmPool": false,
+        "providerMetadata": {
+          "autoDestroyAtConfigured": null,
+          "warmPool": null,
+          "linkedSandbox": null,
+          "volumes": null,
+          "platform": {
+            "architecture": null,
+            "os": null
+          }
+        }
+      },
+      "policy": {
+        "adapterVersion": "fixture-adapter-1",
+        "capabilityContractVersion": "fixture-capability-1",
+        "credentialBoundaryVersion": "attempt-reset-v1",
+        "harnesses": [],
+        "resources": {
+          "cpu": 2,
+          "diskGib": 10,
+          "memoryGib": 4
+        },
+        "sdkVersion": "0.231.1",
+        "snapshotName": "coven-agents-copilot-2",
+        "target": "us"
+      }
+    }
+  },
+  "expect": {
+    "status": "incompatible",
+    "inspectCalls": 1,
+    "reasons": [
+      {
+        "code": "metadata_missing",
+        "field": "autoDestroyAtConfigured"
+      },
+      {
+        "code": "metadata_missing",
+        "field": "volumes"
+      },
+      {
+        "code": "metadata_missing",
+        "field": "warmPool"
+      },
+      {
+        "code": "metadata_missing",
+        "field": "linkedSandbox"
+      }
+    ]
+  }
+}

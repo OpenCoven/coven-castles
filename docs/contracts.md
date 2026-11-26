@@ -20,6 +20,18 @@ Still undecided on 2026-11-12. That day the maintainer accepted the #2 contract 
 
 Any change to a contract after review or acceptance is a new revision and starts again as **proposed**.
 
+## Proposed #322 negotiated provider metadata
+
+This bounded consumer change is stacked on PR #18 at `e064756cd6f9cf404cf582d9407db3e5e6aa9b4f`. It consumes coven-agents PR #324 at `6dedc26e9d49d945fc2442252c531b9ffdba3e18`, schema SHA-256 `0e7105f691f9afc0550ea9ee5b603dbe94de9128b689ef9a6d07b9f34d4e911b`. The maintainer approved the [bounded handoff](https://github.com/OpenCoven/coven-castles/issues/2#issuecomment-7077277401) and [wire convention](https://github.com/OpenCoven/coven-agents/pull/324#issuecomment-7081318179). This is proposed implementation, not acceptance of a new #2 revision. `3e6d01539aecf2358c81f4561d856fcd89ef4413` remains accepted.
+
+Call `runPreflight(environment, client, { includeProviderMetadata: true })` to negotiate details. The existing inspection request gains that literal-true flag; a canonical HTTP client forwards it alongside `expectedGeneration` and `expectedSandboxId`. No live client is introduced here. Omit the option to retain strict default v1 requests, parsing, policy and output. False, null or another non-true stated value refuses before inspection. A response still declares version 1; unsupported response versions refuse. Detailed responses received without opting in also refuse.
+
+In detail mode, an observed response must carry the exact nested `observed.providerMetadata` shape: nullable booleans `autoDestroyAtConfigured`, `warmPool`, `linkedSandbox`; nullable integer `volumes` from 0 through 1024; and strict `platform` with nullable strings `os` and `architecture` of 1 through 64 code units. Every key is required; extra keys and malformed values refuse the whole response. Refusal envelopes keep their existing shape and HTTP handling. The four detailed TTL/attachment values become authoritative for readiness and public output. Null produces `metadata_missing` and an observed JSON null; it never falls back to legacy false/zero. True or a positive count produces the existing lifecycle/attachment refusal. False and zero proceed through all remaining checks. Volume counts through 1024 are preserved in detail mode; legacy echo bounds remain unchanged.
+
+The producer maps runtime-undefined scalar fields to unknown, runtime-null scalar fields to absence, empty volume arrays to zero, and missing lists to unknown. Runtime-null-as-absent is the approved application convention for this candidate; the pinned SDK's optional-string declarations do not establish a documented provider null sentinel. This fixture-backed contract is not live-provider evidence. The platform block is validated for wire compatibility, but public provider platform remains unknown and the separate snapshot-derived platform policy is preserved. It does not establish an installed CLI version.
+
+Codex CLI (`codex`, `@openai/codex`) and Claude CLI (`claude`, `@anthropic-ai/claude-code`) entries are accepted in the canonical policy harness list under the existing strict `{id, package, version}` shape. These are server-selected source pins, not observed installed executables, execution qualification or authorization. The separate coven-agents harness implementation owns executable selection, credentials, events and permissions. Fixture ready still exits 3; `isLiveReady` remains false for fixtures. The #3 capability-scan handoff and dispatch requirements remain unchanged.
+
 ## Produced by #2
 
 ### Proposed revision: conformance to upstream inspection v1
