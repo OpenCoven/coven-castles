@@ -980,6 +980,18 @@ test("known values are echoed exactly", async () => {
   }
 });
 
+test("an SDK version with single-digit non-zero components is echoed, not unrecognised", async () => {
+  // Mutation pass, 2026-11-26: SDK_VERSION's `[0-9]{0,3}` -> `{1,3}` in any
+  // component survived, because every accepted version tested had a zero or
+  // a multi-digit value there.
+  for (const version of ["1.2.3", "0.1.0", "9.0.9"]) {
+    const result = await withInspection((inspection) => {
+      inspection.sdk.version = version;
+    });
+    assert.equal(result.observed?.sdk.version, version, version);
+  }
+});
+
 test("an architecture outside the known set is missing metadata, not ready", async () => {
   for (const architecture of ["fixture-arch", "riscv64", "X86_64", "", null, undefined, 64]) {
     const result = await withInspection((inspection) => {
