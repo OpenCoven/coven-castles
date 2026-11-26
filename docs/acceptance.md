@@ -31,7 +31,7 @@ Tests are cited by exact title, in backticks, after the word mvp (a test in `tes
 | #7 fixture corpus | `302bb4533aaccde8165d8efe596502da286891b0`, merged by PR #7 | Unchanged here, byte for byte (mvp `N1 N4 fixtures/report-task is entry for entry the corpus merged at 302bb45`). Merging decided neither the proposed fixture limits nor the review-independence proposals. |
 | #3 runtime | none | Investigation comment only; no interface |
 | #4 recovery | none | Investigation comment only; no interface |
-| Canonical source | `OpenCoven/coven-agents@410bb088263946e72f12e2b0ced322fd6a48ce54` | `main` on 2026-11-26, the merge of coven-agents PR #327; private, read statically. Refreshed from `3a4f3ff4130860d0abda1d2207b43b2f9d372180`, which #1's source anchors still name. No canonical client or authority interface is introduced. |
+| Canonical source | `OpenCoven/coven-agents@410bb088263946e72f12e2b0ced322fd6a48ce54` | `main` on 2026-11-26, the merge of coven-agents PR #327; read statically (the repository's visibility on GitHub was public on 2026-11-26). Refreshed from `3a4f3ff4130860d0abda1d2207b43b2f9d372180`, which #1's source anchors still name. No canonical client or authority interface is introduced. |
 
 ### Upstream state at the canonical pin
 
