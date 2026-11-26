@@ -453,6 +453,19 @@ test("plain domains and bounded IPv4 ranges are accepted as restricted egress", 
   }
 });
 
+test("a bounded IPv4 prefix containing a zero digit is accepted", async () => {
+  // Mutation pass, 2026-11-26: the prefix class `[0-9]{1,2}` -> `[1-9]{1,2}`
+  // survived, because no accepted range used /10, /20 or /30.
+  for (const value of ["10.0.0.0/10", "172.16.0.0/20", "192.0.2.0/30"]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.domainAllowList = null;
+      sandbox.networkAllowList = value;
+    });
+    assert.equal(result.status, "ready", value);
+    assert.deepEqual(result.reasons, [], value);
+  }
+});
+
 // --- Egress: a restriction is a property of the whole list (review B1r) -----
 
 const slash8 = (from: number, count: number) =>
