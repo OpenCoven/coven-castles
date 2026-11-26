@@ -6,6 +6,7 @@
   "description": "Read-only preflight for one explicitly bound, existing Daytona sandbox.",
   "scripts": {
     "check": "tsx src/cli.ts check",
+    "scan": "tsx --test --test-name-pattern=\"capability.scan|src/ registry\" tests/preflight.test.ts",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

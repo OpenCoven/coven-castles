@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { builtinModules } from "node:module";
@@ -3066,6 +3067,7 @@ const BUILTIN_NAMES = new Set(
 );
 const FORBIDDEN_ANYWHERE =
   /\b(?:globalThis|global|self|window|require|eval|Function|constructor|__proto__|prototype|Reflect|Proxy|fetch|XMLHttpRequest|WebSocket|EventSource|Worker|WebAssembly|Deno|Bun|getBuiltinModule|dlopen|mainModule|createRequire)\b|\bimport\s*\(|\bimport\s*\.|\\u|\\x/u;
+const FORBIDDEN_EVERYWHERE = new RegExp(FORBIDDEN_ANYWHERE.source, "gu");
 const PROCESS_WORD = /(?<![\w$/-]|node:)process(?![\w$])/gu;
 const PROCESS_USE =
   /^process(?:\.env\[key\]|\.exit\(2\)|\.exitCode = |\.loadEnvFile\("\.env\.local"\)|\.stdout\.write\(|\.stderr\.write\(| from "node:process";)/u;
@@ -3123,15 +3125,22 @@ function importedNames(clause: string): string[] {
 function scanSources(files: ReadonlyMap<string, string>): string[] {
   const problems: string[] = [];
   for (const [file, source] of files) {
+    if (source === NOT_A_REGULAR_FILE) {
+      problems.push(`${file}: not a regular file`);
+      continue;
+    }
     if (!file.endsWith(".ts")) {
       problems.push(`${file}: not a TypeScript source file`);
       continue;
     }
     const code = withoutComments(source);
 
-    const forbidden = FORBIDDEN_ANYWHERE.exec(source);
-    if (forbidden) {
-      problems.push(`${file}: contains ${forbidden[0]}`);
+    // Every occurrence, with its line, so a session can fix them in one pass.
+    for (const forbidden of source.matchAll(FORBIDDEN_EVERYWHERE)) {
+      const line = source.slice(0, forbidden.index).split("\n").length;
+      problems.push(
+        `${file}:${line}: contains ${forbidden[0]} (banned anywhere in src/, comments and strings included)`
+      );
     }
 
     let moduleStatements = 0;
@@ -3245,13 +3254,220 @@ function scanSources(files: ReadonlyMap<string, string>): string[] {
   return problems;
 }
 
-/** Every entry under src/, as posix paths relative to src/. */
-function readSourceTree(): Map<string, string> {
+/**
+ * The src/ file registry is the ownership table in docs/ownership.md, so a
+ * lane adding its reserved file flips one Exists cell rather than editing
+ * this test. The reserved names themselves are fixed here, in SRC_RESERVED:
+ * the doc may move a reserved file between `not yet` and `yes`, but a new
+ * name needs the #2 steward to add it to that list.
+ *
+ * Every file under src/ must have exactly one visible `src/` row:
+ * - in "## Implementation paths", with Exists `yes` (it must be present) or
+ *   `not yet` (it must be absent);
+ * - or in "## Shared files", where it must be present.
+ * Any heading ends a section, setext and indented ones included, and each
+ * section may appear once. A row counts only as a body row of a table. The
+ * document may hold no code fence, HTML or link reference definition. A row
+ * anywhere else, under any other heading, or repeated, is a problem, as is
+ * another Exists value, as is a reserved name spelled as src/ text outside a
+ * counted row, or a table whose rows differ in width. Every table line must
+ * be printable ASCII with no backslash and no &, which rules out escaped
+ * pipes, entities and lookalike characters as a class. This is a
+ * tripwire like the scan: it reads lines, not a Markdown tree, and refuses
+ * what it cannot model. It cannot prove that the rendered page shows what it
+ * counts, so a reviewer still reads the raw diff of docs/ownership.md. It reads text, as the scan does: a
+ * table the parser does not recognise lists nothing, so every file then
+ * reads as unlisted.
+ */
+const SRC_RESERVED = [
+  "cli.ts",
+  "export.ts",
+  "observe.ts",
+  "preflight.ts",
+  "profile.ts",
+  "run.ts",
+] as const;
+const REGISTRY_ROW = /^\|\s*`src\/([^`]+)`\s*\|(.*)$/u;
+const REGISTRY_ROW_LIKE = /`src\/([^`]+)`\s*\|/u;
+const TABLE_SEPARATOR = /^\|(?:\s*:?-{3,}:?\s*\|)+\s*$/u;
+const REGISTRY_SECTIONS = ["## Implementation paths", "## Shared files"] as const;
+
+function sourceRegistryProblems(
+  files: ReadonlyMap<string, string>,
+  ownership: string,
+  reserved: readonly string[]
+): string[] {
+  const problems: string[] = [];
+  const rows = new Map<string, "yes" | "not yet" | null>();
+  const seen = new Set<string>();
+  let section = "";
+  let fenced = false;
+  let commented = false;
+  // A line-by-line parser cannot follow every fence and comment form a
+  // renderer does, so the registry document may contain none.
+  if (/^\s*(?:`{3,}|~{3,})/mu.test(ownership) || ownership.includes("<!--")) {
+    problems.push("docs/ownership.md: code fences and HTML comments are not allowed in the registry document");
+  }
+  // The same for every other form that can fold or hide a line when
+  // rendered: raw HTML, processing instructions, declarations, CDATA and
+  // link reference definitions (whose titles may span lines).
+  if (/<(?!!--)[A-Za-z!?/]/u.test(ownership) || /^\s{0,3}\[[^\]]+\]:/mu.test(ownership)) {
+    problems.push(
+      "docs/ownership.md: raw HTML and link reference definitions are not allowed in the registry document"
+    );
+  }
+  // A row counts only as a body row of a table: a header line at column 0
+  // after a blank line or heading, then a separator row, then contiguous
+  // rows. Any other line that looks like a src/ row is refused.
+  let table: "none" | "header" | "separator" | "body" | "invalid" = "none";
+  let width = 0;
+  let plainReported = false;
+  const cells = (text: string) => text.trim().replace(/^\|/u, "").replace(/\|$/u, "").split("|").length;
+  // A reserved name spelled as src/ text outside a counted row is refused.
+  const mention = new RegExp(
+    `src(?:/|&#47;|&#x2[fF];)(${reserved.map((name) => name.replaceAll(".", "\\.")).join("|")})`,
+    "gu"
+  );
+  let boundary = true;
+  let previous = "";
+  for (const line of ownership.split("\n")) {
+    // A setext underline makes the line before it a heading: end the section.
+    if (/^\s{0,3}(?:=+|-+)\s*$/u.test(line) && previous.trim() !== "" && !previous.trimStart().startsWith("|")) {
+      section = "";
+      table = "none";
+      boundary = true;
+      previous = line;
+      continue;
+    }
+    previous = line;
+    if (line.trimStart().startsWith("```")) {
+      fenced = !fenced;
+      table = "none";
+      boundary = false;
+      continue;
+    }
+    const hidden = fenced || commented || line.includes("<!--");
+    if (line.includes("<!--")) {
+      commented = !line.includes("-->", line.indexOf("<!--"));
+    } else if (commented && line.includes("-->")) {
+      commented = false;
+    }
+    if (!hidden && /^\s{0,3}#{1,6}(?:\s|$)/u.test(line)) {
+      const named = REGISTRY_SECTIONS.find((heading) => line.startsWith(heading)) ?? "";
+      if (named !== "" && seen.has(named)) {
+        problems.push(`docs/ownership.md: the section ${named} appears more than once`);
+        section = "";
+      } else {
+        seen.add(named);
+        section = named;
+      }
+      table = "none";
+      boundary = true;
+      continue;
+    }
+    if (/^\s*\|/u.test(line) && /[^\x20-\x7E]|[\\&]/u.test(line) && !plainReported) {
+      // Escaped pipes, entities and lookalike characters let the page and
+      // this parser read different cells, so a table line refuses them all.
+      problems.push("docs/ownership.md: a table line holds a backslash, & or a character outside printable ASCII");
+      plainReported = true;
+    }
+    if (line.startsWith("|")) {
+      // Header and separator must have the same number of cells or the
+      // renderer draws no table. GitHub pads or trims a body row of another
+      // width; the check refuses one anyway.
+      if (table === "none") {
+        table = boundary ? "header" : "invalid";
+        width = cells(line);
+      } else if (table === "header") {
+        table = TABLE_SEPARATOR.test(line) && cells(line) === width ? "separator" : "invalid";
+      } else if (table === "separator" || table === "body") {
+        table = cells(line) === width ? "body" : "invalid";
+      }
+    } else {
+      table = "none";
+    }
+    boundary = line.trim() === "";
+    const rowLike = REGISTRY_ROW_LIKE.exec(line);
+    if (!rowLike) {
+      for (const found of line.matchAll(mention)) {
+        problems.push(`${found[1] ?? ""}: mentioned outside a counted row in docs/ownership.md`);
+      }
+      continue;
+    }
+    const row = REGISTRY_ROW.exec(line);
+    const name = row?.[1] ?? rowLike[1] ?? "";
+    if (rows.has(name)) {
+      problems.push(`${name}: listed more than once in docs/ownership.md`);
+      continue;
+    }
+    if (hidden) {
+      problems.push(`${name}: row inside a code fence or HTML comment in docs/ownership.md`);
+      rows.set(name, null);
+    } else if (line.includes("\\")) {
+      // An escaped pipe makes the page and this parser read different cells.
+      problems.push(`${name}: a backslash in a registry row in docs/ownership.md`);
+      rows.set(name, null);
+    } else if (!row || table !== "body") {
+      problems.push(`${name}: a src/ row outside a table body in docs/ownership.md`);
+    } else if (section === "## Implementation paths") {
+      const exists = (row?.[2] ?? "").split("|")[1]?.trim();
+      if (exists === "yes" || exists === "not yet") {
+        rows.set(name, exists);
+      } else {
+        problems.push(`${name}: Exists cell in docs/ownership.md is not yes or not yet`);
+        rows.set(name, null);
+      }
+    } else if (section === "## Shared files") {
+      rows.set(name, "yes");
+    } else {
+      problems.push(
+        `${name}: listed outside the implementation and shared tables of docs/ownership.md`
+      );
+      rows.set(name, null);
+    }
+  }
+  for (const name of [...files.keys()].sort()) {
+    if (!rows.has(name)) {
+      problems.push(`${name}: not listed in docs/ownership.md`);
+    } else if (rows.get(name) === "not yet") {
+      problems.push(`${name}: present but listed as not yet in docs/ownership.md`);
+    }
+  }
+  for (const [name, exists] of rows) {
+    if (exists === "yes" && !files.has(name)) {
+      problems.push(`${name}: listed as existing in docs/ownership.md but absent`);
+    }
+  }
+  for (const [name, exists] of rows) {
+    if (exists !== null && !reserved.includes(name)) {
+      problems.push(`${name}: not a reserved src/ name; adding one needs the #2 steward`);
+    }
+  }
+  for (const name of reserved) {
+    if (!rows.has(name)) {
+      problems.push(`${name}: reserved src/ name has no row in docs/ownership.md`);
+    }
+  }
+  return problems;
+}
+
+/** What readSourceTree records for an entry that is not a regular file. */
+const NOT_A_REGULAR_FILE = "\0castles: not a regular file\0";
+
+/**
+ * Every entry under src/, as posix paths relative to src/. A symlink or any
+ * other non-regular entry is recorded as NOT_A_REGULAR_FILE and refused by
+ * scanSources, never followed and never read as empty.
+ */
+function readSourceTree(source: string = join(root, "src")): Map<string, string> {
   const files = new Map<string, string>();
   const walk = (directory: string, prefix: string) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const relative = `${prefix}${entry.name}`;
-      if (entry.isDirectory()) {
+      // Dirent reports a symlink as neither file nor directory.
+      if (!(entry.isDirectory() || entry.isFile())) {
+        files.set(relative, NOT_A_REGULAR_FILE);
+      } else if (entry.isDirectory()) {
         walk(join(directory, entry.name), `${relative}/`);
       } else if (entry.isFile() && entry.name.endsWith(".ts")) {
         files.set(relative, readFileSync(join(directory, entry.name), "utf8"));
@@ -3261,22 +3477,291 @@ function readSourceTree(): Map<string, string> {
       }
     }
   };
-  walk(join(root, "src"), "");
+  walk(source, "");
   return files;
 }
 
 test("every file under src/ passes the capability scan", () => {
   const files = readSourceTree();
-  assert.deepEqual([...files.keys()].sort(), [
-    "cli.ts",
-    "preflight.ts",
-    "profile.ts",
-  ]);
+  // The src/ file list is docs/ownership.md, not a list in this test: a lane
+  // that adds its reserved file flips that row's Exists cell to "yes".
+  assert.deepEqual(
+    sourceRegistryProblems(
+      files,
+      readFileSync(join(root, "docs", "ownership.md"), "utf8"),
+      SRC_RESERVED
+    ),
+    []
+  );
   assert.deepEqual(scanSources(files), []);
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   assert.deepEqual(manifest.dependencies ?? {}, {});
   assert.deepEqual(manifest.optionalDependencies ?? {}, {});
   assert.deepEqual(manifest.peerDependencies ?? {}, {});
+});
+
+const REGISTRY_FIXTURE = [
+  "# Path ownership (synthetic, for the registry test)",
+  "",
+  "## Implementation paths",
+  "",
+  "| Path | Owner | Exists | Notes |",
+  "| --- | --- | --- | --- |",
+  "| `src/alpha.ts` | #2 | yes | |",
+  "| `src/beta.ts` | #3 | not yet | |",
+  "| `tests/alpha.test.ts` | #2 | yes | not under src/, so not checked here |",
+  "",
+  "## Shared files, stewarded by #2",
+  "",
+  "| Path | Why it is shared |",
+  "| --- | --- |",
+  "| `src/gamma.ts` | Shared entrypoint |",
+  "",
+].join("\n");
+
+const FIXTURE_RESERVED = ["alpha.ts", "beta.ts", "gamma.ts"] as const;
+
+test("the src/ registry refuses an unlisted, missing, early or unreadable file", () => {
+  const files = (...names: string[]) => new Map(names.map((name) => [name, ""]));
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), []);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts", "stray.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), [
+    "stray.ts: not listed in docs/ownership.md",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts", "nested/x.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), [
+    "nested/x.ts: not listed in docs/ownership.md",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("gamma.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), [
+    "alpha.ts: listed as existing in docs/ownership.md but absent",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), [
+    "gamma.ts: listed as existing in docs/ownership.md but absent",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "beta.ts", "gamma.ts"), REGISTRY_FIXTURE, FIXTURE_RESERVED), [
+    "beta.ts: present but listed as not yet in docs/ownership.md",
+  ]);
+  const flipped = REGISTRY_FIXTURE.replace("| `src/beta.ts` | #3 | not yet |", "| `src/beta.ts` | #3 | yes |");
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "beta.ts", "gamma.ts"), flipped, FIXTURE_RESERVED), []);
+  const unreadable = REGISTRY_FIXTURE.replace("| `src/beta.ts` | #3 | not yet |", "| `src/beta.ts` | #3 | soon |");
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), unreadable, FIXTURE_RESERVED), [
+    "beta.ts: Exists cell in docs/ownership.md is not yes or not yet",
+  ]);
+  const elsewhere = `${REGISTRY_FIXTURE}\n## Maintainer-owned\n\n| Path | Notes |\n| --- | --- |\n| \`src/delta.ts\` | |\n`;
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), elsewhere, FIXTURE_RESERVED), [
+    "delta.ts: listed outside the implementation and shared tables of docs/ownership.md",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), `${REGISTRY_FIXTURE}| \`src/alpha.ts\` | #4 | yes | |\n`, FIXTURE_RESERVED), [
+    "alpha.ts: listed more than once in docs/ownership.md",
+  ]);
+  assert.deepEqual(sourceRegistryProblems(files("alpha.ts", "gamma.ts"), "# empty\n", FIXTURE_RESERVED), [
+    "alpha.ts: not listed in docs/ownership.md",
+    "gamma.ts: not listed in docs/ownership.md",
+    "alpha.ts: reserved src/ name has no row in docs/ownership.md",
+    "beta.ts: reserved src/ name has no row in docs/ownership.md",
+    "gamma.ts: reserved src/ name has no row in docs/ownership.md",
+  ]);
+});
+
+test("the src/ registry admits only a flipped Exists cell, never a new or hidden row (PR #20 read rv20-8fd6a4b7, N1)", () => {
+  const files = (...names: string[]) => new Map(names.map((name) => [name, ""]));
+  const beta = "| `src/beta.ts` | #3 | not yet | |";
+  const without = REGISTRY_FIXTURE.replace(`${beta}\n`, "");
+  const check = (doc: string, ...names: string[]) =>
+    sourceRegistryProblems(files(...names), doc, FIXTURE_RESERVED);
+  const table = (row: string) => `| Path | Owner | Exists | Notes |\n| --- | --- | --- | --- |\n${row}`;
+  const betaYes = "| `src/beta.ts` | #3 | yes | |";
+  const outside = "beta.ts: listed outside the implementation and shared tables of docs/ownership.md";
+  // A new row, even marked yes, needs the steward: the reserved names are fixed here.
+  assert.deepEqual(check(REGISTRY_FIXTURE.replace(beta, `${beta}\n| \`src/new.ts\` | #3 | yes | |`), "alpha.ts", "gamma.ts", "new.ts"), [
+    "new.ts: not a reserved src/ name; adding one needs the #2 steward",
+  ]);
+  assert.deepEqual(check(REGISTRY_FIXTURE.replace(beta, `${beta}\n| \`src/sub/new.ts\` | #3 | yes | |`), "alpha.ts", "gamma.ts", "sub/new.ts"), [
+    "sub/new.ts: not a reserved src/ name; adding one needs the #2 steward",
+  ]);
+  assert.deepEqual(check(without, "alpha.ts", "gamma.ts"), [
+    "beta.ts: reserved src/ name has no row in docs/ownership.md",
+  ]);
+  // Rows a reader of the rendered page would not see.
+  assert.deepEqual(check(`${without}\n\`\`\`\n| \`src/beta.ts\` | #3 | yes | |\n\`\`\`\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+    "docs/ownership.md: code fences and HTML comments are not allowed in the registry document",
+    "beta.ts: row inside a code fence or HTML comment in docs/ownership.md",
+  ]);
+  assert.deepEqual(check(`${without}\n<!--\n| \`src/beta.ts\` | #3 | yes | |\n-->\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+    "docs/ownership.md: code fences and HTML comments are not allowed in the registry document",
+    "beta.ts: row inside a code fence or HTML comment in docs/ownership.md",
+  ]);
+  // Fence and comment styles a line-by-line parser can misread (PR #20 read
+  // rv20b-73648cb1, F1): the document may hold none at all.
+  const hiders = [
+    "~~~\n| `src/beta.ts` | #3 | yes | |\n~~~",
+    "   ```\n| `src/beta.ts` | #3 | yes | |\n   ```",
+    "````\n```\n| `src/beta.ts` | #3 | yes | |\n````",
+    "a --> b <!-- c\n| `src/beta.ts` | #3 | yes | |\n-->",
+  ];
+  for (const hider of hiders) {
+    assert.ok(
+      check(`${without}\n${hider}\n`, "alpha.ts", "beta.ts", "gamma.ts").includes(
+        "docs/ownership.md: code fences and HTML comments are not allowed in the registry document"
+      ),
+      hider
+    );
+  }
+  // Any heading ends a section; only the two named sections list src/ files.
+  for (const heading of ["### Aside", "# Other", "#", "  ### Aside", "Aside\n-----", "Aside\n=====", "Aside\n  ---"]) {
+    assert.deepEqual(
+      check(without.replace("## Shared files", `${heading}\n\n${table(betaYes)}\n\n## Shared files`), "alpha.ts", "beta.ts", "gamma.ts"),
+      [outside],
+      heading
+    );
+  }
+  assert.deepEqual(check(`${without}\n## Implementation paths\n\n${table(betaYes)}\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+    "docs/ownership.md: the section ## Implementation paths appears more than once",
+    "beta.ts: listed outside the implementation and shared tables of docs/ownership.md",
+  ]);
+});
+
+test("the src/ registry counts a row only in a table body, and refuses raw HTML and link references (PR #20 read rv20c-42344cbc, F1)", () => {
+  const files = (...names: string[]) => new Map(names.map((name) => [name, ""]));
+  const beta = "| `src/beta.ts` | #3 | not yet | |";
+  const without = REGISTRY_FIXTURE.replace(`${beta}\n`, "");
+  const check = (doc: string, ...names: string[]) =>
+    sourceRegistryProblems(files(...names), doc, FIXTURE_RESERVED);
+  const betaYes = "| `src/beta.ts` | #3 | yes | |";
+  const raw = "docs/ownership.md: raw HTML and link reference definitions are not allowed in the registry document";
+  // A row-like line that is not a body row of a table counts as nothing and is refused.
+  assert.deepEqual(check(REGISTRY_FIXTURE.replace(beta, ` ${beta}`), "alpha.ts", "gamma.ts"), [
+    "beta.ts: a src/ row outside a table body in docs/ownership.md",
+    "beta.ts: reserved src/ name has no row in docs/ownership.md",
+  ]);
+  assert.deepEqual(check(`${without}\n${betaYes}\n`.replace("Shared entrypoint |\n\n", "Shared entrypoint |\n\nSome prose.\n"), "alpha.ts", "beta.ts", "gamma.ts"), [
+    "beta.ts: a src/ row outside a table body in docs/ownership.md",
+    "beta.ts: not listed in docs/ownership.md",
+    "beta.ts: reserved src/ name has no row in docs/ownership.md",
+  ]);
+  assert.deepEqual(check(`${without}\n> ${betaYes}\n`, "alpha.ts", "beta.ts", "gamma.ts"), [
+    "beta.ts: a src/ row outside a table body in docs/ownership.md",
+    "beta.ts: not listed in docs/ownership.md",
+    "beta.ts: reserved src/ name has no row in docs/ownership.md",
+  ]);
+  // A table needs a blank line or heading before its header, and a separator row.
+  const header = "| Path | Owner | Exists | Notes |";
+  for (const doc of [
+    `${without}\nSome prose.\n${header}\n| --- | --- | --- | --- |\n${betaYes}\n`,
+    `${without}\n${header}\n| not | a | separator | row |\n${betaYes}\n`,
+  ]) {
+    assert.deepEqual(check(doc, "alpha.ts", "beta.ts", "gamma.ts"), [
+      "beta.ts: a src/ row outside a table body in docs/ownership.md",
+      "beta.ts: not listed in docs/ownership.md",
+      "beta.ts: reserved src/ name has no row in docs/ownership.md",
+    ], doc);
+  }
+  // PR #20 read rv20d-04e82d07: a header and separator with different cell
+  // counts render as a paragraph, not a table. A body row of another width
+  // still renders (GitHub pads or trims it); the check refuses it anyway.
+  for (const doc of [
+    `${without}\n${header}\n| --- | --- |\n${betaYes}\n`,
+    `${without}\n${header}\n| --- | --- | --- | --- |\n| \`src/beta.ts\` | #3 | yes |\n`,
+  ]) {
+    assert.deepEqual(check(doc, "alpha.ts", "beta.ts", "gamma.ts"), [
+      "beta.ts: a src/ row outside a table body in docs/ownership.md",
+      "beta.ts: not listed in docs/ownership.md",
+      "beta.ts: reserved src/ name has no row in docs/ownership.md",
+    ], doc);
+  }
+  // An escaped pipe makes the page and the parser read different cells.
+  assert.ok(
+    check(REGISTRY_FIXTURE.replace(beta, "| `src/beta.ts` | #3 \\| yes | not yet |"), "alpha.ts", "beta.ts", "gamma.ts").includes(
+      "beta.ts: a backslash in a registry row in docs/ownership.md"
+    ),
+    "escaped pipe"
+  );
+  // A reserved name spelled as src/ text outside a counted row is refused.
+  for (const decoy of [
+    "| ``src/beta.ts`` | #3 | yes | |",
+    "| &#96;src/beta.ts&#96; | #3 | yes | |",
+    "| src/beta.ts | #3 | yes | |",
+    "Note: src/beta.ts is ready.",
+  ]) {
+    assert.ok(
+      check(`${REGISTRY_FIXTURE}\n${decoy}\n`, "alpha.ts", "gamma.ts").includes(
+        "beta.ts: mentioned outside a counted row in docs/ownership.md"
+      ),
+      decoy
+    );
+  }
+  // PR #20 read rv20e-e3e4fcae: any table line may hold only printable ASCII,
+  // with no backslash and no &. That closes escaped pipes in a header, HTML
+  // entities, zero-width and lookalike characters as a class.
+  const plain = "docs/ownership.md: a table line holds a backslash, & or a character outside printable ASCII";
+  for (const doc of [
+    REGISTRY_FIXTURE.replace("| Path | Owner | Exists | Notes |", "| Path | Owner \\| Exists | Notes |"),
+    `${REGISTRY_FIXTURE}| \`src/beta.ts\` | #3 | yes |\n`.replace("| `src/beta.ts` | #3 | yes |", "| `src\u200b/beta.ts` | #3 | yes |"),
+    `${REGISTRY_FIXTURE}| \`src\uff0fbeta.ts\` | #3 | yes | |\n`,
+    `${REGISTRY_FIXTURE}| src&#X2F;beta.ts | #3 | yes | |\n`,
+    `${REGISTRY_FIXTURE}| src&sol;beta.ts | #3 | yes | |\n`,
+  ]) {
+    assert.ok(check(doc, "alpha.ts", "beta.ts", "gamma.ts").includes(plain), doc);
+  }
+  // A src/ code span in a later cell is not a row.
+  assert.ok(
+    check(REGISTRY_FIXTURE.replace("| `src/gamma.ts` | Shared entrypoint |", "| `src/gamma.ts` | Shared entrypoint |\n| `docs/x.md` | see `src/delta.ts` |"), "alpha.ts", "gamma.ts").includes(
+      "delta.ts: a src/ row outside a table body in docs/ownership.md"
+    ),
+    "code span in a later cell"
+  );
+  // Forms the renderer hides or folds, each refused outright.
+  for (const hider of [
+    `[x]: /u '\n${betaYes}\n'`,
+    `[x]: /u "\n${betaYes}\n"`,
+    `<?\n${betaYes}\n?>`,
+    `<![CDATA[\n${betaYes}\n]]>`,
+    `<!X\n${betaYes}\n>`,
+    `<span title="\n${betaYes}\n">`,
+    `<details>\n\n${betaYes}\n\n</details>`,
+  ]) {
+    assert.ok(check(`${REGISTRY_FIXTURE.replace(beta, ` ${beta}`)}\n${hider}\n`, "alpha.ts", "beta.ts", "gamma.ts").includes(raw), hider);
+  }
+  // The real document holds none of these, and a plain one-cell flip still passes.
+  const flipped = REGISTRY_FIXTURE.replace(beta, betaYes);
+  assert.deepEqual(check(flipped, "alpha.ts", "beta.ts", "gamma.ts"), []);
+});
+
+test("the capability scan refuses a symlink under src/ rather than reading it as empty (PR #20 read rv20-8fd6a4b7, N3)", () => {
+  const directory = mkdtempSync(join(tmpdir(), "castles-src-"));
+  const outside = mkdtempSync(join(tmpdir(), "castles-outside-"));
+  try {
+    writeFileSync(join(directory, "a.ts"), "export const a = 1;\n");
+    writeFileSync(join(outside, "planted.ts"), "export const g = globalThis;\n");
+    symlinkSync(join(directory, "a.ts"), join(directory, "b.ts"));
+    symlinkSync(join(outside, "planted.ts"), join(directory, "c.ts"));
+    symlinkSync(outside, join(directory, "linked"));
+    assert.deepEqual(scanSources(readSourceTree(directory)).sort(), [
+      "b.ts: not a regular file",
+      "c.ts: not a regular file",
+      "linked: not a regular file",
+    ]);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+    rmSync(outside, { force: true, recursive: true });
+  }
+});
+
+test("a capability-scan problem names the file, the line and the banned word, once per occurrence", () => {
+  const files = new Map([
+    ["one.ts", 'export const a = 1;\n// the prototype of a thing\nexport const b = 2; // window\n'],
+  ]);
+  assert.deepEqual(scanSources(files), [
+    "one.ts:2: contains prototype (banned anywhere in src/, comments and strings included)",
+    "one.ts:3: contains window (banned anywhere in src/, comments and strings included)",
+  ]);
+  // Two on one line, and one word on two lines: one problem each (N2).
+  assert.deepEqual(scanSources(new Map([["three.ts", "// prototype and prototype\n// prototype\n"]])), [
+    "three.ts:1: contains prototype (banned anywhere in src/, comments and strings included)",
+    "three.ts:1: contains prototype (banned anywhere in src/, comments and strings included)",
+    "three.ts:2: contains prototype (banned anywhere in src/, comments and strings included)",
+  ]);
+  assert.deepEqual(scanSources(new Map([["two.ts", 'const s = "\\x41";\n']])), [
+    "two.ts:1: contains \\x (banned anywhere in src/, comments and strings included)",
+  ]);
 });
 
 type Plant = (files: Map<string, string>) => void;
@@ -3546,6 +4031,25 @@ const SCAN_KNOWN_GAPS: readonly (readonly [string, string, string, "first"?])[] 
     'const a = "/*"; const p = process\nconst b = "*/";\nconst other = (p as any).env.DAYTONA_API_KEY;',
     "cli.ts",
   ],
+  // PR #19 review rv19b-d029b92a, recorded by maintainer decision on
+  // 2026-11-22. This records the rule's scope, not a new evasion (PR #20
+  // read rv20-8fd6a4b7, N6): the built-in-name rule reads quoted text only,
+  // and src/ already uses such names as bare identifiers. #3's matchesShape
+  // uses one as an object key. A key cannot load a module without a banned
+  // word or a disallowed import.
+  [
+    "a built-in module's name used as an object key rather than a string literal",
+    "const shape = { path: (value: unknown) => typeof value === \"string\" };",
+    "cli.ts",
+  ],
+  // PR #20 read rv20-8fd6a4b7, N5; present on main before it. Quotes are
+  // paired naively, so an apostrophe inside an earlier string shifts the
+  // pairing and a later built-in name in quotes goes uncounted.
+  [
+    "a built-in module's name in quotes, uncounted because an earlier apostrophe shifts the quote pairing",
+    'const a = "it\'s"; const b = "fs";',
+    "cli.ts",
+  ],
 ];
 
 test("the capability scan reports each known way of reaching a capability", () => {
@@ -3579,7 +4083,7 @@ test("the capability scan is a tripwire, not a proof: these known evasions pass 
     (where === "first" ? prepend : append)(file, text)(files);
     assert.deepEqual(scanSources(files), [], label);
   }
-  assert.equal(SCAN_KNOWN_GAPS.length, 6);
+  assert.equal(SCAN_KNOWN_GAPS.length, 8);
 });
 
 // --- CLI: read-only command, human and JSON, no credentials ----------------
