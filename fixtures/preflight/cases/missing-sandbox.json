@@ -8,8 +8,32 @@
     "CASTLES_SANDBOX_GENERATION": "3"
   },
   "inspection": {
-    "contract": "castles.fixture.sandbox-inspection.v1",
-    "outcome": "not_found"
+    "status": 200,
+    "body": {
+      "version": 1,
+      "outcome": "not_found",
+      "record": {
+        "agentId": "fixture-agent-0001",
+        "fence": "none",
+        "generation": 3,
+        "lifecycle": "ready",
+        "sandboxId": "fixture-sandbox-0001"
+      },
+      "policy": {
+        "adapterVersion": "fixture-adapter-1",
+        "capabilityContractVersion": "fixture-capability-1",
+        "credentialBoundaryVersion": "attempt-reset-v1",
+        "harnesses": [],
+        "resources": {
+          "cpu": 2,
+          "diskGib": 10,
+          "memoryGib": 4
+        },
+        "sdkVersion": "0.231.1",
+        "snapshotName": "coven-agents-copilot-2",
+        "target": "us"
+      }
+    }
   },
   "expect": {
     "status": "unavailable",

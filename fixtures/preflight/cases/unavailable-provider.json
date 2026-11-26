@@ -8,9 +8,16 @@
     "CASTLES_SANDBOX_GENERATION": "3"
   },
   "inspection": {
-    "contract": "castles.fixture.sandbox-inspection.v1",
-    "outcome": "unavailable",
-    "source": "provider"
+    "status": 503,
+    "body": {
+      "apiVersion": "fixture",
+      "error": {
+        "code": "provider_unavailable",
+        "message": "Synthetic refusal.",
+        "retryable": false
+      },
+      "requestId": "fixture-request-0001"
+    }
   },
   "expect": {
     "status": "unavailable",
