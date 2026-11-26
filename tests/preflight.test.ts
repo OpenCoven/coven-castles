@@ -434,6 +434,21 @@ test("an allow list that is present but not a string is missing metadata", async
   }
 });
 
+test("the echoed allow-list count is unknown when either list is unstated", async () => {
+  // Mutation pass, 2026-11-26: `.every` -> `.some` over the two lists
+  // survived; one stated list then produced a count for both.
+  for (const field of ["domainAllowList", "networkAllowList"] as const) {
+    const other =
+      field === "domainAllowList" ? "networkAllowList" : "domainAllowList";
+    const result = await withSandbox((sandbox) => {
+      sandbox[other] =
+        other === "domainAllowList" ? "fixture.invalid" : "192.0.2.0/24";
+      delete sandbox[field];
+    });
+    assert.equal(result.observed?.exposure.egressAllowListEntries, null, field);
+  }
+});
+
 test("plain domains and bounded IPv4 ranges are accepted as restricted egress", async () => {
   const safe: [string, string][] = [
     ["domainAllowList", "fixture.invalid"],
@@ -450,6 +465,19 @@ test("plain domains and bounded IPv4 ranges are accepted as restricted egress", 
     });
     assert.equal(result.status, "ready", `${field}=${value}`);
     assert.deepEqual(result.reasons, []);
+  }
+});
+
+test("a bounded IPv4 prefix containing a zero digit is accepted", async () => {
+  // Mutation pass, 2026-11-26: the prefix class `[0-9]{1,2}` -> `[1-9]{1,2}`
+  // survived, because no accepted range used /10, /20 or /30.
+  for (const value of ["10.0.0.0/10", "172.16.0.0/20", "192.0.2.0/30"]) {
+    const result = await withSandbox((sandbox) => {
+      sandbox.domainAllowList = null;
+      sandbox.networkAllowList = value;
+    });
+    assert.equal(result.status, "ready", value);
+    assert.deepEqual(result.reasons, [], value);
   }
 });
 
@@ -977,6 +1005,18 @@ test("known values are echoed exactly", async () => {
       inspection.sdk.version = version;
     });
     assert.equal(result.observed?.sdk.version, "unrecognised", version);
+  }
+});
+
+test("an SDK version with single-digit non-zero components is echoed, not unrecognised", async () => {
+  // Mutation pass, 2026-11-26: SDK_VERSION's `[0-9]{0,3}` -> `{1,3}` in any
+  // component survived, because every accepted version tested had a zero or
+  // a multi-digit value there.
+  for (const version of ["1.2.3", "0.1.0", "9.0.9"]) {
+    const result = await withInspection((inspection) => {
+      inspection.sdk.version = version;
+    });
+    assert.equal(result.observed?.sdk.version, version, version);
   }
 });
 
