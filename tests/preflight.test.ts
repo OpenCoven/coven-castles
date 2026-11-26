@@ -434,6 +434,21 @@ test("an allow list that is present but not a string is missing metadata", async
   }
 });
 
+test("the echoed allow-list count is unknown when either list is unstated", async () => {
+  // Mutation pass, 2026-11-26: `.every` -> `.some` over the two lists
+  // survived; one stated list then produced a count for both.
+  for (const field of ["domainAllowList", "networkAllowList"] as const) {
+    const other =
+      field === "domainAllowList" ? "networkAllowList" : "domainAllowList";
+    const result = await withSandbox((sandbox) => {
+      sandbox[other] =
+        other === "domainAllowList" ? "fixture.invalid" : "192.0.2.0/24";
+      delete sandbox[field];
+    });
+    assert.equal(result.observed?.exposure.egressAllowListEntries, null, field);
+  }
+});
+
 test("plain domains and bounded IPv4 ranges are accepted as restricted egress", async () => {
   const safe: [string, string][] = [
     ["domainAllowList", "fixture.invalid"],
