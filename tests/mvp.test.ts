@@ -858,6 +858,20 @@ test("ADM-11 readiness: fixture and null client never authorize a live run", asy
   assert.equal(child.stderr, "");
   assert.equal(JSON.parse(child.stdout).evidence, "fixture");
 });
+test("the CLI usage states the four documented exit codes", () => {
+  // Mutation pass, 2026-11-27: every digit of the usage text's exit-code
+  // lines could change with no test failing.
+  const child = spawnSync(process.execPath, ["--import", "tsx", "src/cli.ts", "--unknown-option"], {
+    cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
+    env: {PATH: process.env.PATH, TSX_DISABLE_CACHE: "1"},
+  });
+  assert.equal(child.error, undefined);
+  assert.equal(child.status, 2);
+  assert.equal(child.stdout, "");
+  assert.ok(child.stderr.includes(
+    "exit codes: 0 ready (live provider read only), 1 not ready, 2 usage error,\n" +
+    "            3 fixture replay reported ready (synthetic; never readiness)\n"), child.stderr);
+});
 test("BND-09 RED-02 RED-03 preflight errors, timeouts and hostile metadata stay bounded and redacted", async () => {
   const fixture = loadFixtureCase(resolve(root, "fixtures/preflight/cases/ready.json"));
   const canary = `synthetic-error-${randomBytes(16).toString("hex")}`;
