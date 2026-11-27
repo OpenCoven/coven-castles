@@ -8,46 +8,59 @@
     "CASTLES_SANDBOX_GENERATION": "3"
   },
   "inspection": {
-    "contract": "castles.fixture.sandbox-inspection.v1",
-    "outcome": "observed",
-    "sdk": {
-      "package": "@daytona/sdk",
-      "version": "0.220.0"
-    },
-    "binding": {
-      "agentId": "fixture-agent-0001",
-      "sandboxId": "fixture-sandbox-0001",
-      "generation": 3,
-      "lifecycle": "ready",
-      "attemptFence": "cleanup_required"
-    },
-    "platform": {
-      "os": "linux",
-      "architecture": "x86_64"
-    },
-    "sandbox": {
-      "id": "fixture-sandbox-0001",
-      "state": "started",
-      "target": "us",
-      "snapshot": "coven-agents-copilot-2",
-      "cpu": 2,
-      "memory": 4,
-      "disk": 10,
-      "gpu": 0,
-      "public": false,
-      "networkBlockAll": false,
-      "domainAllowList": "fixture.invalid",
-      "networkAllowList": null,
-      "autoStopInterval": 15,
-      "autoArchiveInterval": 10080,
-      "autoDeleteInterval": -1,
-      "autoPauseInterval": 0,
-      "autoDestroyAt": null,
-      "volumes": [],
-      "warmPoolId": null,
-      "linkedSandboxId": null,
-      "labels": {
-        "credentialBoundaryVersion": "attempt-reset-v1"
+    "status": 200,
+    "body": {
+      "version": 1,
+      "outcome": "observed",
+      "record": {
+        "agentId": "fixture-agent-0001",
+        "fence": "cleanup_required",
+        "generation": 3,
+        "lifecycle": "ready",
+        "sandboxId": "fixture-sandbox-0001"
+      },
+      "observed": {
+        "autoArchiveInterval": 10080,
+        "autoDeleteInterval": -1,
+        "autoDestroyAtConfigured": false,
+        "autoPauseInterval": 0,
+        "autoStopInterval": 15,
+        "cpu": 2,
+        "diskGib": 10,
+        "domainAllowListConfigured": true,
+        "domainAllowListMatchesPolicy": true,
+        "gpu": 0,
+        "identity": {
+          "configuration": "current",
+          "credentialBoundary": true,
+          "generationLabel": true,
+          "ownershipLabels": true
+        },
+        "linkedSandbox": false,
+        "memoryGib": 4,
+        "networkAllowListConfigured": false,
+        "networkBlockAll": false,
+        "outboundProxyConfigured": false,
+        "public": false,
+        "snapshot": "coven-agents-copilot-2",
+        "state": "started",
+        "target": "us",
+        "volumes": 0,
+        "warmPool": false
+      },
+      "policy": {
+        "adapterVersion": "fixture-adapter-1",
+        "capabilityContractVersion": "fixture-capability-1",
+        "credentialBoundaryVersion": "attempt-reset-v1",
+        "harnesses": [],
+        "resources": {
+          "cpu": 2,
+          "diskGib": 10,
+          "memoryGib": 4
+        },
+        "sdkVersion": "0.231.1",
+        "snapshotName": "coven-agents-copilot-2",
+        "target": "us"
       }
     }
   },

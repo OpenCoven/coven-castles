@@ -7,18 +7,18 @@
  */
 
 const UPSTREAM_REPOSITORY = "OpenCoven/coven-agents";
-const UPSTREAM_SHA = "3a4f3ff4130860d0abda1d2207b43b2f9d372180";
+const UPSTREAM_SHA = "0696af127207fb82cce734cd8c4ffa437d6f3502";
 
 const pin = (path: string) => `${UPSTREAM_REPOSITORY}@${UPSTREAM_SHA}:${path}`;
 
 /** Consumed contracts, each as repo@sha:path. Inspected read-only. */
 export const SOURCE_PINS = Object.freeze([
   {
-    covers: "toolchain (pnpm 10.32.1, tsx, TypeScript) and @daytona/sdk 0.220.0",
+    covers: "toolchain (pnpm 10.32.1, tsx, TypeScript) and @daytona/sdk 0.231.1",
     pin: pin("package.json"),
   },
   {
-    covers: "resolved @daytona/sdk 0.220.0 and its API clients",
+    covers: "resolved @daytona/sdk 0.231.1 and its API clients",
     pin: pin("pnpm-lock.yaml"),
   },
   {
@@ -35,7 +35,7 @@ export const SOURCE_PINS = Object.freeze([
   },
   {
     covers:
-      "create parameters (private, non-ephemeral), credential-boundary marker, lifecycle mutations",
+      "create parameters (private, non-ephemeral), credential-boundary marker, lifecycle mutations, guarded-bind verification (a read)",
     pin: pin("lib/runner/daytona/sandbox.ts"),
   },
   {
@@ -86,6 +86,25 @@ export const SOURCE_PINS = Object.freeze([
   {
     covers: "secret references held by the owning service",
     pin: pin(".env.example"),
+  },
+  {
+    covers:
+      "sandbox-inspection v1: request, record, observed fields, source policy and outcomes",
+    pin: pin("packages/agent-contracts/src/sandbox-inspection.ts"),
+  },
+  {
+    covers:
+      "inspection route: media type, abuse budgets, owner credential scope, status per outcome",
+    pin: pin("lib/runner/sandbox-inspection-http.ts"),
+  },
+  {
+    covers: "runner error codes and their HTTP statuses",
+    pin: pin("lib/runner/transport.ts"),
+  },
+  {
+    covers:
+      "how each observed field, the SDK version and the identity checks are derived",
+    pin: pin("lib/runner/daytona/resource-inspection.ts"),
   },
 ] as const);
 
@@ -184,8 +203,13 @@ export const OUTSIDE_LISTED_MUTATIONS = Object.freeze([
 ] as const);
 
 /**
- * Upstream has no read-only seam for one pre-existing sandbox at the pin.
- * This is a blocker for any live check, not something Castles works around.
+ * The upstream read-only seam for one pre-existing sandbox landed at the pin
+ * (coven-agents #296, closed through #311). What is still missing is a live
+ * Castles client for it, which needs the owner credential and explicit
+ * authorization for a live check. Until then none is possible, and Castles
+ * does not work around that. The `missing` value and the link are kept as they were,
+ * because the acceptance notes cite this blocker; renaming it to "live
+ * client missing" is left to the maintainer.
  */
 export const UPSTREAM_SEAM = Object.freeze({
   issue: "https://github.com/OpenCoven/coven-agents/issues/296",
@@ -207,39 +231,50 @@ export const SUPPORTED_PROFILE = Object.freeze({
     autoStopMinutes: Object.freeze({ max: 60, min: 5 }),
     ttl: "disabled",
   }),
+  /**
+   * Upstream sandbox-inspection v1 withholds the raw allow lists, so Castles'
+   * earlier per-entry rules (plain ASCII domains only; at most ten IPv4
+   * ranges no wider than /8) cannot run. By maintainer decision
+   * (coven-castles#2, 2026-11-20), egress is restricted when:
+   *
+   * - the domain allow list equals the owner's configured policy, as
+   *   upstream compares it (exact string equality; both absent match);
+   * - no network allow list and no outbound proxy is configured: the owner
+   *   policy sets neither, and upstream's own guarded dispatch treats a
+   *   proxy as drift;
+   * - and either a domain list is configured or block-all is true.
+   *
+   * This is looser than the per-entry rules Castles used to apply (second
+   * read rv18-7c3e91a4, finding 1). The owner's domain rule, read at the
+   * pin, also accepts a single leading `*.` label; all-numeric labels, so IP
+   * literals such as a loopback address; letters that case-fold into ASCII
+   * (the long s U+017F, the Kelvin sign U+212A); and names longer than 253
+   * characters. Castles used to refuse each of these. Castles cannot see
+   * the entries, so such an entry in the owner's policy, copied to the
+   * sandbox, reads as restricted.
+   */
   network: Object.freeze({
+    domainAllowList: Object.freeze({ basis: "owner-policy-equality" }),
     egress: "restricted",
-    /**
-     * A Castles policy decision with NO upstream pin. Neither
-     * `networkAllowList` nor `networkBlockAll` appears in any pinned
-     * coven-agents file: the owning service configures a domain allow list
-     * only, and its drift inventory compares that list alone. So for network
-     * lists and block-all, Castles accepts shapes the owner never produces,
-     * under these rules of its own:
-     *
-     * - each entry is an IPv4 range no wider than `/minIpv4Prefix`;
-     * - the list holds at most `maxEntries` entries, because a restriction
-     *   is a property of the whole list (256 ranges of /8 are every address);
-     * - `networkBlockAll: true` counts as restricted egress.
-     *
-     * `maxEntries` is 10 because the public Daytona network-limits
-     * documentation states that maximum. That figure is unverified against
-     * the provider and is not stated in the SDK 0.220.0 types, so it is a
-     * Castles bound, not a provider pin. At the bound the widest accepted
-     * list is ten /8 ranges, about 4% of IPv4 space.
-     */
     networkAllowList: Object.freeze({
-      basis: "castles-decision",
-      maxEntries: 10,
-      minIpv4Prefix: 8,
+      basis: "owner-policy-sets-none",
+      configured: "refused",
+    }),
+    outboundProxy: Object.freeze({
+      basis: "owner-policy-sets-none",
+      configured: "refused",
     }),
     public: false,
   }),
   platform: Object.freeze({
-    // No architecture is pinned upstream and the provider sandbox model at
-    // this SDK generation reports none. It must be stated by the seam; it is
-    // recorded as observed, never assumed.
-    architecture: "reported-not-pinned",
+    // Maintainer decision (coven-castles#2, 2026-11-20). Upstream
+    // inspection v1 reports no platform (asked in coven-agents#323), so the
+    // operating system is source policy implied by the qualified snapshot,
+    // whose pinned base image is Linux. It is accepted only when the observed
+    // snapshot equals that pin. No architecture is pinned anywhere upstream,
+    // so none is required; it is never reported as observed.
+    architecture: "not-pinned",
+    basis: "qualified-snapshot",
     os: "linux",
   }),
   provider: "daytona",
@@ -248,7 +283,7 @@ export const SUPPORTED_PROFILE = Object.freeze({
     floor: Object.freeze({ cpu: 1, diskGiB: 10, memoryGiB: 1 }),
     target: Object.freeze({ cpu: 2, diskGiB: 10, memoryGiB: 4 }),
   }),
-  sdk: Object.freeze({ package: "@daytona/sdk", version: "0.220.0" }),
+  sdk: Object.freeze({ package: "@daytona/sdk", version: "0.231.1" }),
   targets: Object.freeze(["us", "eu"] as const),
 } as const);
 

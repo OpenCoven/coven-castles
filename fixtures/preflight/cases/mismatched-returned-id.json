@@ -8,46 +8,17 @@
     "CASTLES_SANDBOX_GENERATION": "3"
   },
   "inspection": {
-    "contract": "castles.fixture.sandbox-inspection.v1",
-    "outcome": "observed",
-    "sdk": {
-      "package": "@daytona/sdk",
-      "version": "0.220.0"
-    },
-    "binding": {
-      "agentId": "fixture-agent-0001",
-      "sandboxId": "fixture-sandbox-0001",
-      "generation": 3,
-      "lifecycle": "ready",
-      "attemptFence": "clear"
-    },
-    "platform": {
-      "os": "linux",
-      "architecture": "x86_64"
-    },
-    "sandbox": {
-      "id": "fixture-sandbox-9999",
-      "state": "started",
-      "target": "us",
-      "snapshot": "coven-agents-copilot-2",
-      "cpu": 2,
-      "memory": 4,
-      "disk": 10,
-      "gpu": 0,
-      "public": false,
-      "networkBlockAll": false,
-      "domainAllowList": "fixture.invalid",
-      "networkAllowList": null,
-      "autoStopInterval": 15,
-      "autoArchiveInterval": 10080,
-      "autoDeleteInterval": -1,
-      "autoPauseInterval": 0,
-      "autoDestroyAt": null,
-      "volumes": [],
-      "warmPoolId": null,
-      "linkedSandboxId": null,
-      "labels": {
-        "credentialBoundaryVersion": "attempt-reset-v1"
+    "status": 200,
+    "body": {
+      "version": 1,
+      "outcome": "ambiguous",
+      "reason": "returned_id_mismatch",
+      "record": {
+        "agentId": "fixture-agent-0001",
+        "fence": "none",
+        "generation": 3,
+        "lifecycle": "ready",
+        "sandboxId": "fixture-sandbox-0001"
       }
     }
   },
