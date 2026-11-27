@@ -6158,3 +6158,51 @@ test("v1 third read: an inherited value never fills an absent key", async () => 
     delete base.volumes;
   }
 });
+
+test("owner project label is optional, opaque, redacted and cannot select a target", async () => {
+  const { env } = loadFixtureCase(casePath("ready"));
+  async function inspect(record: Record<string, unknown>, environment = env) {
+    const answer = v1Ready();
+    Object.assign(answer.body.record, record);
+    const wire = tripwireClient(() => answer);
+    const result = await runPreflight(environment, wire.client);
+    return { result, wire };
+  }
+  const baseline = await inspect({});
+  assert.equal(Object.hasOwn(baseline.result.observed!.binding, "projectAlias"), false);
+  const ref = "Synthetic-Cave-Registry-ID";
+  const project = { source: "cave", ref };
+  const labeled = await inspect({ project });
+  assert.equal(labeled.result.status, baseline.result.status);
+  assert.deepEqual(labeled.result.reasons, baseline.result.reasons);
+  assert.deepEqual(labeled.result.target, baseline.result.target);
+  assert.deepEqual(labeled.wire.calls, ["inspectBoundSandbox"]);
+  assert.deepEqual(labeled.wire.requests, baseline.wire.requests);
+  const projectAlias = Reflect.get(labeled.result.observed!.binding, "projectAlias");
+  assert.ok(typeof projectAlias === "string");
+  assert.match(projectAlias, /^prj_[a-f0-9]{12}$/);
+  assert.ok(renderHuman(labeled.result).includes(projectAlias));
+  assert.ok(!renderHuman(labeled.result).includes(ref));
+  assert.ok(!renderJson(labeled.result).includes(ref));
+  for (const [value, expected] of [[ref, true], [ref.toLowerCase(), false]] as const) {
+    const next = await inspect({ project: { source: "cave", ref: value } });
+    assert.equal(Reflect.get(next.result.observed!.binding, "projectAlias") === projectAlias, expected);
+  }
+  for (const invalid of [null, [], {}, ref, { ref }, { source: "cave" }, { source: "cave", ref: "" }, { source: "other", ref }, { ...project, extra: true }, { ...project, ref: "x".repeat(2048) }]) {
+    const { result } = await inspect({ project: invalid });
+    assert.equal(result.status, baseline.result.status);
+    assert.deepEqual(result.reasons, baseline.result.reasons);
+    assert.equal(Reflect.get(result.observed!.binding, "projectAlias"), "unrecognised");
+  }
+  for (const foreign of [{ agentId: ref }, { sandboxId: ref }]) {
+    const { result, wire } = await inspect({ ...foreign, project });
+    assert.equal(result.status, "unauthorized");
+    assert.equal(result.observed, null);
+    assert.deepEqual(wire.calls, ["inspectBoundSandbox"]);
+    assert.ok(!renderJson(result).includes(projectAlias));
+    assert.ok(!renderHuman(result).includes(ref));
+  }
+  const missing = await inspect({ project }, { ...env, CASTLES_SANDBOX_ID: "" });
+  assert.deepEqual(missing.wire.calls, []);
+  assert.equal(missing.result.observed, null);
+});
