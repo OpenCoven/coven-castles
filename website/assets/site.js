@@ -105,7 +105,17 @@ async function search() {
     status.textContent = terms.length ? `${matches.length} result${matches.length === 1 ? '' : 's'}${matches.length ? '' : '. Try another term or browse the sidebar.'}` : 'Search only Coven Castles documentation.';
   } catch { status.textContent = 'Search could not load. Browse the documentation sidebar instead.'; }
 }
-function openSearch() { closeMenu(); dialog.showModal(); input.focus(); search(); }
+let searchReturnFocus;
+function openSearch() {
+  searchReturnFocus = navigationDialog.open ? menu : document.activeElement;
+  closeMenu();
+  dialog.showModal();
+  input.focus();
+  search();
+}
+dialog.addEventListener('close', () => {
+  if (!dialog.open) searchReturnFocus?.focus();
+});
 all('.search-trigger').forEach(button => button.addEventListener('click', openSearch));
 one('#search-close').addEventListener('click', () => dialog.close());
 dialog.addEventListener('click', event => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } });
