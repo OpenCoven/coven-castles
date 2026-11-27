@@ -130,6 +130,7 @@ export type ObservedSandbox = Readonly<{
     /** Null when the recorded generation is outside the echoed range. */
     generation: number | null;
     lifecycle: string;
+    projectAlias?: string;
   }>;
   /**
    * Upstream withholds the raw allow lists and reports comparisons with the
@@ -344,7 +345,7 @@ function plainCopy(
   return { value: copy };
 }
 
-function alias(prefix: "own" | "sbx", value: string | undefined): string | null {
+function alias(prefix: "own" | "sbx" | "prj", value: string | undefined): string | null {
   if (value === undefined) {
     return null;
   }
@@ -572,6 +573,7 @@ type ObservedEnvelope = Readonly<{
     fence: string;
     generation: number;
     lifecycle: string;
+    projectAlias?: string;
     sandboxId: string | null;
   }>;
 }>;
@@ -628,7 +630,7 @@ const AMBIGUOUS: ReadonlyMap<unknown, Inspection> = new Map([
   ["sandbox_id_mismatch", refused("unauthorized", "binding_mismatch")],
 ]);
 
-const RECORD_KEYS = ["agentId", "fence", "generation", "lifecycle", "sandboxId"];
+const RECORD_KEYS = ["agentId", "fence", "generation", "lifecycle", "project", "sandboxId"];
 const OBSERVED_KEYS = [
   "autoArchiveInterval",
   "autoDeleteInterval",
@@ -764,6 +766,21 @@ function foreignRecord(
   return null;
 }
 
+/** Optional owner metadata. Only the pilot issuer is recognised. */
+function projectAlias(project: unknown): string {
+  if (
+    !isRecord(project) ||
+    !hasOnly(project, ["source", "ref"]) ||
+    project.source !== "cave" ||
+    typeof project.ref !== "string" ||
+    project.ref.length === 0 ||
+    project.ref.length > 256
+  ) {
+    return UNRECOGNISED;
+  }
+  return alias("prj", JSON.stringify([project.source, project.ref]))!;
+}
+
 function parseRecord(value: unknown): ObservedEnvelope["record"] | null {
   if (!isRecord(value) || !hasOnly(value, RECORD_KEYS)) {
     return null;
@@ -783,6 +800,7 @@ function parseRecord(value: unknown): ObservedEnvelope["record"] | null {
     fence: value.fence,
     generation,
     lifecycle: value.lifecycle,
+    ...(Object.hasOwn(value, "project") ? { projectAlias: projectAlias(value.project) } : {}),
     sandboxId: value.sandboxId,
   };
 }
@@ -1115,6 +1133,7 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
       warmPool: bool(observed.warmPool),
     },
     binding: {
+      ...(record.projectAlias === undefined ? {} : { projectAlias: record.projectAlias }),
       attemptFence: FENCE_ECHO.get(record.fence) ?? UNRECOGNISED,
       generation: echoedInteger(record.generation),
       lifecycle: known(record.lifecycle, KNOWN.bindingLifecycle) ?? UNRECOGNISED,
@@ -1494,6 +1513,9 @@ export function renderHuman(value: PreflightResult): string {
       `  binding generation ${observed.binding.generation ?? "?"}, lifecycle ${observed.binding.lifecycle}, attempt fence ${observed.binding.attemptFence}`,
       `  identity configuration ${identity.configuration ?? "?"}; credential boundary ${identity.credentialBoundary ?? "?"}; ownership labels ${identity.ownershipLabels ?? "?"}; generation label ${identity.generationLabel ?? "?"}`
     );
+    if (observed.binding.projectAlias !== undefined) {
+      lines.push(`  project ${observed.binding.projectAlias}`);
+    }
   } else {
     lines.push("observed: nothing disclosed");
   }
