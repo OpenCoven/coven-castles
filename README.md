@@ -4,6 +4,8 @@ Sandcastles for sandboxed familiars.
 
 A tiny operator package that checks **one explicitly configured, existing Daytona sandbox** and reports whether it is fit to host a familiar. It is read-only: it never creates, starts, resizes or deletes anything.
 
+**What a Castle is.** A Castle is a bounded, hosted place where a Project's work runs and its results come back, with exactly one execution owner. This package checks whether a sandbox is fit to back one. [Coven Host](https://github.com/OpenCoven/coven-host) provides a Castle's folder surface (`Castles/<name>/files/` in, `results/` out), and Coven Compass shows Castles inside Projects. A Castle is not a Project. The binding read here (owner agent, sandbox, generation) has no Project field yet. Coven Host, coven-castles and Coven Compass share this definition.
+
 > **Status.** Offline and fixture-verified only. No live sandbox has been checked. The live path is blocked on an upstream read-only seam: [OpenCoven/coven-agents#296](https://github.com/OpenCoven/coven-agents/issues/296).
 
 ## Quickstart
