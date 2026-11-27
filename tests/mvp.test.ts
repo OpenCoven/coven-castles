@@ -482,8 +482,16 @@ const tripwireDirectory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-tripw
 const tripwire = resolve(tripwireDirectory, "tripwire.mjs");
 writeFileSync(tripwire, TRIPWIRE_SOURCE);
 after(() => rmSync(tripwireDirectory, {recursive: true, force: true}));
-// Absolute, so a smoke run can start in any working directory.
-const guarded = ["--import", import.meta.resolve("tsx"), "--import", pathToFileURL(tripwire).href];
+// Absolute, so a smoke run can start in any working directory. Guarded
+// children load the TypeScript sources through Node's own type stripping
+// (Node 24: erasable syntax and `.ts` import specifiers, which these sources
+// use), not the tsx loader, whose start-up each child paid again with its
+// cache disabled. Entry detection depends on the loader's resolution
+// (extensionless and symlinked spellings), so the B1 and R3 entry tests keep
+// the tsx loader through `tsxGuarded`, as do the three runs that exercise the
+// tsx harness itself.
+const guarded = ["--import", pathToFileURL(tripwire).href];
+const tsxGuarded = ["--import", import.meta.resolve("tsx"), ...guarded];
 
 /** Candidate evaluation stays outside the process that owns the test assertions. */
 function smokeLibrary(
@@ -567,7 +575,7 @@ test("B1 smoke refuses however it is invoked as the program", () => {
     symlinkSync(resolve(root, "scripts/smoke.ts"), resolve(directory, "link.ts"));
     symlinkSync(resolve(root, "scripts/smoke.ts"), resolve(directory, "smoke-link"));
     symlinkSync(resolve(root, "scripts"), resolve(directory, "aliased-scripts"));
-    const node = [process.execPath, ...guarded];
+    const node = [process.execPath, ...tsxGuarded];
     const tsx = [tsxBin, "--import", pathToFileURL(tripwire).href];
     const spellings: [string, string[]][] = [
       ["exact relative path", [...node, "scripts/smoke.ts"]],
@@ -1039,13 +1047,13 @@ test("R3 missing import.meta.main still distinguishes the program from an import
     symlinkSync(script, resolve(directory, "link.ts"));
     symlinkSync(script, resolve(directory, "link"));
     symlinkSync(resolve(directory, "scripts"), resolve(directory, "alias"), "dir");
-    const node = [process.execPath, ...guarded];
+    const node = [process.execPath, ...tsxGuarded];
     for (const path of [script, script.slice(0, -3), resolve(directory, "link.ts"), resolve(directory, "link"),
       resolve(directory, "alias/smoke.ts")]) {
       assert.equal(smokeRun([...node, path]).reason, "explicit_opt_in_required");
       assert.equal(smokeRun([...node, path, ...liveArgs]).reason, "canonical_capabilities_unavailable");
     }
-    const child = spawnSync(process.execPath, [...guarded, "--input-type=module", "--eval",
+    const child = spawnSync(process.execPath, [...tsxGuarded, "--input-type=module", "--eval",
       `const m = await import(${JSON.stringify(pathToFileURL(script).href)}); process.stdout.write(typeof m.smokeRefusal);`], {
       cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
       env: {PATH: process.env.PATH, TSX_DISABLE_CACHE: "1"},
@@ -1110,10 +1118,10 @@ test("R3 preserved main symlinks refuse with native and missing main flags", () 
     for (const mode of ["actual", "fallback"]) {
       const script = resolve(directory, mode, "scripts/smoke.ts");
       for (const flags of [["--preserve-symlinks-main"], ["--preserve-symlinks-main", "--preserve-symlinks"]]) {
-        const node = [process.execPath, ...flags, ...guarded];
+        const node = [process.execPath, ...flags, ...tsxGuarded];
         assert.equal(smokeRun([...node, script]).reason, "explicit_opt_in_required", mode);
         assert.equal(smokeRun([...node, script, ...liveArgs]).reason, "canonical_capabilities_unavailable", mode);
-        const child = spawnSync(process.execPath, [...flags, ...guarded, "--input-type=module", "--eval",
+        const child = spawnSync(process.execPath, [...flags, ...tsxGuarded, "--input-type=module", "--eval",
           `const m = await import(${JSON.stringify(pathToFileURL(script).href)}); process.stdout.write(typeof m.smokeRefusal);`], {
           cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
           env: {PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, TSX_DISABLE_CACHE: "1"},
