@@ -1,0 +1,58 @@
+name: Test
+
+# The offline gates every handoff reports, run at the exact pushed head.
+# No secrets, no credentials, and no network beyond installing the pinned
+# lockfile. A pass here is fixture evidence, never live readiness.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout v7.0.1. On a pull request, check out the exact head
+      # commit, not GitHub's merge with the base, so the result is evidence
+      # for the SHA a handoff names.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Head under test
+        run: |
+          echo "head ${HEAD_UNDER_TEST}"
+          test "$(git rev-parse HEAD)" = "${HEAD_UNDER_TEST}"
+        env:
+          HEAD_UNDER_TEST: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # actions/setup-node v7.1.0. The exact Node version the handoffs report.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.0
+
+      - name: Install (frozen lockfile)
+        run: |
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+
+      - name: Test
+        run: corepack pnpm test
+
+      - name: Typecheck
+        run: corepack pnpm typecheck
+
+      - name: Fixture check exits 3 (a fixture replay, never readiness)
+        run: |
+          set +e
+          corepack pnpm check --fixture fixtures/preflight/cases/ready.json
+          code=$?
+          set -e
+          echo "exit ${code}"
+          test "${code}" -eq 3
