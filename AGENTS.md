@@ -30,7 +30,47 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm test        # offline; no credentials, no network
 corepack pnpm typecheck
 corepack pnpm check --fixture fixtures/preflight/cases/ready.json   # exits 3: fixture, never readiness
+corepack pnpm scan        # capability scan and src/ registry only; about a second
 ```
+
+The `Test` workflow runs install, test, typecheck and the fixture check at
+every pull request head. Cite its run and the head SHA in the Checks line; it
+is fixture evidence, like a local run. A PR that changes the workflow or the
+`test`, `typecheck`, `check` or `scan` scripts is not evidenced by its own CI
+run, because that run uses the PR's own versions.
+
+## Before you push: what trips agents
+
+- **Banned words in `src/`.** The capability scan fails on these words
+  anywhere in `src/`, comments and strings included: `globalThis`, `global`,
+  `self`, `window`, `require`, `eval`, `Function`, `constructor`,
+  `__proto__`, `prototype`, `Reflect`, `Proxy`, `fetch`, `XMLHttpRequest`,
+  `WebSocket`, `EventSource`, `Worker`, `WebAssembly`, `Deno`, `Bun`,
+  `getBuiltinModule`, `dlopen`, `mainModule`, `createRequire`, plus `import`
+  followed by `(` or `.` (spaces allowed), and any backslash followed by `u`
+  or `x`, even in a comment. They match as whole words, so `self-contained`
+  and `global-scope` fail too. Keep a Node built-in module's name (`path`,
+  `fs`, `os`, and also everyday words such as `url` and `events`, or `test`
+  because the scan drops the `node:` prefix of `node:test`)
+  out of any quoted string that is exactly that name, backticks included,
+  except an import specifier: the scan counts them. Run `corepack pnpm scan`; a
+  banned-word problem names the file, line and word, and other problems name
+  the file. Never weaken the scan to pass it.
+- **A new `src/` file needs its row.** The `src/` file list is
+  [`docs/ownership.md`](docs/ownership.md), and the reserved names are fixed
+  in `tests/preflight.test.ts`. Adding your lane's reserved file means
+  flipping its Exists cell from `not yet` to `yes`. Whether a lane may make
+  that one-cell edit itself is a standing handoff proposed with PR #20 and
+  awaiting the maintainer. Until it is confirmed, ask the #2 steward, as for
+  any shared-file change. A name that is not reserved needs a shared-file
+  request first.
+- **Independence is about who started the read.** Every agent session posts
+  as the same shared account, so the account says nothing about
+  independence: say who started the read. A read started by the authoring
+  session, or by a session it started, is a second read, never the
+  independent review `risk:r4` needs. A reviewer started separately, who
+  authored none of the change, can be independent with the shared account
+  disclosed, as on PRs #12 and #13.
 
 Add a failing boundary test before a fix (committing it separately is a
 proposed addition to #1). Report exact commands and results. Enable the secret-scanning hook once per clone:

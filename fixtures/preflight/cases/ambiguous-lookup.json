@@ -8,8 +8,19 @@
     "CASTLES_SANDBOX_GENERATION": "3"
   },
   "inspection": {
-    "contract": "castles.fixture.sandbox-inspection.v1",
-    "outcome": "ambiguous"
+    "status": 200,
+    "body": {
+      "version": 1,
+      "outcome": "ambiguous",
+      "reason": "no_recorded_sandbox",
+      "record": {
+        "agentId": "fixture-agent-0001",
+        "fence": "none",
+        "generation": 3,
+        "lifecycle": "ready",
+        "sandboxId": null
+      }
+    }
   },
   "expect": {
     "status": "reconciliation-required",
