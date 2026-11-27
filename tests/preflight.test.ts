@@ -6179,6 +6179,7 @@ test("owner project label is optional, opaque, redacted and cannot select a targ
   assert.deepEqual(labeled.wire.calls, ["inspectBoundSandbox"]);
   assert.deepEqual(labeled.wire.requests, baseline.wire.requests);
   const projectAlias = Reflect.get(labeled.result.observed!.binding, "projectAlias");
+  assert.ok(typeof projectAlias === "string");
   assert.match(projectAlias, /^prj_[a-f0-9]{12}$/);
   assert.ok(renderHuman(labeled.result).includes(projectAlias));
   assert.ok(!renderHuman(labeled.result).includes(ref));
