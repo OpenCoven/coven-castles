@@ -103,6 +103,7 @@ export type ReasonCode =
   | "metadata_missing"
   | "owner_mismatch"
   | "provider_unavailable"
+  | "platform_mismatch"
   | "public_exposure"
   | "resources_out_of_policy"
   | "returned_id_mismatch"
@@ -159,12 +160,8 @@ export type ObservedSandbox = Readonly<{
     autoPauseInterval: number | null;
     autoStopInterval: number | null;
   }>;
-  /**
-   * Never observed: upstream v1 reports no platform (coven-agents#323). The
-   * platform is source policy implied by the qualified snapshot; see
-   * `SUPPORTED_PROFILE.platform`.
-   */
-  platform: Readonly<{ architecture: null; os: null }>;
+  /** Negotiated provider observations, independent of snapshot policy. */
+  platform: Readonly<{ architecture: string | null; os: string | null }>;
   resources: Readonly<{
     cpu: number | null;
     diskGiB: number | null;
@@ -565,6 +562,7 @@ function result(
 // --- Parsing the v1 answer --------------------------------------------------
 
 type ObservedEnvelope = Readonly<{
+  platform: ObservedSandbox["platform"];
   identity: UnknownRecord;
   observed: UnknownRecord;
   policy: UnknownRecord;
@@ -793,7 +791,7 @@ const PROVIDER_METADATA_KEYS = [
 ];
 
 /** The exact opt-in shape at coven-agents 6dedc26; unknown is explicit null. */
-function isProviderMetadata(value: unknown): value is UnknownRecord {
+function isProviderMetadata(value: unknown): value is UnknownRecord & { platform: ObservedSandbox["platform"] } {
   if (!isRecord(value) || !hasOnly(value, PROVIDER_METADATA_KEYS)) {
     return false;
   }
@@ -890,11 +888,13 @@ function parseBody(body: unknown, binding: Binding, details: boolean): Inspectio
   }
   // The copy already has no base object. Update only these four own values;
   // creating an ordinary object here would reintroduce inherited metadata.
+  let platform: ObservedSandbox["platform"] = { architecture: null, os: null };
   if (details) {
     const metadata = observed.providerMetadata;
     if (!isProviderMetadata(metadata)) {
       return VIOLATION;
     }
+    platform = { architecture: metadata.platform.architecture, os: metadata.platform.os };
     const effective = observed as Record<string, unknown>;
     for (const key of ["autoDestroyAtConfigured", "linkedSandbox", "volumes", "warmPool"]) {
       effective[key] = metadata[key];
@@ -902,7 +902,7 @@ function parseBody(body: unknown, binding: Binding, details: boolean): Inspectio
   }
   return {
     kind: "observed",
-    value: { identity: observed.identity, observed, policy, record },
+    value: { identity: observed.identity, observed, platform, policy, record },
   };
 }
 
@@ -974,6 +974,15 @@ function evaluateCompatibility(
     findings.add("incompatible", "metadata_missing", field);
   const fail = (code: ReasonCode, field: string) =>
     findings.add("incompatible", code, field);
+
+  const expectedPlatform: Readonly<{ architecture: string; os: string }> = profile.platform;
+  for (const field of Object.keys(envelope.platform) as (keyof ObservedSandbox["platform"])[]) {
+    const reported = envelope.platform[field];
+    const expected = expectedPlatform[field];
+    if (reported !== null && expected !== "not-pinned" && reported.toLowerCase() !== expected.toLowerCase()) {
+      fail("platform_mismatch", `platform.${field}`);
+    }
+  }
 
   // The server-selected version, compared with the version Castles pins.
   if (policy.sdkVersion !== profile.sdk.version) {
@@ -1184,7 +1193,7 @@ function observe(envelope: ObservedEnvelope): ObservedSandbox {
       autoPauseInterval: echoedInteger(observed.autoPauseInterval),
       autoStopInterval: echoedInteger(observed.autoStopInterval),
     },
-    platform: { architecture: null, os: null },
+    platform: envelope.platform,
     resources: {
       cpu: echoedInteger(observed.cpu),
       diskGiB: echoedInteger(observed.diskGib),
@@ -1509,7 +1518,7 @@ export function isLiveReady(value: PreflightResult): boolean {
 
 /**
  * Bounded by construction: every string is a literal, an alias, a member of
- * a fixed set, or a strict three-part version; every observed number is a
+ * a fixed set, a bounded negotiated platform string, or a strict three-part version; every observed number is a
  * count from 0 to 1024 or an integer inside `ECHOED_INTEGER`. The volume
  * count uses the detail contract bound or the legacy `echoedCount` bound.
  */
@@ -1539,10 +1548,13 @@ export function renderHuman(value: PreflightResult): string {
   }
   const observed = value.observed;
   if (observed) {
-    const { exposure, identity } = observed;
+    const { exposure, identity, platform } = observed;
+    const platformSummary = platform.os === null && platform.architecture === null
+      ? "platform not reported"
+      : `platform OS ${JSON.stringify(platform.os)}, architecture ${JSON.stringify(platform.architecture)}`;
     lines.push(
       "observed (as reported through the seam):",
-      `  state ${observed.state ?? "?"}; ${observed.resources.cpu ?? "?"} vCPU / ${observed.resources.memoryGiB ?? "?"} GiB RAM / ${observed.resources.diskGiB ?? "?"} GiB disk; snapshot ${observed.image.snapshot ?? "?"}; platform not reported (policy: ${value.sourcePolicy.platform.os} from the qualified snapshot); server sdk ${observed.sdk.version ?? "?"}`,
+      `  state ${observed.state ?? "?"}; ${observed.resources.cpu ?? "?"} vCPU / ${observed.resources.memoryGiB ?? "?"} GiB RAM / ${observed.resources.diskGiB ?? "?"} GiB disk; snapshot ${observed.image.snapshot ?? "?"}; ${platformSummary} (policy: ${value.sourcePolicy.platform.os} from the qualified snapshot); server sdk ${observed.sdk.version ?? "?"}`,
       `  public ${exposure.public ?? "?"}; domain allow list configured ${exposure.domainAllowListConfigured ?? "?"}, matches policy ${exposure.domainAllowListMatchesPolicy ?? "?"}; network allow list ${exposure.networkAllowListConfigured ?? "?"}; outbound proxy ${exposure.outboundProxyConfigured ?? "?"}; block-all ${exposure.networkBlockAll ?? "?"}`,
       `  auto-stop ${observed.lifecycle.autoStopInterval ?? "?"} min; auto-archive ${observed.lifecycle.autoArchiveInterval ?? "?"} min; auto-delete ${observed.lifecycle.autoDeleteInterval ?? "?"}; ttl ${observed.lifecycle.autoDestroyAt ?? "?"}; volumes ${observed.attachments.volumes ?? "?"}; warm pool ${observed.attachments.warmPool ?? "?"}; linked sandbox ${observed.attachments.linkedSandbox ?? "?"}`,
       `  binding generation ${observed.binding.generation ?? "?"}, lifecycle ${observed.binding.lifecycle}, attempt fence ${observed.binding.attemptFence}`,
