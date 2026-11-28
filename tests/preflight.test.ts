@@ -5785,3 +5785,21 @@ test("#322 detail: the plain-data budget and refusal-body guards remain active",
   assert.deepEqual(codes(refusal), ["unauthenticated"]);
   assert.equal(reads, 0);
 });
+
+test("#323 detail: preserves each platform observation and refuses a snapshot conflict", async () => {
+  for (const [os, architecture] of [
+    ["Windows", "x86_64"], [null, null], ["linux", null], [null, "arm64"],
+    ["linux", "x86_64"], ["linux", "arm64"],
+  ] as const) {
+    const { result } = await detailCase(answer => {
+      answer.body.observed.providerMetadata.platform = { os, architecture };
+    });
+    const rendered = JSON.parse(renderJson(result));
+    assert.deepEqual(rendered.sourcePolicy.platform, SUPPORTED_PROFILE.platform);
+    assert.deepEqual(
+      { platform: rendered.observed.platform, status: rendered.status, reasons: rendered.reasons },
+      { platform: { os, architecture }, status: os === "Windows" ? "incompatible" : "ready",
+        reasons: os === "Windows" ? [{ code: "platform_mismatch", field: "platform.os" }] : [] },
+    );
+  }
+});
