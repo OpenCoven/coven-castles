@@ -1,9 +1,9 @@
 /** Synthetic qualification only. No real admission or provider evidence. */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import nodeTest, { after } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -493,11 +493,83 @@ after(() => rmSync(tripwireDirectory, {recursive: true, force: true}));
 const guarded = ["--import", pathToFileURL(tripwire).href];
 const tsxGuarded = ["--import", import.meta.resolve("tsx"), ...guarded];
 
+/**
+ * A child's outcome in spawnSync's shape. Tests that start many independent
+ * children start them together through `spawnInOrder`, then assert on each
+ * result in the original order with the same checks, so the first failing
+ * assertion is the one a serial run would report.
+ */
+type Child = Pick<SpawnSyncReturns<string>, "error" | "signal" | "status" | "stdout" | "stderr">;
+type ChildRun = {command: readonly string[]; options: {cwd: string; env: NodeJS.ProcessEnv; timeout: number; maxBuffer: number}};
+const CHILD_CONCURRENCY = Math.max(1, Math.min(8, availableParallelism() - 1));
+
+/** spawnSync's semantics, asynchronously: empty stdin, utf8 output, ETIMEDOUT or ENOBUFS and SIGTERM past a limit. */
+function spawnChild({command, options}: ChildRun): Promise<Child> {
+  return new Promise((settle) => {
+    let stdout = "", stderr = "", error: Error | undefined, settled = false;
+    const child = spawn(command[0], command.slice(1), {cwd: options.cwd, env: options.env});
+    const stop = (code: string) => {
+      error ??= Object.assign(new Error(`spawnSync-equivalent ${code}`), {code});
+      child.kill("SIGTERM");
+    };
+    const timer = setTimeout(() => stop("ETIMEDOUT"), options.timeout);
+    const done = (status: number | null, signal: NodeJS.Signals | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      settle({error, signal, status, stdout, stderr});
+    };
+    child.stdin.end();
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      if (Buffer.byteLength(stdout) > options.maxBuffer) stop("ENOBUFS");
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+      if (Buffer.byteLength(stderr) > options.maxBuffer) stop("ENOBUFS");
+    });
+    child.on("error", (reason) => { error ??= reason; done(null, null); });
+    child.on("close", done);
+  });
+}
+
+/** Runs every child, at most CHILD_CONCURRENCY at once; results keep the input order. */
+async function spawnInOrder(runs: readonly ChildRun[]): Promise<Child[]> {
+  const results: Child[] = new Array(runs.length);
+  let next = 0;
+  const lane = async () => {
+    while (next < runs.length) {
+      const index = next++;
+      results[index] = await spawnChild(runs[index]);
+    }
+  };
+  await Promise.all(Array.from({length: Math.min(CHILD_CONCURRENCY, runs.length)}, lane));
+  return results;
+}
+
+/** A batch of smoke children, with the fingerprint required before the first starts and after the last ends. */
+async function smokeChildren(runs: readonly ChildRun[]): Promise<Child[]> {
+  assert.deepEqual(scriptProblems(smokeSource()), [], "smoke source must match its proposed fingerprint before execution");
+  const children = await spawnInOrder(runs);
+  assert.deepEqual(scriptProblems(smokeSource()), [], "smoke source must still match its fingerprint after execution");
+  return children;
+}
+
 /** Candidate evaluation stays outside the process that owns the test assertions. */
 function smokeLibrary(
   args: string[], environment: Readonly<Record<string, string | undefined>>, main?: unknown, entryCheck = false,
   moduleUrl = pathToFileURL(resolve(root, "scripts/smoke.ts")).href,
 ): {result: SmokeRefusal | boolean; reads: string[]} {
+  const {run, completion} = smokeLibraryRun(args, environment, main, entryCheck, moduleUrl);
+  return smokeLibraryResult(spawnSync(run.command[0], run.command.slice(1), {...run.options, encoding: "utf8"}), completion);
+}
+/** The child that evaluates one library call, and the completion token its envelope must carry. */
+function smokeLibraryRun(
+  args: string[], environment: Readonly<Record<string, string | undefined>>, main?: unknown, entryCheck = false,
+  moduleUrl = pathToFileURL(resolve(root, "scripts/smoke.ts")).href,
+): {run: ChildRun; completion: string} {
   if (moduleUrl === pathToFileURL(resolve(root, "scripts/smoke.ts")).href)
     assert.deepEqual(scriptProblems(smokeSource()), [], "smoke source must match its proposed fingerprint before import");
   const completion = randomBytes(16).toString("hex");
@@ -514,10 +586,13 @@ function smokeLibrary(
     const result = input.entryCheck ? candidate.runsAsProgram(input.main) : candidate.smokeRefusal(input.args, environment);
     process.stdout.write(JSON.stringify({completion: ${JSON.stringify(completion)}, result, reads}) + "\\n");
   `;
-  const child = spawnSync(process.execPath, [...guarded, "--input-type=module", "--eval", program], {
-    cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
+  return {completion, run: {command: [process.execPath, ...guarded, "--input-type=module", "--eval", program], options: {
+    cwd: root, timeout: 5_000, maxBuffer: 32_768,
     env: {PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, TSX_DISABLE_CACHE: "1"},
-  });
+  }}};
+}
+/** The library contract: one exact completion line from a clean exit. */
+function smokeLibraryResult(child: Child, completion: string): {result: SmokeRefusal | boolean; reads: string[]} {
   assert.equal(child.error, undefined, "library subprocess must finish before its deadline");
   assert.equal(child.signal, null);
   assert.equal(child.status, 0, "library evaluation must complete");
@@ -540,13 +615,27 @@ function runsAsProgram(main: unknown): boolean {
 function smoke(args: string[], binding: Record<string, string> = syntheticBinding) {
   return smokeRun([process.execPath, ...guarded, "scripts/smoke.ts", ...args], binding);
 }
+/** `smoke` for many argument lists at once; call each returned check in order. */
+function smokeAll(argsList: string[][], binding: Record<string, string> = syntheticBinding) {
+  return smokeRuns(argsList.map(args => [process.execPath, ...guarded, "scripts/smoke.ts", ...args]), binding);
+}
 /** Runs one smoke invocation, given as a full command line, and requires the refusal contract. */
 function smokeRun(command: string[], binding: Record<string, string> = syntheticBinding, cwd = root) {
   assert.deepEqual(scriptProblems(smokeSource()), [], "smoke source must match its proposed fingerprint before execution");
-  const child = spawnSync(command[0], command.slice(1), {
-    cwd, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
-    env: { PATH: process.env.PATH, TSX_DISABLE_CACHE: "1", ...binding },
-  });
+  const {options} = smokeProgram(command, binding, cwd);
+  return smokeRefusalOf(spawnSync(command[0], command.slice(1), {...options, encoding: "utf8"}));
+}
+/** One smoke invocation as a child run, with the environment smokeRun gives it. */
+function smokeProgram(command: string[], binding: Record<string, string> = syntheticBinding, cwd = root): ChildRun {
+  return {command, options: {cwd, timeout: 5_000, maxBuffer: 32_768,
+    env: { PATH: process.env.PATH, TSX_DISABLE_CACHE: "1", ...binding }}};
+}
+/** Many smoke invocations at once; each result still has to meet the refusal contract, checked in order. */
+async function smokeRuns(commands: string[][], binding: Record<string, string> = syntheticBinding): Promise<(() => SmokeRefusal)[]> {
+  const children = await smokeChildren(commands.map(command => smokeProgram(command, binding)));
+  return children.map(child => () => smokeRefusalOf(child));
+}
+function smokeRefusalOf(child: Child): SmokeRefusal {
   assert.equal(child.error, undefined, "smoke subprocess must finish before its deadline");
   assert.equal(child.signal, null);
   assert.equal(child.status, 1, "every current smoke invocation must refuse");
@@ -566,7 +655,7 @@ function smokeRun(command: string[], binding: Record<string, string> = synthetic
 test("CFG-03 smoke without explicit opt-in refuses", () => {
   assert.equal(smoke([]).reason, "explicit_opt_in_required");
 });
-test("B1 smoke refuses however it is invoked as the program", () => {
+test("B1 smoke refuses however it is invoked as the program", async () => {
   // Second reads rv5-aa741628 and rv5b-7a31c9e4, B1: at df7597b every spelling
   // but the exact relative path exited 0 with no output.
   const tsxBin = resolve(root, "node_modules/.bin/tsx");
@@ -588,16 +677,22 @@ test("B1 smoke refuses however it is invoked as the program", () => {
       ["an extensionless symlink", [...node, resolve(directory, "smoke-link")]],
       ["a path through a symlinked directory", [...node, resolve(directory, "aliased-scripts/smoke.ts")]],
     ];
-    for (const [label, command] of spellings) {
-      assert.equal(smokeRun(command).reason, "explicit_opt_in_required", label);
-      assert.equal(smokeRun([...command, ...liveArgs]).reason, "canonical_capabilities_unavailable", `${label}, --live`);
-    }
+    const runs = await smokeRuns(spellings.flatMap(([, command]) => [command, [...command, ...liveArgs]]));
+    spellings.forEach(([label], index) => {
+      assert.equal(runs[2 * index]().reason, "explicit_opt_in_required", label);
+      assert.equal(runs[2 * index + 1]().reason, "canonical_capabilities_unavailable", `${label}, --live`);
+    });
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
-test("B1 main detection uses Node's flag or the canonical loader resolution", () => {
-  assert.equal(runsAsProgram(false), false);
-  for (const main of [true, null, 0, "", "false", {}]) assert.equal(runsAsProgram(main), true, String(main));
-  assert.equal(runsAsProgram(undefined), false, "an eval library import has no program entry");
+test("B1 main detection uses Node's flag or the canonical loader resolution", async () => {
+  assert.deepEqual(scriptProblems(smokeSource()), []);
+  const mains: unknown[] = [false, true, null, 0, "", "false", {}, undefined];
+  const calls = mains.map(main => smokeLibraryRun([], {}, main, true));
+  const children = await smokeChildren(calls.map(call => call.run));
+  const program = (index: number) => smokeLibraryResult(children[index], calls[index].completion).result as boolean;
+  assert.equal(program(0), false);
+  for (let index = 1; index < 7; index++) assert.equal(program(index), true, String(mains[index]));
+  assert.equal(program(7), false, "an eval library import has no program entry");
 });
 test("B1 importing the smoke module is side-effect free", () => {
   assert.deepEqual(scriptProblems(smokeSource()), []);
@@ -611,24 +706,29 @@ test("B1 importing the smoke module is side-effect free", () => {
   assert.equal(child.stdout, "function");
   assert.equal(child.stderr, "");
 });
-test("CFG-04 smoke rejects missing and malformed budgets", () => {
-  assert.equal(smoke(["--live"]).reason, "budget_required");
-  for (const value of ["0", "-1", "NaN", "Infinity", "1e3", " 1"])
-    assert.equal(smoke(["--live", `--max-spend-usd=${value}`, "--max-seconds", "900"]).reason, "budget_invalid");
-  for (const value of ["0", "-1", "901", "1.5", "NaN", "Infinity", "0900"])
-    assert.equal(smoke(["--live", "--max-spend-usd", "0.01", `--max-seconds=${value}`]).reason, "budget_invalid");
+test("CFG-04 smoke rejects missing and malformed budgets", async () => {
+  const spend = ["0", "-1", "NaN", "Infinity", "1e3", " 1"];
+  const seconds = ["0", "-1", "901", "1.5", "NaN", "Infinity", "0900"];
+  const runs = await smokeAll([["--live"],
+    ...spend.map(value => ["--live", `--max-spend-usd=${value}`, "--max-seconds", "900"]),
+    ...seconds.map(value => ["--live", "--max-spend-usd", "0.01", `--max-seconds=${value}`])]);
+  assert.equal(runs[0]().reason, "budget_required");
+  for (const run of runs.slice(1)) assert.equal(run().reason, "budget_invalid");
 });
 test("CFG-05 smoke refuses a missing or different exact target", () => {
   assert.equal(smoke(liveArgs.filter((_, i) => i !== 1 && i !== 2)).reason, "exact_target_required");
   assert.equal(smoke(liveArgs.map(v => v === syntheticBinding.CASTLES_SANDBOX_ID ? "synthetic-other" : v)).reason, "target_mismatch");
 });
-test("CFG-04 smoke spend is at most six integer digits and two fractional digits (review N5)", () => {
-  const spend = (value: string) => smokeRefusal(["--live", "--sandbox-id", syntheticBinding.CASTLES_SANDBOX_ID,
-    `--max-spend-usd=${value}`, "--max-seconds", "900"], syntheticBinding).reason;
-  for (const value of ["999999.99", "999999", "0.01", "1.5", "10"])
-    assert.equal(spend(value), "canonical_capabilities_unavailable", value);
-  for (const value of ["1000000", "9999999.99", "0.001", "1.234", "01", "1.", ".5", "+1", "1_000", "0.00"])
-    assert.equal(spend(value), "budget_invalid", value);
+test("CFG-04 smoke spend is at most six integer digits and two fractional digits (review N5)", async () => {
+  const accepted = ["999999.99", "999999", "0.01", "1.5", "10"];
+  const rejected = ["1000000", "9999999.99", "0.001", "1.234", "01", "1.", ".5", "+1", "1_000", "0.00"];
+  const values = [...accepted, ...rejected];
+  const calls = values.map(value => smokeLibraryRun(["--live", "--sandbox-id", syntheticBinding.CASTLES_SANDBOX_ID,
+    `--max-spend-usd=${value}`, "--max-seconds", "900"], syntheticBinding));
+  const children = await smokeChildren(calls.map(call => call.run));
+  values.forEach((value, index) => assert.equal(
+    (smokeLibraryResult(children[index], calls[index].completion).result as SmokeRefusal).reason,
+    index < accepted.length ? "canonical_capabilities_unavailable" : "budget_invalid", value));
 });
 test("CFG-05 smoke compares the target exactly and never echoes it (review N5)", () => {
   const other = `synthetic-other-${randomBytes(8).toString("hex")}`;
@@ -651,10 +751,10 @@ test("CFG-05 smoke compares the target exactly and never echoes it (review N5)",
   assert.equal(child.status, 1);
   assert.ok(!(child.stdout + child.stderr).includes(other));
 });
-test("CFG-06 smoke never accepts fixture or mock flags", () => {
-  for (const args of [["--fixture", "ready.json"], ["--mock"], ["--json"], ["run"], ["--live=true"],
-    [...liveArgs, "--live"], [...liveArgs, "--max-seconds", "1"], [...liveArgs, "--reset"], [...liveArgs, "--ignore-cleanup"]])
-    assert.equal(smoke(args).reason, "unsupported_arguments");
+test("CFG-06 smoke never accepts fixture or mock flags", async () => {
+  const runs = await smokeAll([["--fixture", "ready.json"], ["--mock"], ["--json"], ["run"], ["--live=true"],
+    [...liveArgs, "--live"], [...liveArgs, "--max-seconds", "1"], [...liveArgs, "--reset"], [...liveArgs, "--ignore-cleanup"]]);
+  for (const run of runs) assert.equal(run().reason, "unsupported_arguments");
 });
 test("CFG-08 complete-looking inputs and forged authorization still refuse", () => {
   assert.equal(smoke(liveArgs).reason, "canonical_capabilities_unavailable");
@@ -1033,7 +1133,7 @@ test("R1 a library exit or extra output cannot impersonate completed evaluation"
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
 
-test("R3 missing import.meta.main still distinguishes the program from an import", () => {
+test("R3 missing import.meta.main still distinguishes the program from an import", async () => {
   const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-legacy-entry-"));
   try {
     mkdirSync(resolve(directory, "scripts"));
@@ -1048,11 +1148,13 @@ test("R3 missing import.meta.main still distinguishes the program from an import
     symlinkSync(script, resolve(directory, "link"));
     symlinkSync(resolve(directory, "scripts"), resolve(directory, "alias"), "dir");
     const node = [process.execPath, ...tsxGuarded];
-    for (const path of [script, script.slice(0, -3), resolve(directory, "link.ts"), resolve(directory, "link"),
-      resolve(directory, "alias/smoke.ts")]) {
-      assert.equal(smokeRun([...node, path]).reason, "explicit_opt_in_required");
-      assert.equal(smokeRun([...node, path, ...liveArgs]).reason, "canonical_capabilities_unavailable");
-    }
+    const paths = [script, script.slice(0, -3), resolve(directory, "link.ts"), resolve(directory, "link"),
+      resolve(directory, "alias/smoke.ts")];
+    const runs = await smokeRuns(paths.flatMap(path => [[...node, path], [...node, path, ...liveArgs]]));
+    paths.forEach((_, index) => {
+      assert.equal(runs[2 * index]().reason, "explicit_opt_in_required");
+      assert.equal(runs[2 * index + 1]().reason, "canonical_capabilities_unavailable");
+    });
     const child = spawnSync(process.execPath, [...tsxGuarded, "--input-type=module", "--eval",
       `const m = await import(${JSON.stringify(pathToFileURL(script).href)}); process.stdout.write(typeof m.smokeRefusal);`], {
       cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
@@ -1065,13 +1167,13 @@ test("R3 missing import.meta.main still distinguishes the program from an import
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
 
-test("CFG-04 CFG-05 individual budget omissions, small seconds and an empty target stay exact", () => {
-  for (const args of [["--live", "--max-seconds", "900"], ["--live", "--max-spend-usd", "0.01"]])
-    assert.equal(smoke(args).reason, "budget_required");
-  for (const seconds of ["1", "9", "10", "100", "899", "900"])
-    assert.equal(smoke(liveArgs.map(value => value === "900" ? seconds : value)).reason, "canonical_capabilities_unavailable");
-  assert.equal(smoke(liveArgs.map(value => value === syntheticBinding.CASTLES_SANDBOX_ID ? "" : value)).reason,
-    "exact_target_required");
+test("CFG-04 CFG-05 individual budget omissions, small seconds and an empty target stay exact", async () => {
+  const runs = await smokeAll([["--live", "--max-seconds", "900"], ["--live", "--max-spend-usd", "0.01"],
+    ...["1", "9", "10", "100", "899", "900"].map(seconds => liveArgs.map(value => value === "900" ? seconds : value)),
+    liveArgs.map(value => value === syntheticBinding.CASTLES_SANDBOX_ID ? "" : value)]);
+  for (const run of runs.slice(0, 2)) assert.equal(run().reason, "budget_required");
+  for (const run of runs.slice(2, 8)) assert.equal(run().reason, "canonical_capabilities_unavailable");
+  assert.equal(runs[8]().reason, "exact_target_required");
 });
 
 test("R2 planted controls reject a changed original before evaluating any copy", () => {
@@ -1100,7 +1202,7 @@ test("R2 planted controls reject a changed original before evaluating any copy",
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
 
-test("R3 preserved main symlinks refuse with native and missing main flags", () => {
+test("R3 preserved main symlinks refuse with native and missing main flags", async () => {
   assert.deepEqual(scriptProblems(smokeSource()), [], "entry controls require the approved original source");
   const directory = mkdtempSync(resolve(tmpdir(), "castles-synthetic-preserved-main-"));
   try {
@@ -1115,22 +1217,27 @@ test("R3 preserved main symlinks refuse with native and missing main flags", () 
     assert.notEqual(source, smokeSource());
     writeFileSync(resolve(directory, "fallback-source/scripts/smoke.ts"), source);
     symlinkSync(resolve(directory, "fallback-source/scripts"), resolve(directory, "fallback/scripts"), "dir");
-    for (const mode of ["actual", "fallback"]) {
-      const script = resolve(directory, mode, "scripts/smoke.ts");
-      for (const flags of [["--preserve-symlinks-main"], ["--preserve-symlinks-main", "--preserve-symlinks"]]) {
-        const node = [process.execPath, ...flags, ...tsxGuarded];
-        assert.equal(smokeRun([...node, script]).reason, "explicit_opt_in_required", mode);
-        assert.equal(smokeRun([...node, script, ...liveArgs]).reason, "canonical_capabilities_unavailable", mode);
-        const child = spawnSync(process.execPath, [...flags, ...tsxGuarded, "--input-type=module", "--eval",
-          `const m = await import(${JSON.stringify(pathToFileURL(script).href)}); process.stdout.write(typeof m.smokeRefusal);`], {
-          cwd: root, encoding: "utf8", timeout: 5_000, maxBuffer: 32_768,
-          env: {PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, TSX_DISABLE_CACHE: "1"},
-        });
-        assert.equal(child.error, undefined);
-        assert.equal(child.status, 0);
-        assert.equal(child.stdout, "function");
-        assert.equal(child.stderr, "");
-      }
-    }
+    const cases = ["actual", "fallback"].flatMap(mode =>
+      [["--preserve-symlinks-main"], ["--preserve-symlinks-main", "--preserve-symlinks"]].map(flags =>
+        ({mode, flags, script: resolve(directory, mode, "scripts/smoke.ts")})));
+    const runs: ChildRun[] = cases.flatMap(({flags, script}) => {
+      const node = [process.execPath, ...flags, ...tsxGuarded];
+      return [smokeProgram([...node, script]), smokeProgram([...node, script, ...liveArgs]), {
+        command: [process.execPath, ...flags, ...tsxGuarded, "--input-type=module", "--eval",
+          `const m = await import(${JSON.stringify(pathToFileURL(script).href)}); process.stdout.write(typeof m.smokeRefusal);`],
+        options: {cwd: root, timeout: 5_000, maxBuffer: 32_768,
+          env: {PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, TSX_DISABLE_CACHE: "1"}},
+      }];
+    });
+    const children = await smokeChildren(runs);
+    cases.forEach(({mode}, index) => {
+      assert.equal(smokeRefusalOf(children[3 * index]).reason, "explicit_opt_in_required", mode);
+      assert.equal(smokeRefusalOf(children[3 * index + 1]).reason, "canonical_capabilities_unavailable", mode);
+      const child = children[3 * index + 2];
+      assert.equal(child.error, undefined);
+      assert.equal(child.status, 0);
+      assert.equal(child.stdout, "function");
+      assert.equal(child.stderr, "");
+    });
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
